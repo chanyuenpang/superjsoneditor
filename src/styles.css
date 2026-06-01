@@ -55,6 +55,13 @@ select {
   text-transform: uppercase;
 }
 
+.editor-shell__header p {
+  max-width: 720px;
+  margin: 10px 0 0;
+  color: #b6c6db;
+  line-height: 1.5;
+}
+
 .editor-shell__panel {
   border: 1px solid rgba(182, 198, 219, 0.18);
   border-radius: 24px;

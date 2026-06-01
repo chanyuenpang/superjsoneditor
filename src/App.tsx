@@ -1,17 +1,12 @@
 import { EditorShell } from "./editor/EditorShell";
-
 const demoDocument = {
-  id: "starter-document",
-  meta: {
-    kind: "demo",
-    version: 1,
-  },
-  nodes: [
-    {
-      id: "hero",
-      stats: { hp: 10, mp: 4 },
-    },
-  ],
+  id: "simple-demo",
+  title: "Simple Demo Page",
+  note: "This page stays intentionally small. Complex coverage lives in test fixtures.",
+  profile: {
+    owner: "Super JSON Editor",
+    status: "prototype"
+  }
 };
 
 export function App() {

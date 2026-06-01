@@ -1,0 +1,80 @@
+{
+  "id": "campaign-alpha",
+  "title": "Complex Demo Document",
+  "description": "Use the cards on the left to open nested objects, arrays, and references.",
+  "meta": {
+    "kind": "campaign",
+    "version": 3,
+    "flags": {
+      "hardcore": false,
+      "featured": true
+    }
+  },
+  "characters": [
+    {
+      "id": "hero",
+      "profile": {
+        "name": "Lans",
+        "class": "Warden"
+      },
+      "stats": {
+        "hp": 10,
+        "mp": 4,
+        "resistances": ["fire", "ice"]
+      },
+      "inventory": [
+        {
+          "slot": "weapon",
+          "item": {
+            "$ref": "items/iron-sword"
+          }
+        },
+        {
+          "slot": "charm",
+          "item": {
+            "$ref": "items/moon-charm"
+          }
+        }
+      ]
+    },
+    {
+      "id": "guide",
+      "profile": {
+        "name": "Pang",
+        "class": "Archivist"
+      },
+      "stats": {
+        "hp": 6,
+        "mp": 12,
+        "resistances": []
+      }
+    }
+  ],
+  "world": {
+    "activeQuest": {
+      "$ref": "quests/intro"
+    },
+    "map": {
+      "regions": [
+        {
+          "id": "north-forest",
+          "threat": 2,
+          "encounters": [
+            {
+              "$ref": "encounters/wolf-pack"
+            }
+          ]
+        },
+        {
+          "id": "sunken-vault",
+          "threat": 5,
+          "encounters": [
+            {
+              "$ref": "encounters/shadow-eye"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
