@@ -22,3 +22,20 @@ test("applies JSON text edits to the current node", () => {
   fireEvent.click(screen.getByRole("button", { name: "Apply JSON" }));
   expect(screen.getByText("galaxy")).toBeInTheDocument();
 });
+
+test("opens nested structures in a stacked subpage flow and can go back", () => {
+  render(<EditorShell value={{ profile: { name: "Lans", stats: { hp: 10 } } }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 2 fields" }));
+  expect(screen.getByText("Page 2")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+  expect(screen.getAllByText("profile")).toHaveLength(2);
+
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+  expect(screen.getByText("Page 3")).toBeInTheDocument();
+  expect(screen.getByText("hp")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByText("Page 2")).toBeInTheDocument();
+  expect(screen.getByText("stats")).toBeInTheDocument();
+});

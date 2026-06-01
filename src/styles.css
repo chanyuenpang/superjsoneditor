@@ -63,6 +63,33 @@ select {
   overflow: hidden;
 }
 
+.editor-shell__subpage-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 0;
+}
+
+.editor-shell__subpage-meta {
+  color: #a6b7cb;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.editor-shell__back {
+  border: 1px solid rgba(182, 198, 219, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #eef4fb;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.editor-shell__back:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .breadcrumbs {
   display: flex;
   flex-wrap: wrap;
