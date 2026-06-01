@@ -1,0 +1,11 @@
+{
+  "id": "moon-charm",
+  "kind": "item",
+  "name": "Moon Charm",
+  "bonus": {
+    "manaRegen": 2
+  },
+  "boundEncounter": {
+    "$ref": "encounters/shadow-eye"
+  }
+}

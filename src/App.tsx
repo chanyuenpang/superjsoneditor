@@ -1,71 +1,24 @@
 import { EditorShell } from "./editor/EditorShell";
 import type { EditorHost } from "./editor/host";
+import heroDocument from "./demo-sources/characters/hero.json";
+import guideDocument from "./demo-sources/characters/guide.json";
+import wolfPackDocument from "./demo-sources/encounters/wolf-pack.json";
+import shadowEyeDocument from "./demo-sources/encounters/shadow-eye.json";
+import ironSwordDocument from "./demo-sources/items/iron-sword.json";
+import mainDocument from "./demo-sources/main.json";
+import moonCharmDocument from "./demo-sources/items/moon-charm.json";
+import introQuestDocument from "./demo-sources/quests/intro.json";
+import { DEMO_ROOT_SOURCE_ID } from "./demo-sources/manifest";
 
-const demoDocument = {
-  id: "campaign-alpha",
-  title: "Complex Demo Document",
-  description: "Use the editor to traverse nested objects, arrays, and resolved references.",
-  meta: {
-    kind: "campaign",
-    version: 3,
-    flags: {
-      hardcore: false,
-      featured: true,
-    },
-  },
-  characters: [
-    {
-      id: "hero",
-      profile: {
-        name: "Lans",
-        class: "Warden",
-      },
-      stats: {
-        hp: 10,
-        mp: 4,
-        resistances: ["fire", "ice"],
-      },
-      inventory: [
-        {
-          slot: "weapon",
-          item: { $ref: "items/iron-sword" },
-        },
-        {
-          slot: "charm",
-          item: { $ref: "items/moon-charm" },
-        },
-      ],
-    },
-    {
-      id: "guide",
-      profile: {
-        name: "Pang",
-        class: "Archivist",
-      },
-      stats: {
-        hp: 6,
-        mp: 12,
-        resistances: [],
-      },
-    },
-  ],
-  world: {
-    activeQuest: { $ref: "quests/intro" },
-    map: {
-      regions: [
-        {
-          id: "north-forest",
-          threat: 2,
-          encounters: [{ $ref: "encounters/wolf-pack" }],
-        },
-        {
-          id: "sunken-vault",
-          threat: 5,
-          encounters: [{ $ref: "encounters/shadow-eye" }],
-        },
-      ],
-    },
-  },
+const demoDocuments: Record<string, unknown> = {
+  main: mainDocument,
+  "items/iron-sword": ironSwordDocument,
+  "items/moon-charm": moonCharmDocument,
+  "quests/intro": introQuestDocument,
+  "encounters/wolf-pack": wolfPackDocument,
+  "encounters/shadow-eye": shadowEyeDocument,
+  "characters/hero": heroDocument,
+  "characters/guide": guideDocument,
 };
 
 const demoHost: EditorHost = {
@@ -75,47 +28,16 @@ const demoHost: EditorHost = {
   getReferenceLabel(value) {
     return String((value as { $ref: string }).$ref);
   },
-  resolveReference(value) {
+  resolveReferenceTarget(value, documents) {
     const key = (value as { $ref: string }).$ref;
-    return demoReferences[key] ?? { missing: true, $ref: key };
-  },
-};
-
-const demoReferences: Record<string, unknown> = {
-  "items/iron-sword": {
-    id: "iron-sword",
-    kind: "item",
-    name: "Iron Sword",
-    damage: { min: 3, max: 6 },
-  },
-  "items/moon-charm": {
-    id: "moon-charm",
-    kind: "item",
-    name: "Moon Charm",
-    bonus: { manaRegen: 2 },
-  },
-  "quests/intro": {
-    id: "intro",
-    kind: "quest",
-    title: "Light the First Beacon",
-    steps: [
-      { id: "travel", text: "Travel to the northern watch." },
-      { id: "light", text: "Ignite the beacon flame." },
-    ],
-  },
-  "encounters/wolf-pack": {
-    id: "wolf-pack",
-    kind: "encounter",
-    enemies: ["wolf", "wolf-alpha"],
-  },
-  "encounters/shadow-eye": {
-    id: "shadow-eye",
-    kind: "encounter",
-    enemies: ["shadow-eye"],
-    hazard: { darkness: 4 },
+    return {
+      sourceId: key,
+      path: [],
+      value: documents[key] ?? { missing: true, $ref: key },
+    };
   },
 };
 
 export function App() {
-  return <EditorShell host={demoHost} value={demoDocument} />;
+  return <EditorShell host={demoHost} rootSourceId={DEMO_ROOT_SOURCE_ID} documents={demoDocuments} />;
 }

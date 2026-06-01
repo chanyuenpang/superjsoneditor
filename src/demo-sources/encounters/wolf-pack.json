@@ -1,0 +1,8 @@
+{
+  "id": "wolf-pack",
+  "kind": "encounter",
+  "enemies": [
+    "wolf",
+    "wolf-alpha"
+  ]
+}

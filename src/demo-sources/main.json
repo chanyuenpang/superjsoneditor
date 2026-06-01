@@ -1,0 +1,193 @@
+{
+  "id": "campaign-alpha",
+  "title": "Super JSON Editor",
+  "description": "Use the editor to traverse nested objects, arrays, and resolved references.",
+  "meta": {
+    "kind": "campaign",
+    "version": 3,
+    "flags": {
+      "hardcore": false,
+      "featured": true
+    }
+  },
+  "characters": [
+    {
+      "id": "hero",
+      "profile": {
+        "name": "Lans",
+        "class": "Warden"
+      },
+      "stats": {
+        "hp": 10,
+        "mp": 4,
+        "resistances": [
+          "fire",
+          "ice"
+        ]
+      },
+      "inventory": [
+        {
+          "slot": "weapon",
+          "item": {
+            "$ref": "items/iron-sword"
+          }
+        },
+        {
+          "slot": "charm",
+          "item": {
+            "$ref": "items/moon-charm"
+          }
+        }
+      ]
+    },
+    {
+      "id": "guide",
+      "profile": {
+        "name": "Pang",
+        "class": "Archivist"
+      },
+      "stats": {
+        "hp": 6,
+        "mp": 12,
+        "resistances": []
+      }
+    }
+  ],
+  "world": {
+    "activeQuest": {
+      "$ref": "quests/intro"
+    },
+    "map": {
+      "regions": [
+        {
+          "id": "north-forest",
+          "threat": 2,
+          "encounters": [
+            {
+              "$ref": "encounters/wolf-pack"
+            }
+          ]
+        },
+        {
+          "id": "sunken-vault",
+          "threat": 5,
+          "encounters": [
+            {
+              "$ref": "encounters/shadow-eye"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "wideRecords": [
+    {
+      "rowId": "telemetry-001",
+      "entityName": "Northern Observatory Node",
+      "status": "active",
+      "environment": "production",
+      "owner": "systems-team",
+      "ownerRegion": "cn-east-1",
+      "category": "telemetry",
+      "priority": "high",
+      "score": 98.4,
+      "successRate": 0.998,
+      "latencyP50Ms": 14,
+      "latencyP95Ms": 42,
+      "queueDepth": 3,
+      "retryBudget": 2,
+      "alertsOpen": 1,
+      "isArchived": false,
+      "lastUpdatedAt": "2026-06-01T09:18:00Z",
+      "releaseChannel": "stable",
+      "datasetVersion": "2026.06.01-r4",
+      "tags": [
+        "core",
+        "observatory",
+        "north"
+      ],
+      "primaryCharacter": {
+        "$ref": "characters/hero"
+      },
+      "activeQuest": {
+        "$ref": "quests/intro"
+      },
+      "encounterPreset": {
+        "$ref": "encounters/wolf-pack"
+      },
+      "summary": "Baseline node with low latency and one outstanding alert for an aging cache shard."
+    },
+    {
+      "rowId": "telemetry-002",
+      "entityName": "Sunken Vault Relay Mirror",
+      "status": "degraded",
+      "environment": "staging",
+      "owner": "reliability-lab",
+      "ownerRegion": "eu-west-2",
+      "category": "relay",
+      "priority": "medium",
+      "score": 86.1,
+      "successRate": 0.972,
+      "latencyP50Ms": 28,
+      "latencyP95Ms": 88,
+      "queueDepth": 17,
+      "retryBudget": 5,
+      "alertsOpen": 4,
+      "isArchived": false,
+      "lastUpdatedAt": "2026-06-01T09:21:00Z",
+      "releaseChannel": "preview",
+      "datasetVersion": "2026.06.01-r4",
+      "tags": [
+        "vault",
+        "mirror",
+        "staging"
+      ],
+      "primaryCharacter": {
+        "$ref": "characters/guide"
+      },
+      "activeQuest": {
+        "$ref": "quests/intro"
+      },
+      "encounterPreset": {
+        "$ref": "encounters/shadow-eye"
+      },
+      "summary": "Mirror relay is intentionally noisy to exercise overflow, sticky identity, and wide-column scanning."
+    },
+    {
+      "rowId": "telemetry-003",
+      "entityName": "Western Archive Indexer",
+      "status": "paused",
+      "environment": "development",
+      "owner": "content-ops",
+      "ownerRegion": "us-west-2",
+      "category": "indexer",
+      "priority": "low",
+      "score": 73.5,
+      "successRate": 0.934,
+      "latencyP50Ms": 36,
+      "latencyP95Ms": 124,
+      "queueDepth": 29,
+      "retryBudget": 8,
+      "alertsOpen": 7,
+      "isArchived": true,
+      "lastUpdatedAt": "2026-06-01T09:27:00Z",
+      "releaseChannel": "experimental",
+      "datasetVersion": "2026.06.01-r3",
+      "tags": [
+        "archive",
+        "index",
+        "beta"
+      ],
+      "primaryCharacter": {
+        "$ref": "characters/hero"
+      },
+      "activeQuest": {
+        "$ref": "quests/intro"
+      },
+      "encounterPreset": {
+        "$ref": "encounters/shadow-eye"
+      },
+      "summary": "Paused indexer keeps intentionally long descriptive text so the table can show aggressive width pressure."
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "shadow-eye",
+  "kind": "encounter",
+  "enemies": [
+    "shadow-eye"
+  ],
+  "hazard": {
+    "darkness": 4
+  },
+  "researchNotes": {
+    "archivist": {
+      "$ref": "characters/guide"
+    }
+  }
+}

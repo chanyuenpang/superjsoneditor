@@ -6,12 +6,19 @@ import type { EditorHost } from "./host";
 
 type ValueInspectorProps = {
   value: unknown;
+  savedValue?: unknown;
   path: JsonPath;
+  title?: string;
   host?: EditorHost;
   isReference?: boolean;
   activeChildSegment?: string | number;
+  onNavigateUp?: () => void;
   onNavigate: (path: JsonPath) => void;
   onApplyValue: (nextValue: unknown) => void;
+  onSave?: () => void;
+  onReload?: () => void;
+  showPersistenceActions?: boolean;
+  onEditModeChange?: (isEditing: boolean) => void;
 };
 
 export function ValueInspector(props: ValueInspectorProps) {
@@ -26,68 +33,257 @@ export function ValueInspector(props: ValueInspectorProps) {
   return <PrimitivePage {...props} value={props.value} />;
 }
 
-function ObjectPage({ value, path, host, isReference = false, onNavigate, onApplyValue }: ValueInspectorProps & { value: Record<string, unknown> }) {
+function ObjectPage({
+  value,
+  savedValue,
+  path,
+  title,
+  host,
+  isReference = false,
+  onNavigateUp,
+  onNavigate,
+  onApplyValue,
+  onSave,
+  onReload,
+  showPersistenceActions = false,
+  onEditModeChange,
+}: ValueInspectorProps & { value: Record<string, unknown> }) {
   const [rawOpen, setRawOpen] = useState(false);
-  const fields = useMemo(() => describeObjectFields(value), [value]);
+  const [editMode, setEditMode] = useState(false);
+  const [suppressEditToggleUntil, setSuppressEditToggleUntil] = useState(0);
+  const [newKey, setNewKey] = useState("");
+  const [newKeyType, setNewKeyType] = useState<ObjectDraftType>("string");
+  const keyExists = newKey.trim().length > 0 && Object.prototype.hasOwnProperty.call(value, newKey.trim());
+  const pathKey = path.join("/");
+  const [fieldOrder, setFieldOrder] = useState(() => Object.keys(value));
+  const fields = useMemo(
+    () => fieldOrder
+      .filter((key) => Object.prototype.hasOwnProperty.call(value, key))
+      .map((key) => [key, value[key]] as const),
+    [fieldOrder, value],
+  );
 
   useEffect(() => {
     setRawOpen(false);
-  }, [path, value]);
+    setEditMode(false);
+    setSuppressEditToggleUntil(0);
+    setNewKey("");
+    setNewKeyType("string");
+    setFieldOrder(Object.keys(value));
+  }, [pathKey]);
+
+  useEffect(() => {
+    setFieldOrder((current) => {
+      const nextKeys = Object.keys(value);
+      const preserved = current.filter((key) => nextKeys.includes(key));
+      const appended = nextKeys.filter((key) => !preserved.includes(key));
+      const nextOrder = [...preserved, ...appended];
+      if (nextOrder.length === current.length && nextOrder.every((key, index) => key === current[index])) {
+        return current;
+      }
+      return nextOrder;
+    });
+  }, [value]);
+
+  useEffect(() => {
+    onEditModeChange?.(editMode);
+    return () => onEditModeChange?.(false);
+  }, [editMode, onEditModeChange]);
+
+  function handleEditModeToggle() {
+    if (Date.now() < suppressEditToggleUntil) return;
+    setSuppressEditToggleUntil(Date.now() + 250);
+    if (editMode) {
+      setEditMode(false);
+      setNewKey("");
+      setNewKeyType("string");
+      return;
+    }
+    setEditMode(true);
+  }
 
   return (
     <section className="node-page node-page--object">
       <PageHeader
         path={path}
+        title={title}
         isReference={isReference}
+        onNavigateUp={onNavigateUp}
         rawOpen={rawOpen}
         onToggleRaw={() => setRawOpen((current) => !current)}
       />
       <div className="node-page__content">
-        <div className="property-list">
-          {fields.map(([key, fieldValue]) => (
-            <section className="property-block object-field-row" key={key}>
-              <div className="property-heading">
-                <span>{host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key}</span>
-                <small className="field-type">{describeType(fieldValue, host)}</small>
+        {rawOpen ? (
+          <RawJsonEditor value={value} onApplyValue={onApplyValue} />
+        ) : (
+          <div className="object-page-body">
+            <div className="object-scroll">
+              <div className="property-list">
+                {fields.map(([key, fieldValue]) => (
+                  <section
+                    className={[
+                      "property-block",
+                      "object-field-row",
+                      isFieldDirty(fieldValue, isPlainObject(savedValue) ? savedValue[key] : undefined) ? "object-field-row--dirty" : "",
+                    ].filter(Boolean).join(" ")}
+                    key={key}
+                  >
+                    <div className="property-heading">
+                      <span>{host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key}</span>
+                      <div className="property-heading__actions">
+                        <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
+                        {editMode ? (
+                          <button
+                            className="danger-icon-button"
+                            type="button"
+                            onClick={() => {
+                              const nextValue = { ...value };
+                              delete nextValue[key];
+                              onApplyValue(nextValue);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                    {isNavigable(fieldValue) ? (
+                      <button
+                        aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
+                        className={["nested-entry-button", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}
+                        type="button"
+                        onClick={() => onNavigate([...path, key])}
+                      >
+                        <span className="nested-entry-icon" aria-hidden="true">
+                          {getStructureIcon(fieldValue, host)}
+                        </span>
+                        <span className="entry-key">{previewValue(fieldValue, host)}</span>
+                        <span className={["entry-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</span>
+                        <span className="entry-preview">{key}</span>
+                      </button>
+                    ) : (
+                      renderPrimitiveEditor({
+                        value: fieldValue,
+                        ariaLabel: `Field ${key}`,
+                        onChange(nextValue) {
+                          onApplyValue({
+                            ...value,
+                            [key]: nextValue,
+                          });
+                        },
+                      })
+                    )}
+                  </section>
+                ))}
+                {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
+                {editMode ? (
+                  <div className="add-object-form">
+                    <div className="add-object-form__fields">
+                      <input
+                        className="detail-input"
+                        placeholder="newKey"
+                        value={newKey}
+                        onChange={(event) => setNewKey(event.target.value)}
+                      />
+                      <select className="detail-input" value={newKeyType} onChange={(event) => setNewKeyType(event.target.value as ObjectDraftType)}>
+                        <option value="string">string</option>
+                        <option value="number">number</option>
+                        <option value="object">object</option>
+                        <option value="array">array</option>
+                      </select>
+                    </div>
+                    <div className="add-object-form__actions">
+                      <button
+                        className="primary-button"
+                        disabled={newKey.trim().length === 0 || keyExists}
+                        type="button"
+                        onPointerDown={(event) => event.preventDefault()}
+                        onPointerUp={() => {
+                          const key = newKey.trim();
+                          if (!key || Object.prototype.hasOwnProperty.call(value, key)) return;
+                          setSuppressEditToggleUntil(Date.now() + 300);
+                          onApplyValue({
+                            ...value,
+                            [key]: createDefaultValueForType(newKeyType),
+                          });
+                          setNewKey("");
+                          setNewKeyType("string");
+                        }}
+                        onClick={(event) => {
+                          if (event.detail !== 0) return;
+                          const key = newKey.trim();
+                          if (!key || Object.prototype.hasOwnProperty.call(value, key)) return;
+                          setSuppressEditToggleUntil(Date.now() + 300);
+                          onApplyValue({
+                            ...value,
+                            [key]: createDefaultValueForType(newKeyType),
+                          });
+                          setNewKey("");
+                          setNewKeyType("string");
+                        }}
+                      >
+                        Create key
+                      </button>
+                    </div>
+                    {keyExists ? <small className="form-hint form-hint--danger">Key already exists.</small> : null}
+                  </div>
+                ) : null}
               </div>
-              {isNavigable(fieldValue) ? (
+            </div>
+            <section className="editor-actions-panel">
+              <div className="editor-actions-row">
                 <button
-                  aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
-                  className="nested-entry-button"
+                  className="ghost-button compact-button"
                   type="button"
-                  onClick={() => onNavigate([...path, key])}
+                  onPointerDown={(event) => event.preventDefault()}
+                  onPointerUp={handleEditModeToggle}
+                  onClick={(event) => {
+                    if (event.detail !== 0) return;
+                    handleEditModeToggle();
+                  }}
                 >
-                  <span className="nested-entry-icon" aria-hidden="true">
-                    {getStructureIcon(fieldValue, host)}
-                  </span>
-                  <span className="entry-key">{previewValue(fieldValue, host)}</span>
-                  <span className="entry-type">{describeType(fieldValue, host)}</span>
-                  <span className="entry-preview">{key}</span>
+                  {editMode ? "Done" : "Edit"}
                 </button>
-              ) : (
-                renderPrimitiveEditor({
-                  value: fieldValue,
-                  ariaLabel: `Field ${key}`,
-                  onChange(nextValue) {
-                    onApplyValue({
-                      ...value,
-                      [key]: nextValue,
-                    });
-                  },
-                })
-              )}
+                {showPersistenceActions && !editMode ? (
+                  <>
+                    <button className="ghost-button compact-button" type="button" onClick={onReload}>
+                      Reload
+                    </button>
+                    <button className="ghost-button compact-button" type="button" onClick={onSave}>
+                      Save
+                    </button>
+                  </>
+                ) : null}
+              </div>
             </section>
-          ))}
-          {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
-        </div>
-        {rawOpen ? <RawJsonEditor value={value} onApplyValue={onApplyValue} /> : null}
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function ArrayPage({ value, path, host, isReference = false, activeChildSegment, onNavigate, onApplyValue }: ValueInspectorProps & { value: unknown[] }) {
+function ArrayPage({
+  value,
+  path,
+  title,
+  host,
+  isReference = false,
+  activeChildSegment,
+  onNavigateUp,
+  onNavigate,
+  onApplyValue,
+  onSave,
+  onReload,
+  showPersistenceActions = false,
+  onEditModeChange,
+}: ValueInspectorProps & { value: unknown[] }) {
   const [rawOpen, setRawOpen] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [suppressEditToggleUntil, setSuppressEditToggleUntil] = useState(0);
+  const [pendingRow, setPendingRow] = useState<unknown | null>(null);
+  const [suppressRowActionsUntil, setSuppressRowActionsUntil] = useState(0);
+  const pathKey = path.join("/");
   const columns = useMemo(() => getArrayColumns(value, host), [value, host]);
   const objectRows = useMemo(() => isObjectRowArray(value, host), [value, host]);
   const columnWidths = useMemo(() => getArrayColumnWidths(value, columns, host), [value, columns, host]);
@@ -98,161 +294,334 @@ function ArrayPage({ value, path, host, isReference = false, activeChildSegment,
 
   useEffect(() => {
     setRawOpen(false);
-  }, [path, value]);
+    setEditMode(false);
+    setSuppressEditToggleUntil(0);
+    setPendingRow(null);
+    setSuppressRowActionsUntil(0);
+  }, [pathKey]);
+
+  useEffect(() => {
+    onEditModeChange?.(editMode);
+    return () => onEditModeChange?.(false);
+  }, [editMode, onEditModeChange]);
+
+  function handleEditModeToggle() {
+    if (Date.now() < suppressEditToggleUntil) return;
+    setSuppressEditToggleUntil(Date.now() + 250);
+    if (editMode) {
+      setEditMode(false);
+      setPendingRow(null);
+      return;
+    }
+    setEditMode(true);
+    setPendingRow(createDefaultArrayRow(value, host));
+  }
 
   return (
     <section className="node-page node-page--array">
       <PageHeader
         path={path}
+        title={title}
         isReference={isReference}
+        onNavigateUp={onNavigateUp}
         rawOpen={rawOpen}
         onToggleRaw={() => setRawOpen((current) => !current)}
       />
       <div className="node-page__content">
-        <div className="table-shell">
-          <div className="table-scroll">
-            <table
-              className="data-table array-workspace"
-              style={{ width: `${tableWidth}px`, minWidth: `${tableWidth}px` }}
-            >
-              <colgroup>
-                {columns.map((column) => (
-                  <col
-                    data-column={column}
-                    key={column}
-                    style={{ width: `${columnWidths[column] ?? 140}px` }}
-                  />
-                ))}
-              </colgroup>
-              <thead>
-                <tr>
-                  {columns.map((column, columnIndex) => (
-                    <th
-                      aria-label={column}
-                      className={columnIndex === 0 ? "array-column--sticky" : undefined}
+        {rawOpen ? (
+          <RawJsonEditor value={value} onApplyValue={onApplyValue} />
+        ) : (
+          <div className="array-page-body">
+            <div className="table-shell">
+              <div className="table-scroll">
+              <table
+                className="data-table array-workspace"
+                style={{ width: `${tableWidth + (editMode ? 144 : 0)}px`, minWidth: `${tableWidth + (editMode ? 144 : 0)}px` }}
+              >
+                <colgroup>
+                  {editMode ? <col data-column="__edit__" style={{ width: "144px" }} /> : null}
+                  {columns.map((column) => (
+                    <col
+                      data-column={column}
                       key={column}
-                    >
-                      <div className="array-column-header">
-                        <span>{column}</span>
-                        <small>{describeArrayColumnType(value, column, host)}</small>
-                      </div>
-                    </th>
+                      style={{ width: `${columnWidths[column] ?? 140}px` }}
+                    />
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {value.length === 0 ? (
-                  <tr className="array-empty-row">
-                    <td className="array-empty-cell" colSpan={columns.length}>
-                      This array has no items.
-                    </td>
-                  </tr>
-                ) : null}
-                {value.map((item, index) => {
-                  if (objectRows) {
-                    const record = item as Record<string, unknown>;
-                    const clickable = isNavigable(item);
-                    return (
-                      <tr
-                        className={[
-                          clickable ? "is-clickable" : "",
-                          activeChildSegment === index ? "is-active-row" : "",
-                        ].filter(Boolean).join(" ")}
-                        data-row-index={index}
-                        key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
-                        onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                </colgroup>
+                <thead>
+                  <tr>
+                    {editMode ? (
+                      <th className="array-column--sticky array-column--actions" aria-label="Actions">
+                        <div className="array-column-header">
+                          <span>Actions</span>
+                          <small>edit</small>
+                        </div>
+                      </th>
+                    ) : null}
+                    {columns.map((column, columnIndex) => (
+                      <th
+                        aria-label={column}
+                        className={
+                          columnIndex === 0
+                            ? ["array-column--sticky", editMode ? "array-column--after-actions" : ""].filter(Boolean).join(" ")
+                            : undefined
+                        }
+                        key={column}
                       >
-                        {columns.map((column, columnIndex) => (
-                          <td className={columnIndex === 0 ? "array-column--sticky" : undefined} key={`${index}:${column}`}>
-                            <span
-                              className={[
-                                "array-cell-summary",
-                                columnIndex === 0 ? "array-cell-summary--identity" : "",
-                              ].filter(Boolean).join(" ")}
-                            >
-                              {previewValue(record[column], host)}
-                            </span>
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  }
-
-                  return (
-                    <tr className={activeChildSegment === index ? "is-active-row" : undefined} data-row-index={index} key={`${index}:${String(item)}`}>
-                      <td className="array-column--sticky">{index}</td>
-                      <td>{describeType(item, host)}</td>
-                      <td>
-                        {isNavigable(item) ? (
-                          <button className="nested-entry-button inline" type="button" onClick={() => onNavigate([...path, index])}>
-                            <span className="entry-key">{summarizeRowIdentity(item, index, path, host)}</span>
-                            <span className="entry-type">{describeType(item, host)}</span>
-                            <span className="entry-preview">{previewValue(item, host)}</span>
-                          </button>
-                        ) : (
-                          renderPrimitiveEditor({
-                            value: item,
-                            ariaLabel: `Array item ${index}`,
-                            onChange(nextValue) {
-                              onApplyValue(setValueAtPath(value, [index], nextValue));
-                            },
-                          })
-                        )}
+                        <div className="array-column-header">
+                          <span>{column}</span>
+                          <small className={getTypeToneClassForType(describeArrayColumnType(value, column, host))}>{describeArrayColumnType(value, column, host)}</small>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {value.length === 0 ? (
+                    <tr className="array-empty-row">
+                      <td className="array-empty-cell" colSpan={columns.length + (editMode ? 1 : 0)}>
+                        This array has no items.
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                  ) : null}
+                  {value.map((item, index) => {
+                    if (objectRows) {
+                      const record = item as Record<string, unknown>;
+                      const clickable = isNavigable(item);
+                      return (
+                        <tr
+                          className={[
+                            clickable ? "is-clickable" : "",
+                            activeChildSegment === index ? "is-active-row" : "",
+                          ].filter(Boolean).join(" ")}
+                          data-row-index={index}
+                          key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
+                          onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                      >
+                        {editMode ? (
+                          <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
+                            <div className="row-action-buttons">
+                              <button
+                                className="ghost-button compact-button"
+                                disabled={Date.now() < suppressRowActionsUntil}
+                                type="button"
+                                onPointerDown={(event) => event.preventDefault()}
+                                onPointerUp={(event) => {
+                                  event.stopPropagation();
+                                  const next = [...value];
+                                  next.splice(index + 1, 0, cloneJsonValue(item));
+                                  onApplyValue(next);
+                                }}
+                              >
+                                Copy
+                              </button>
+                              <button
+                                className="danger-icon-button"
+                                disabled={Date.now() < suppressRowActionsUntil}
+                                type="button"
+                                onPointerDown={(event) => event.preventDefault()}
+                                onPointerUp={(event) => {
+                                  event.stopPropagation();
+                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        ) : null}
+                          {columns.map((column, columnIndex) => (
+                            <td
+                              className={
+                                columnIndex === 0
+                                  ? ["array-column--sticky", editMode ? "array-column--after-actions" : ""].filter(Boolean).join(" ")
+                                  : undefined
+                              }
+                              key={`${index}:${column}`}
+                            >
+                              <span
+                                className={[
+                                  "array-cell-summary",
+                                  columnIndex === 0 ? "array-cell-summary--identity" : "",
+                                ].filter(Boolean).join(" ")}
+                              >
+                                {previewValue(record[column], host)}
+                              </span>
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    }
+
+                    return (
+                      <tr className={activeChildSegment === index ? "is-active-row" : undefined} data-row-index={index} key={`${index}:${String(item)}`}>
+                        {editMode ? (
+                          <td className="array-column--sticky array-column--actions">
+                            <div className="row-action-buttons">
+                              <button
+                                className="ghost-button compact-button"
+                                disabled={Date.now() < suppressRowActionsUntil}
+                                type="button"
+                                onPointerDown={(event) => event.preventDefault()}
+                                onPointerUp={() => {
+                                  const next = [...value];
+                                  next.splice(index + 1, 0, cloneJsonValue(item));
+                                  onApplyValue(next);
+                                }}
+                              >
+                                Copy
+                              </button>
+                              <button
+                                className="danger-icon-button"
+                                disabled={Date.now() < suppressRowActionsUntil}
+                                type="button"
+                                onPointerDown={(event) => event.preventDefault()}
+                                onPointerUp={() => onApplyValue(value.filter((_, rowIndex) => rowIndex !== index))}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        ) : null}
+                        <td className={["array-column--sticky", editMode ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>{index}</td>
+                        <td>{describeType(item, host)}</td>
+                        <td>
+                          {isNavigable(item) ? (
+                            <button
+                              className={["nested-entry-button", "inline", getTypeToneClass(item, host)].filter(Boolean).join(" ")}
+                              type="button"
+                              onClick={() => onNavigate([...path, index])}
+                            >
+                              <span className="entry-key">{summarizeRowIdentity(item, index, path, host)}</span>
+                              <span className={["entry-type", getTypeToneClass(item, host)].filter(Boolean).join(" ")}>{describeType(item, host)}</span>
+                              <span className="entry-preview">{previewValue(item, host)}</span>
+                            </button>
+                          ) : (
+                            renderPrimitiveEditor({
+                              value: item,
+                              ariaLabel: `Array item ${index}`,
+                              onChange(nextValue) {
+                                onApplyValue(setValueAtPath(value, [index], nextValue));
+                              },
+                            })
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {editMode && pendingRow !== null ? (
+                    renderPendingArrayRow({
+                      value,
+                      pendingRow,
+                      columns,
+                      objectRows,
+                      host,
+                      onChangePendingRow: setPendingRow,
+                      onCreate() {
+                        setSuppressRowActionsUntil(Date.now() + 450);
+                        onApplyValue([...value, cloneJsonValue(pendingRow)]);
+                        setPendingRow(createDefaultArrayRow(value.length > 0 ? [...value, pendingRow] : value, host));
+                      },
+                    })
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            </div>
+            <section className="editor-actions-panel editor-actions-panel--table">
+              <div className="editor-actions-row">
+                <button
+                  className="ghost-button compact-button"
+                  type="button"
+                  onPointerDown={(event) => event.preventDefault()}
+                  onPointerUp={handleEditModeToggle}
+                  onClick={(event) => {
+                    if (event.detail !== 0) return;
+                    handleEditModeToggle();
+                  }}
+                >
+                  {editMode ? "Done" : "Edit"}
+                </button>
+                {showPersistenceActions && !editMode ? (
+                  <>
+                    <button className="ghost-button compact-button" type="button" onClick={onReload}>
+                      Reload
+                    </button>
+                    <button className="ghost-button compact-button" type="button" onClick={onSave}>
+                      Save
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            </section>
           </div>
-        </div>
-        {rawOpen ? <RawJsonEditor value={value} onApplyValue={onApplyValue} /> : null}
+        )}
       </div>
     </section>
   );
 }
 
-function PrimitivePage({ value, path, isReference = false, onApplyValue }: ValueInspectorProps) {
+function PrimitivePage({ value, savedValue, path, title, isReference = false, onNavigateUp, onApplyValue }: ValueInspectorProps) {
   const [rawOpen, setRawOpen] = useState(false);
+  const pathKey = path.join("/");
 
   useEffect(() => {
     setRawOpen(false);
-  }, [path, value]);
+  }, [pathKey, value]);
 
   return (
     <section className="node-page node-page--primitive">
       <PageHeader
         path={path}
+        title={title}
         isReference={isReference}
+        onNavigateUp={onNavigateUp}
         rawOpen={rawOpen}
         onToggleRaw={() => setRawOpen((current) => !current)}
       />
       <div className="node-page__content">
-        <div className="property-list">
-          <section className="property-block object-field-row">
-            <div className="property-heading">
-              <span>{path.at(-1) == null ? "value" : String(path.at(-1))}</span>
-              <small className="field-type">{describeType(value)}</small>
-            </div>
-            {renderPrimitiveEditor({
-              value,
-              ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
-              onChange: onApplyValue,
-            })}
-          </section>
-        </div>
-        {rawOpen ? <RawJsonEditor value={value} onApplyValue={onApplyValue} /> : null}
+        {rawOpen ? (
+          <RawJsonEditor value={value} onApplyValue={onApplyValue} />
+        ) : (
+          <div className="property-list">
+            <section className={["property-block", "object-field-row", isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
+              <div className="property-heading">
+                <span>{path.at(-1) == null ? "value" : String(path.at(-1))}</span>
+                <small className={["field-type", getTypeToneClass(value)].filter(Boolean).join(" ")}>{describeType(value)}</small>
+              </div>
+              {renderPrimitiveEditor({
+                value,
+                ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
+                onChange: onApplyValue,
+              })}
+            </section>
+          </div>
+        )}
       </div>
     </section>
   );
 }
 
-function PageHeader(props: { path: JsonPath; isReference: boolean; rawOpen: boolean; onToggleRaw: () => void }) {
+function PageHeader(props: {
+  path: JsonPath;
+  title?: string;
+  isReference: boolean;
+  onNavigateUp?: () => void;
+  rawOpen: boolean;
+  onToggleRaw: () => void;
+}) {
   return (
     <div className="detail-header detail-header--page">
-      <div className="detail-title">{formatPath(props.path)}</div>
+      <div className="page-header__title">
+        {props.onNavigateUp ? (
+          <button aria-label="Go up one level" className="ghost-button compact-button page-back-button" type="button" onClick={props.onNavigateUp}>
+            {"<"}
+          </button>
+        ) : null}
+        <div className="detail-title">{props.title ?? formatPath(props.path)}</div>
+      </div>
       <div className="page-header__actions">
-        {props.isReference ? <span className="page-chip">Ref</span> : null}
+        {props.isReference ? <span className="page-chip page-chip--reference">Ref</span> : null}
         <button className="ghost-button compact-button" type="button" onClick={props.onToggleRaw}>
           {props.rawOpen ? "Hide Raw JSON" : "Raw JSON"}
         </button>
@@ -367,13 +736,7 @@ function getArrayColumns(items: unknown[], host?: EditorHost) {
 }
 
 function describeObjectFields(value: Record<string, unknown>) {
-  return Object.entries(value).sort((left, right) => {
-    return describeObjectFieldPriority(left[1]) - describeObjectFieldPriority(right[1]);
-  });
-}
-
-function describeObjectFieldPriority(value: unknown) {
-  return isNavigable(value) ? 1 : 0;
+  return Object.entries(value);
 }
 
 function prioritizeArrayColumns(columns: string[]) {
@@ -474,6 +837,149 @@ function describeType(value: unknown, host?: EditorHost): string {
   if (Array.isArray(value)) return "array";
   if (value === null) return "null";
   return typeof value;
+}
+
+type ObjectDraftType = "string" | "number" | "object" | "array";
+
+function createDefaultValueForType(type: ObjectDraftType) {
+  if (type === "number") return 0;
+  if (type === "object") return {};
+  if (type === "array") return [];
+  return "";
+}
+
+function createDefaultArrayRow(items: unknown[], host?: EditorHost) {
+  if (items.length === 0) return {};
+
+  if (isObjectRowArray(items, host)) {
+    const columns = getArrayColumns(items, host);
+    const seed = items.find((item) => isPlainObject(item) && !host?.isReferenceNode?.(item)) as Record<string, unknown> | undefined;
+    const nextRow: Record<string, unknown> = {};
+    for (const column of columns) {
+      nextRow[column] = createEmptyValueFromSample(seed?.[column]);
+    }
+    return nextRow;
+  }
+
+  const sample = items[0];
+  return createEmptyValueFromSample(sample);
+}
+
+function createEmptyValueFromSample(sample: unknown): unknown {
+  if (Array.isArray(sample)) return [];
+  if (isPlainObject(sample)) {
+    const nextValue: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(sample)) {
+      nextValue[key] = createEmptyValueFromSample(nestedValue);
+    }
+    return nextValue;
+  }
+  if (typeof sample === "number") return 0;
+  if (typeof sample === "boolean") return false;
+  if (sample === null) return null;
+  return "";
+}
+
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isFieldDirty(currentValue: unknown, savedValue: unknown) {
+  if (savedValue === undefined) return false;
+  return JSON.stringify(currentValue) !== JSON.stringify(savedValue);
+}
+
+function renderPendingArrayRow(props: {
+  value: unknown[];
+  pendingRow: unknown;
+  columns: string[];
+  objectRows: boolean;
+  host?: EditorHost;
+  onChangePendingRow: (nextRow: unknown) => void;
+  onCreate: () => void;
+}) {
+  if (props.objectRows) {
+    const record = isPlainObject(props.pendingRow) ? props.pendingRow : {};
+    return (
+      <tr className="array-row--pending" data-row-index="pending">
+        <td className="array-column--sticky array-column--actions">
+          <div className="row-action-buttons">
+            <button
+              className="primary-button compact-button"
+              type="button"
+              onPointerDown={(event) => event.preventDefault()}
+              onPointerUp={props.onCreate}
+            >
+              Create
+            </button>
+          </div>
+        </td>
+        {props.columns.map((column, columnIndex) => (
+          <td
+            className={columnIndex === 0 ? "array-column--sticky array-column--after-actions" : undefined}
+            key={`pending:${column}`}
+          >
+            {renderPendingArrayCell(record[column], (nextValue) => {
+              props.onChangePendingRow({
+                ...record,
+                [column]: nextValue,
+              });
+            })}
+          </td>
+        ))}
+      </tr>
+    );
+  }
+
+  const pendingType = describeType(props.pendingRow, props.host);
+  return (
+    <tr className="array-row--pending" data-row-index="pending">
+      <td className="array-column--sticky array-column--actions">
+        <div className="row-action-buttons">
+          <button
+            className="primary-button compact-button"
+            type="button"
+            onPointerDown={(event) => event.preventDefault()}
+            onPointerUp={props.onCreate}
+          >
+            Create
+          </button>
+        </div>
+      </td>
+      <td className="array-column--sticky array-column--after-actions">new</td>
+      <td>{pendingType}</td>
+      <td>
+        {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow)}
+      </td>
+    </tr>
+  );
+}
+
+function renderPendingArrayCell(value: unknown, onChange: (nextValue: unknown) => void) {
+  if (isNavigable(value)) {
+    return (
+      <span className="array-cell-summary array-cell-summary--pending">
+        {previewValue(value)}
+      </span>
+    );
+  }
+
+  return renderPrimitiveEditor({
+    value,
+    ariaLabel: "Pending array item",
+    onChange,
+  });
+}
+
+function getTypeToneClass(value: unknown, host?: EditorHost) {
+  return getTypeToneClassForType(describeType(value, host));
+}
+
+function getTypeToneClassForType(type: string) {
+  if (type === "reference") return "tone-reference";
+  if (type === "array") return "tone-array";
+  if (type === "object") return "tone-object";
+  return "";
 }
 
 function describeStructureIcon(value: unknown, host?: EditorHost) {

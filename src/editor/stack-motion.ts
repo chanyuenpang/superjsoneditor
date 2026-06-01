@@ -4,7 +4,7 @@ import type { JsonPath } from "../core/path";
 export type StackAnimation =
   | { direction: "push"; key: number; exitingPage?: NavigationPage }
   | { direction: "replace"; key: number; exitingPage: NavigationPage }
-  | { direction: "pop"; key: number; exitingPage: NavigationPage };
+  | { direction: "pop"; key: number; exitingPage: NavigationPage; promotingPage: NavigationPage };
 
 export function determineNavigateAnimation(
   currentPages: NavigationPage[],
@@ -33,7 +33,8 @@ export function determineNavigateAnimation(
   if (
     currentVisible.length === 2 &&
     nextVisible.length === 2 &&
-    samePath(currentVisible[0]?.path, nextVisible[0]?.path) &&
+    (samePath(currentVisible[0]?.path, nextVisible[0]?.path) ||
+      samePath(currentVisible[1]?.path, nextVisible[0]?.path)) &&
     !samePath(currentVisible[1]?.path, nextVisible[1]?.path)
   ) {
     return { direction: "replace", key, exitingPage: currentVisible[1] };
@@ -60,10 +61,6 @@ export function determineJumpAnimation(
     }
   }
 
-  if (nextPages.length < currentPages.length) {
-    return determineBackAnimation(currentPages, nextPages, key);
-  }
-
   return null;
 }
 
@@ -83,7 +80,7 @@ export function determineBackAnimation(
     nextVisible.length === 1 &&
     samePath(currentVisible[0]?.path, nextVisible[0]?.path)
   ) {
-    return { direction: "pop", key, exitingPage: currentPage };
+    return { direction: "pop", key, exitingPage: currentPage, promotingPage: currentVisible[0] };
   }
 
   if (
@@ -91,7 +88,7 @@ export function determineBackAnimation(
     nextVisible.length === 2 &&
     samePath(currentVisible[0]?.path, nextVisible[1]?.path)
   ) {
-    return { direction: "pop", key, exitingPage: currentPage };
+    return { direction: "pop", key, exitingPage: currentPage, promotingPage: currentVisible[0] };
   }
 
   return null;

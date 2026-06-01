@@ -1,0 +1,9 @@
+{
+  "id": "iron-sword",
+  "kind": "item",
+  "name": "Iron Sword",
+  "damage": {
+    "min": 3,
+    "max": 6
+  }
+}

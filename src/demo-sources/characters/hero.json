@@ -1,0 +1,32 @@
+{
+  "profile": {
+    "name": "Lans",
+    "class": "Warden",
+    "activeQuest": {
+      "$ref": "quests/intro"
+    }
+  },
+  "stats": {
+    "hp": 10,
+    "mp": 4,
+    "resistances": [
+      "fire",
+      "ice"
+    ]
+  },
+  "inventory": [
+    {
+      "slot": "weapon",
+      "item": {
+        "$ref": "items/iron-sword"
+      }
+    },
+    {
+      "slot": "charm",
+      "item": {
+        "$ref": "items/moon-charm"
+      }
+    }
+  ],
+  "test": "hello world"
+}

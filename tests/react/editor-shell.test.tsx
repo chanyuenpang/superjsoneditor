@@ -263,11 +263,11 @@ test("opens nested structures in a stacked subpage flow and can go back", () => 
   expect(container.querySelector(".stack-page--push-promote")).not.toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
-  expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+  expect(container.querySelector(".stack-page--pop-exit")).toBeNull();
   expect(screen.getAllByText("stats").length).toBeGreaterThanOrEqual(1);
 });
 
-test("replacing the right page from the left page does not animate the left page", () => {
+test("replacing the right page from the left page promotes the current right page into the left slot", () => {
   const { container } = render(
     <EditorShell value={{ profile: { stats: { hp: 10 }, equipment: { weapon: "sword" } } }} />,
   );
@@ -278,6 +278,8 @@ test("replacing the right page from the left page does not animate the left page
 
   expect(screen.getByText("weapon")).toBeInTheDocument();
   expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+  expect(container.querySelector(".stack-page--replace-promote")).not.toBeNull();
+  expect(container.querySelector(".stack-page--replace-exit")).toBeNull();
   expect(container.querySelector(".stack-page--push-enter")).toBeNull();
   expect(container.querySelector(".stack-page--push-promote")).toBeNull();
   expect(container.querySelector(".stack-page--push-exit")).toBeNull();
@@ -291,18 +293,20 @@ test("switching top-level entries with root still visible only replaces the righ
 
   expect(screen.getByRole("columnheader", { name: "id" })).toBeInTheDocument();
   expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+  expect(container.querySelector(".stack-page--replace-promote")).not.toBeNull();
+  expect(container.querySelector(".stack-page--replace-exit")).toBeNull();
   expect(container.querySelector(".stack-page--push-promote")).toBeNull();
   expect(container.querySelector(".stack-page--push-exit")).toBeNull();
 });
 
-test("back uses pop classes instead of push or replace classes", () => {
+test("back cuts directly without push, replace, or pop classes", () => {
   const { container } = render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
   fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-  expect(container.querySelector(".stack-page--pop-enter")).not.toBeNull();
+  expect(container.querySelector(".stack-page--pop-enter")).toBeNull();
   expect(container.querySelector(".stack-page--replace-enter")).toBeNull();
   expect(container.querySelector(".stack-page--push-enter")).toBeNull();
 });

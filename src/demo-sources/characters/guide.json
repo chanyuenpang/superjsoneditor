@@ -1,0 +1,16 @@
+{
+  "id": "guide",
+  "profile": {
+    "name": "Pang",
+    "class": "Archivist",
+    "signatureItem": {
+      "$ref": "items/moon-charm"
+    }
+  },
+  "stats": {
+    "hp": 6,
+    "mp": 12,
+    "resistances": []
+  },
+  "test": "good"
+}

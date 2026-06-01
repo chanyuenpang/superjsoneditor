@@ -30,7 +30,7 @@ That is why motion cannot be handled by one universal push animation.
 
 ## Motion Types
 
-There are three allowed motion types:
+There are two allowed motion types:
 
 ### 1. Push
 
@@ -59,19 +59,6 @@ This should be used for:
 - opening a sibling child from the left page
 - switching top-level entries while root remains the left page
 - other cases where the visual context stays but the active right page changes
-
-### 3. Pop
-
-Use when the current right page closes and the previous context becomes current again.
-
-Visual meaning:
-
-- the current right page exits
-- the left page returns to the current role
-
-This should be used for back-like navigation where the visible history contracts.
-
----
 
 ## Navigation Rules
 
@@ -134,12 +121,12 @@ Reason:
 
 If the user goes back and the visible stack shrinks from two pages to one:
 
-- use `pop`
+- use a direct `cut`
 
 Reason:
 
-- the current right page is closing
-- the previous page becomes current again
+- back should not imply a rightward page-exit animation
+- the visible state should update immediately
 
 ---
 
@@ -147,12 +134,12 @@ Reason:
 
 If the user goes back and the old left page becomes the new right page:
 
-- use `pop`
+- use a direct `cut`
 
 Reason:
 
 - this is still a contraction of visible history
-- it should feel like unwinding, not pushing
+- direct replacement is preferable to a misleading exit animation
 
 ---
 
@@ -171,7 +158,7 @@ Reason:
 
 ## Rule H: Large discontinuous jumps
 
-If a jump changes the visible state in a way that does not preserve a clear push, replace, or pop relationship:
+If a jump changes the visible state in a way that does not preserve a clear push or replace relationship:
 
 - do not force a generic animation
 - allow a direct cut
