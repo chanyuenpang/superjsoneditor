@@ -16,6 +16,13 @@
   --tone-reference-bg: #fbf4e4;
   --tone-reference-border: #ecdcb2;
   --tone-reference-text: #80643a;
+  --ref-scope-1: #eef6fb;
+  --ref-scope-2: #f3f8ee;
+  --ref-scope-3: #f7f1fb;
+  --ref-scope-4: #fbf4ea;
+  --ref-scope-5: #f9eef1;
+  --ref-scope-6: #eef4f7;
+  --ref-scope-7: #f7f5ec;
   --stack-overlay-left: clamp(440px, 42vw, 620px);
   --stack-motion-duration: 500ms;
   --stack-push-stage-duration: 500ms;
@@ -563,8 +570,37 @@ button {
   display: flex;
   justify-content: space-between;
   margin-bottom: 0;
+  min-height: 56px;
   min-width: 0;
   padding: 12px 14px;
+}
+
+.detail-header--ref-scope-1 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-1) 84%, white), var(--ref-scope-1));
+}
+
+.detail-header--ref-scope-2 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-2) 84%, white), var(--ref-scope-2));
+}
+
+.detail-header--ref-scope-3 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-3) 84%, white), var(--ref-scope-3));
+}
+
+.detail-header--ref-scope-4 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-4) 84%, white), var(--ref-scope-4));
+}
+
+.detail-header--ref-scope-5 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-5) 84%, white), var(--ref-scope-5));
+}
+
+.detail-header--ref-scope-6 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-6) 84%, white), var(--ref-scope-6));
+}
+
+.detail-header--ref-scope-7 {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--ref-scope-7) 84%, white), var(--ref-scope-7));
 }
 
 .detail-kicker {
@@ -575,11 +611,27 @@ button {
 .detail-title {
   min-width: 0;
   font-size: 18px;
+  line-height: 1.2;
   overflow: hidden;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow-wrap: anywhere;
+}
+
+.detail-title-stack {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.detail-source-label {
+  color: #7f7c76;
+  font-size: 11px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detail-subtitle {
@@ -719,11 +771,7 @@ button {
   height: 100%;
   margin: 0 14px 14px;
   min-height: 0;
-}
-
-.stack-page--object .raw-json-panel,
-.stack-page--primitive .raw-json-panel {
-  max-width: 560px;
+  width: auto;
 }
 
 .json-editor {
@@ -1023,6 +1071,10 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.raw-toggle-button {
+  color: #4b504f;
 }
 
 .add-object-form {

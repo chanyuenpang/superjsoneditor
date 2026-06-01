@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { test, vi } from "vitest";
 import { App } from "../../src/App";
 import { EditorShell } from "../../src/editor/EditorShell";
@@ -80,6 +80,42 @@ test("array pages render a table workspace", () => {
   expect(screen.getByRole("columnheader", { name: "id" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "hp" })).toBeInTheDocument();
   expect(screen.getByText("hero")).toBeInTheDocument();
+});
+
+test("page back button and toolbar back both use pop animation", () => {
+  vi.useFakeTimers();
+  const { container } = render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+  act(() => {
+    vi.advanceTimersByTime(600);
+  });
+  fireEvent.click(screen.getAllByRole("button", { name: "Go up one level" }).at(-1) as HTMLButtonElement);
+
+  expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+
+  act(() => {
+    vi.advanceTimersByTime(600);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+  act(() => {
+    vi.advanceTimersByTime(600);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+  expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+  vi.useRealTimers();
+});
+
+test("back from a right page with root pinned on the left cuts without pop animation", () => {
+  const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+  expect(container.querySelector(".stack-page--pop-exit")).toBeNull();
 });
 
 test("references can navigate into a different source document", () => {

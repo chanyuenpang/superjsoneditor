@@ -11,16 +11,13 @@ type ValueInspectorProps = {
   title?: string;
   host?: EditorHost;
   isReference?: boolean;
+  referenceScopeDepth?: number;
+  referenceSourceLabel?: string;
   activeChildSegment?: string | number;
   readOnly?: boolean;
   onNavigateUp?: () => void;
   onNavigate: (path: JsonPath) => void;
   onApplyValue: (nextValue: unknown) => void;
-  onSave?: () => void;
-  onReload?: () => void;
-  canSave?: boolean;
-  canReload?: boolean;
-  showPersistenceActions?: boolean;
   onEditModeChange?: (isEditing: boolean) => void;
 };
 
@@ -43,14 +40,11 @@ function ObjectPage({
   title,
   host,
   isReference = false,
+  referenceScopeDepth,
+  referenceSourceLabel,
   onNavigateUp,
   onNavigate,
   onApplyValue,
-  onSave,
-  onReload,
-  canSave = true,
-  canReload = true,
-  showPersistenceActions = false,
   onEditModeChange,
   readOnly = false,
 }: ValueInspectorProps & { value: Record<string, unknown> }) {
@@ -114,13 +108,20 @@ function ObjectPage({
         path={path}
         title={title}
         isReference={isReference}
+        referenceScopeDepth={referenceScopeDepth}
+        referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
-        rawOpen={rawOpen}
-        onToggleRaw={() => setRawOpen((current) => !current)}
       />
       <div className="node-page__content">
         {rawOpen ? (
-          <RawJsonEditor readOnly={readOnly} value={value} onApplyValue={onApplyValue} />
+          <RawJsonEditor
+            readOnly={readOnly}
+            value={value}
+            onApplyValue={(nextValue) => {
+              onApplyValue(nextValue);
+              setRawOpen(false);
+            }}
+          />
         ) : (
           <div className="object-page-body">
             <div className="object-scroll">
@@ -239,6 +240,9 @@ function ObjectPage({
             </div>
             <section className="editor-actions-panel">
               <div className="editor-actions-row">
+                <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
+                  Raw
+                </button>
                 {!readOnly ? (
                   <button
                     className="ghost-button compact-button"
@@ -252,20 +256,6 @@ function ObjectPage({
                   >
                     {editMode ? "Done" : "Edit"}
                   </button>
-                ) : null}
-                {showPersistenceActions && !editMode ? (
-                  <>
-                    {canReload ? (
-                      <button className="ghost-button compact-button" type="button" onClick={onReload}>
-                        Reload
-                      </button>
-                    ) : null}
-                    {canSave ? (
-                      <button className="ghost-button compact-button" type="button" onClick={onSave}>
-                        Save
-                      </button>
-                    ) : null}
-                  </>
                 ) : null}
               </div>
             </section>
@@ -282,15 +272,12 @@ function ArrayPage({
   title,
   host,
   isReference = false,
+  referenceScopeDepth,
+  referenceSourceLabel,
   activeChildSegment,
   onNavigateUp,
   onNavigate,
   onApplyValue,
-  onSave,
-  onReload,
-  canSave = true,
-  canReload = true,
-  showPersistenceActions = false,
   onEditModeChange,
   readOnly = false,
 }: ValueInspectorProps & { value: unknown[] }) {
@@ -339,13 +326,20 @@ function ArrayPage({
         path={path}
         title={title}
         isReference={isReference}
+        referenceScopeDepth={referenceScopeDepth}
+        referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
-        rawOpen={rawOpen}
-        onToggleRaw={() => setRawOpen((current) => !current)}
       />
       <div className="node-page__content">
         {rawOpen ? (
-          <RawJsonEditor readOnly={readOnly} value={value} onApplyValue={onApplyValue} />
+          <RawJsonEditor
+            readOnly={readOnly}
+            value={value}
+            onApplyValue={(nextValue) => {
+              onApplyValue(nextValue);
+              setRawOpen(false);
+            }}
+          />
         ) : (
           <div className="array-page-body">
             <div className="table-shell">
@@ -547,6 +541,9 @@ function ArrayPage({
             </div>
             <section className="editor-actions-panel editor-actions-panel--table">
               <div className="editor-actions-row">
+                <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
+                  Raw
+                </button>
                 {!readOnly ? (
                   <button
                     className="ghost-button compact-button"
@@ -561,20 +558,6 @@ function ArrayPage({
                     {editMode ? "Done" : "Edit"}
                   </button>
                 ) : null}
-                {showPersistenceActions && !editMode ? (
-                  <>
-                    {canReload ? (
-                      <button className="ghost-button compact-button" type="button" onClick={onReload}>
-                        Reload
-                      </button>
-                    ) : null}
-                    {canSave ? (
-                      <button className="ghost-button compact-button" type="button" onClick={onSave}>
-                        Save
-                      </button>
-                    ) : null}
-                  </>
-                ) : null}
               </div>
             </section>
           </div>
@@ -584,7 +567,18 @@ function ArrayPage({
   );
 }
 
-function PrimitivePage({ value, savedValue, path, title, isReference = false, onNavigateUp, onApplyValue, readOnly = false }: ValueInspectorProps) {
+function PrimitivePage({
+  value,
+  savedValue,
+  path,
+  title,
+  isReference = false,
+  referenceScopeDepth,
+  referenceSourceLabel,
+  onNavigateUp,
+  onApplyValue,
+  readOnly = false,
+}: ValueInspectorProps) {
   const [rawOpen, setRawOpen] = useState(false);
   const pathKey = path.join("/");
 
@@ -598,26 +592,44 @@ function PrimitivePage({ value, savedValue, path, title, isReference = false, on
         path={path}
         title={title}
         isReference={isReference}
+        referenceScopeDepth={referenceScopeDepth}
+        referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
-        rawOpen={rawOpen}
-        onToggleRaw={() => setRawOpen((current) => !current)}
       />
       <div className="node-page__content">
         {rawOpen ? (
-          <RawJsonEditor readOnly={readOnly} value={value} onApplyValue={onApplyValue} />
+          <RawJsonEditor
+            readOnly={readOnly}
+            value={value}
+            onApplyValue={(nextValue) => {
+              onApplyValue(nextValue);
+              setRawOpen(false);
+            }}
+          />
         ) : (
-          <div className="property-list">
-            <section className={["property-block", "object-field-row", isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
-              <div className="property-heading">
-                <span>{path.at(-1) == null ? "value" : String(path.at(-1))}</span>
-                <small className={["field-type", getTypeToneClass(value)].filter(Boolean).join(" ")}>{describeType(value)}</small>
+          <div className="object-page-body">
+            <div className="object-scroll">
+              <div className="property-list">
+                <section className={["property-block", "object-field-row", isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
+                  <div className="property-heading">
+                    <span>{path.at(-1) == null ? "value" : String(path.at(-1))}</span>
+                    <small className={["field-type", getTypeToneClass(value)].filter(Boolean).join(" ")}>{describeType(value)}</small>
+                  </div>
+                  {renderPrimitiveEditor({
+                    value,
+                    ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
+                    readOnly,
+                    onChange: onApplyValue,
+                  })}
+                </section>
               </div>
-              {renderPrimitiveEditor({
-                value,
-                ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
-                readOnly,
-                onChange: onApplyValue,
-              })}
+            </div>
+            <section className="editor-actions-panel">
+              <div className="editor-actions-row">
+                <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
+                  Raw
+                </button>
+              </div>
             </section>
           </div>
         )}
@@ -630,12 +642,18 @@ function PageHeader(props: {
   path: JsonPath;
   title?: string;
   isReference: boolean;
+  referenceScopeDepth?: number;
+  referenceSourceLabel?: string;
   onNavigateUp?: () => void;
-  rawOpen: boolean;
-  onToggleRaw: () => void;
 }) {
   return (
-    <div className="detail-header detail-header--page">
+    <div
+      className={[
+        "detail-header",
+        "detail-header--page",
+        props.referenceScopeDepth ? `detail-header--ref-scope-${((props.referenceScopeDepth - 1) % 7) + 1}` : "",
+      ].filter(Boolean).join(" ")}
+    >
       <div className="page-header__title">
         {props.onNavigateUp ? (
           <button aria-label="Go up one level" className="ghost-button compact-button page-back-button" type="button" onClick={props.onNavigateUp}>
@@ -645,10 +663,7 @@ function PageHeader(props: {
         <div className="detail-title">{props.title ?? formatPath(props.path)}</div>
       </div>
       <div className="page-header__actions">
-        {props.isReference ? <span className="page-chip page-chip--reference">Ref</span> : null}
-        <button className="ghost-button compact-button" type="button" onClick={props.onToggleRaw}>
-          {props.rawOpen ? "Hide Raw JSON" : "Raw JSON"}
-        </button>
+        {props.referenceSourceLabel ? <div className="detail-source-label">{props.referenceSourceLabel}</div> : null}
       </div>
     </div>
   );
@@ -656,10 +671,22 @@ function PageHeader(props: {
 
 function RawJsonEditor(props: { value: unknown; readOnly?: boolean; onApplyValue: (nextValue: unknown) => void }) {
   const [draft, setDraft] = useState(() => JSON.stringify(props.value, null, 2));
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setDraft(JSON.stringify(props.value, null, 2));
+    setErrorMessage(null);
   }, [props.value]);
+
+  function handleApplyJson() {
+    try {
+      const nextValue = JSON.parse(draft);
+      setErrorMessage(null);
+      props.onApplyValue(nextValue);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Invalid JSON");
+    }
+  }
 
   return (
     <section className="property-block raw-json-panel">
@@ -671,15 +698,21 @@ function RawJsonEditor(props: { value: unknown; readOnly?: boolean; onApplyValue
           aria-label="JSON value editor"
           readOnly={props.readOnly}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (errorMessage) {
+              setErrorMessage(null);
+            }
+          }}
         />
         <div className="json-actions">
           {!props.readOnly ? (
-            <button className="primary-button" type="button" onClick={() => props.onApplyValue(JSON.parse(draft))}>
+            <button className="primary-button" type="button" onClick={handleApplyJson}>
               Apply JSON
             </button>
           ) : null}
         </div>
+        {errorMessage ? <div className="form-hint form-hint--danger">{errorMessage}</div> : null}
       </div>
     </section>
   );

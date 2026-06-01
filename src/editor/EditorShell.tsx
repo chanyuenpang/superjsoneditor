@@ -4,7 +4,7 @@ import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type N
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import type { EditorHost } from "./host";
-import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, samePath, type StackAnimation } from "./stack-motion";
+import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, getVisiblePages, samePath, type StackAnimation } from "./stack-motion";
 import { ValueInspector } from "./ValueInspector";
 
 export type EditorDocuments = Record<string, unknown>;
@@ -35,6 +35,7 @@ export function EditorShell({
   readOnly = false,
 }: EditorShellProps) {
   const initialDocuments = useMemo(() => normalizeDocuments(documents, rootSourceId, value), [documents, rootSourceId, value]);
+  const initialDocumentsSnapshot = useMemo(() => JSON.stringify(initialDocuments), [initialDocuments]);
   const [documentsBySourceId, setDocumentsBySourceId] = useState(initialDocuments);
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
@@ -42,25 +43,33 @@ export function EditorShell({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [isEditingCurrentPage, setIsEditingCurrentPage] = useState(false);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
+  const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
   const [stackViewportWidth, setStackViewportWidth] = useState(0);
   const animationKeyRef = useRef(0);
   const currentPage = pages[pages.length - 1] ?? { sourceId: rootSourceId, path: [] };
   const visiblePages = pages.slice(Math.max(0, pages.length - 2));
+  const referenceScopeDepths = useMemo(() => buildReferenceScopeDepths(pages), [pages]);
   const rootLabel = inferDocumentLabel(documentsBySourceId[rootSourceId]);
   const isCompactStack = stackViewportWidth > 0 && stackViewportWidth < 768;
+  const isAtRootPage = (currentPage.sourceId ?? rootSourceId) === rootSourceId && currentPage.path.length === 0;
   const isDirty = useMemo(
     () => JSON.stringify(documentsBySourceId) !== JSON.stringify(savedDocumentsBySourceId),
     [documentsBySourceId, savedDocumentsBySourceId],
   );
 
   useEffect(() => {
+    if (lastExternalDocumentsSnapshotRef.current === initialDocumentsSnapshot) {
+      return;
+    }
+
+    lastExternalDocumentsSnapshotRef.current = initialDocumentsSnapshot;
     setDocumentsBySourceId(initialDocuments);
     setSavedDocumentsBySourceId(initialDocuments);
-    setPages(createNavigationState(rootSourceId, initialDocuments).pages);
+    setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
     setStackAnimation(null);
     setSaveState("idle");
     setIsEditingCurrentPage(false);
-  }, [initialDocuments, rootSourceId]);
+  }, [initialDocuments, initialDocumentsSnapshot]);
 
   async function handleSave() {
     if (readOnly || !onSave) return;
@@ -195,9 +204,19 @@ export function EditorShell({
   }
 
   function handleBack() {
+    animationKeyRef.current += 1;
     setPages((currentPages) => {
       const nextPages = goBack({ documents: documentsBySourceId, rootSourceId, pages: currentPages }).pages;
-      setStackAnimation(null);
+      const currentVisiblePages = getVisiblePages(currentPages);
+      const leftVisiblePage = currentVisiblePages[0];
+      const isRootPinnedLeftPage =
+        currentVisiblePages.length === 2 &&
+        (leftVisiblePage?.sourceId ?? rootSourceId) === rootSourceId &&
+        (leftVisiblePage?.path.length ?? 0) === 0;
+
+      setStackAnimation(
+        isCompactStack || isRootPinnedLeftPage ? null : determineBackAnimation(currentPages, nextPages, animationKeyRef.current),
+      );
       return nextPages;
     });
   }
@@ -227,8 +246,7 @@ export function EditorShell({
             <span>{getPageTitle(currentPage)}</span>
           </div>
           {isCompactStack ? (
-            <label className="breadcrumbs-select">
-              <span className="breadcrumbs-select__label">Path</span>
+            <label className="breadcrumbs-select" aria-label="Path">
               <select
                 className="detail-input breadcrumbs-select__input"
                 value={String(Math.max(0, pages.length - 1))}
@@ -283,7 +301,7 @@ export function EditorShell({
               ) : null}
             </>
           ) : null}
-          {pages.length > 1 ? (
+          {!isAtRootPage ? (
             <button className="ghost-button" type="button" onClick={handleBack}>
               Back
             </button>
@@ -302,6 +320,7 @@ export function EditorShell({
               (() => {
                 const compactSourceId = currentPage.sourceId ?? rootSourceId;
                 const compactPage = { ...currentPage, sourceId: compactSourceId };
+                const compactPageIndex = Math.max(0, pages.length - 1);
                 return (
               <section
                 className={[
@@ -326,15 +345,12 @@ export function EditorShell({
                   title={getPageTitle(compactPage)}
                   host={host}
                   isReference={currentPage.isReference}
+                  referenceScopeDepth={referenceScopeDepths[compactPageIndex]}
+                  referenceSourceLabel={getReferenceSourceLabel(compactPage.sourceId, rootSourceId, referenceScopeDepths[compactPageIndex])}
                   activeChildSegment={undefined}
-                  onNavigateUp={pages.length > 1 ? handleBack : undefined}
+                  onNavigateUp={!isAtRootPage ? handleBack : undefined}
                   onNavigate={(nextPath) => handleNavigate(0, nextPath)}
-                  onSave={handleSave}
-                  onReload={handleReload}
-                  canSave={Boolean(onSave)}
-                  canReload={!readOnly}
                   readOnly={readOnly}
-                  showPersistenceActions={isDirty && !readOnly}
                   onEditModeChange={setIsEditingCurrentPage}
                   onApplyValue={(nextValue) => {
                     if (readOnly) return;
@@ -351,6 +367,7 @@ export function EditorShell({
             {!isCompactStack ? (
               <>
             {visiblePages.map((page, index) => {
+              const fullPageIndex = pages.length - visiblePages.length + index;
               const pageSourceId = page.sourceId ?? rootSourceId;
               const showRootPlaceholder = visiblePages.length === 1 && page.path.length === 0;
               const renderedPage =
@@ -405,19 +422,16 @@ export function EditorShell({
                     title={getPageTitle(renderedPage)}
                     host={host}
                     isReference={renderedPage.isReference}
+                    referenceScopeDepth={referenceScopeDepths[fullPageIndex]}
+                    referenceSourceLabel={getReferenceSourceLabel(renderedPage.sourceId, rootSourceId, referenceScopeDepths[fullPageIndex])}
                     activeChildSegment={deriveActiveChildSegment(renderedPage.path, currentPage.path)}
                     onNavigateUp={
                       index === visiblePages.length - 1
-                        ? (pages.length > 1 ? handleBack : undefined)
-                        : (visiblePages.length === 2 && index === 0 && renderedPage.path.length > 0 ? handleContextBack : undefined)
+                        ? undefined
+                        : (visiblePages.length === 2 && index === 0 && (renderedPage.path.length > 0 || renderedPage.isReference) ? handleContextBack : undefined)
                     }
                     onNavigate={(nextPath) => handleNavigate(index, nextPath)}
-                    onSave={handleSave}
-                    onReload={handleReload}
-                    canSave={Boolean(onSave)}
-                    canReload={!readOnly}
                     readOnly={readOnly}
-                    showPersistenceActions={isDirty && !readOnly}
                     onEditModeChange={index === visiblePages.length - 1 ? setIsEditingCurrentPage : undefined}
                     onApplyValue={(nextValue) => {
                       if (readOnly) return;
@@ -460,13 +474,15 @@ export function EditorShell({
                   <ValueInspector
                     value={resolvePageValue(visiblePages[0])}
                     path={visiblePages[0].path}
-                    title={getPageTitle(visiblePages[0])}
-                    host={host}
-                    isReference={visiblePages[0].isReference}
-                    onNavigateUp={() => undefined}
-                    onNavigate={() => undefined}
-                    onApplyValue={() => undefined}
-                  />
+                  title={getPageTitle(visiblePages[0])}
+                  host={host}
+                  isReference={visiblePages[0].isReference}
+                  referenceScopeDepth={referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)]}
+                  referenceSourceLabel={getReferenceSourceLabel(visiblePages[0].sourceId, rootSourceId, referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)])}
+                  onNavigateUp={() => undefined}
+                  onNavigate={() => undefined}
+                  onApplyValue={() => undefined}
+                />
                 </div>
               </section>
             ) : null}
@@ -486,6 +502,8 @@ export function EditorShell({
                   title={getPageTitle(stackAnimation.exitingPage)}
                   host={host}
                   isReference={stackAnimation.exitingPage.isReference}
+                  referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
+                  referenceSourceLabel={getReferenceSourceLabel(stackAnimation.exitingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage))}
                   onNavigate={() => undefined}
                   onApplyValue={() => undefined}
                 />
@@ -509,7 +527,8 @@ export function EditorShell({
                   title={getPageTitle(stackAnimation.promotingPage)}
                   host={host}
                   isReference={stackAnimation.promotingPage.isReference}
-                  onNavigateUp={() => undefined}
+                  referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage)}
+                  referenceSourceLabel={getReferenceSourceLabel(stackAnimation.promotingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage))}
                   onNavigate={() => undefined}
                   onApplyValue={() => undefined}
                 />
@@ -584,4 +603,36 @@ function getCompactOptionLabel(page: NavigationPage, rootSourceId: string) {
     return formatPath(page.path);
   }
   return page.navLabel ?? (page.path.length > 0 ? formatPath(page.path) : "Root");
+}
+
+function buildReferenceScopeDepths(pages: NavigationPage[]) {
+  let depth = 0;
+  return pages.map((page) => {
+    if (page.isReference) {
+      depth += 1;
+    }
+    return depth;
+  });
+}
+
+function getReferenceSourceLabel(sourceId: string | undefined, rootSourceId: string, referenceScopeDepth = 0) {
+  if (!sourceId || sourceId === rootSourceId || referenceScopeDepth <= 0) return undefined;
+  const segments = sourceId.split("/");
+  return segments[segments.length - 1] || sourceId;
+}
+
+function getReferenceScopeDepthForPage(pages: NavigationPage[], page: NavigationPage) {
+  const depths = buildReferenceScopeDepths(pages);
+  const pageIndex = pages.findIndex((candidate) => candidate === page);
+  if (pageIndex >= 0) {
+    return depths[pageIndex];
+  }
+
+  let depth = 0;
+  for (const candidate of pages) {
+    if (candidate.isReference) {
+      depth += 1;
+    }
+  }
+  return page.isReference ? depth + 1 : depth;
 }
