@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
+import { createNavigationState, goBack, jumpToPath, openPath } from "../core/navigation";
 import type { JsonPath } from "../core/path";
 import { Breadcrumbs } from "./Breadcrumbs";
 import type { EditorHost } from "./host";
@@ -10,16 +11,9 @@ type EditorShellProps = {
   host?: EditorHost;
 };
 
-type EditorPage = {
-  path: JsonPath;
-  value?: unknown;
-  sourceValue?: unknown;
-  isReference?: boolean;
-};
-
 export function EditorShell({ value, host }: EditorShellProps) {
   const [documentValue, setDocumentValue] = useState(value);
-  const [pages, setPages] = useState<EditorPage[]>([{ path: [] }]);
+  const [pages, setPages] = useState(createNavigationState(value).pages);
   const currentPage = pages[pages.length - 1] ?? { path: [] };
   const path = currentPage.path;
   const currentValue = useMemo(
@@ -28,29 +22,15 @@ export function EditorShell({ value, host }: EditorShellProps) {
   );
 
   function handleNavigate(nextPath: JsonPath) {
-    const targetValue = getValueAtPath(documentValue, nextPath);
-    const nextPage: EditorPage = host?.isReferenceNode?.(targetValue)
-      ? {
-          path: nextPath,
-          value: host.resolveReference?.(targetValue) ?? targetValue,
-          sourceValue: targetValue,
-          isReference: true,
-        }
-      : { path: nextPath };
-
-    setPages((current) => [...current, nextPage]);
+    setPages((currentPages) => openPath({ documentValue, pages: currentPages }, nextPath, host).pages);
   }
 
   function handleJump(targetPath: JsonPath) {
-    setPages((current) => {
-      const index = current.findIndex((page) => page.path.join("\u0000") === targetPath.join("\u0000"));
-      if (index >= 0) return current.slice(0, index + 1);
-      return [{ path: targetPath }];
-    });
+    setPages((currentPages) => jumpToPath({ documentValue, pages: currentPages }, targetPath).pages);
   }
 
   function handleBack() {
-    setPages((current) => current.length > 1 ? current.slice(0, -1) : current);
+    setPages((currentPages) => goBack({ documentValue, pages: currentPages }).pages);
   }
 
   return (
