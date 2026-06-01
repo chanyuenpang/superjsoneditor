@@ -67,3 +67,30 @@ test("expands host-provided reference nodes through a resolver", () => {
   expect(screen.getByText("hero")).toBeInTheDocument();
   expect(screen.getByText("stats")).toBeInTheDocument();
 });
+
+test("keeps the source ref object unchanged after opening a resolved reference page", () => {
+  render(
+    <EditorShell
+      value={{ profile: { companion: { $ref: "characters/hero" } } }}
+      host={{
+        isReferenceNode(value) {
+          return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
+        },
+        getReferenceLabel(value) {
+          return String((value as { $ref: string }).$ref);
+        },
+        resolveReference() {
+          return { id: "hero", stats: { hp: 10 } };
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "companion reference characters/hero" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+  expect(screen.getByText("companion")).toBeInTheDocument();
+  expect(screen.getByText("characters/hero")).toBeInTheDocument();
+  expect(screen.queryByText("hero")).not.toBeInTheDocument();
+});

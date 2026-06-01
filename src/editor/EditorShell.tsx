@@ -10,29 +10,42 @@ type EditorShellProps = {
   host?: EditorHost;
 };
 
+type EditorPage = {
+  path: JsonPath;
+  value?: unknown;
+  sourceValue?: unknown;
+  isReference?: boolean;
+};
+
 export function EditorShell({ value, host }: EditorShellProps) {
   const [documentValue, setDocumentValue] = useState(value);
-  const [pages, setPages] = useState<JsonPath[]>([[]]);
-  const path = pages[pages.length - 1] ?? [];
-  const currentValue = useMemo(() => getValueAtPath(documentValue, path), [documentValue, path]);
+  const [pages, setPages] = useState<EditorPage[]>([{ path: [] }]);
+  const currentPage = pages[pages.length - 1] ?? { path: [] };
+  const path = currentPage.path;
+  const currentValue = useMemo(
+    () => currentPage.value ?? getValueAtPath(documentValue, path),
+    [currentPage.value, documentValue, path],
+  );
 
   function handleNavigate(nextPath: JsonPath) {
     const targetValue = getValueAtPath(documentValue, nextPath);
-    const resolvedValue = host?.isReferenceNode?.(targetValue)
-      ? (host.resolveReference?.(targetValue) ?? targetValue)
-      : targetValue;
+    const nextPage: EditorPage = host?.isReferenceNode?.(targetValue)
+      ? {
+          path: nextPath,
+          value: host.resolveReference?.(targetValue) ?? targetValue,
+          sourceValue: targetValue,
+          isReference: true,
+        }
+      : { path: nextPath };
 
-    setPages((current) => [...current, nextPath]);
-    if (resolvedValue !== targetValue) {
-      setDocumentValue((currentDocument: unknown) => setValueAtPath(currentDocument, nextPath, resolvedValue));
-    }
+    setPages((current) => [...current, nextPage]);
   }
 
   function handleJump(targetPath: JsonPath) {
     setPages((current) => {
-      const index = current.findIndex((page) => page.join("\u0000") === targetPath.join("\u0000"));
+      const index = current.findIndex((page) => page.path.join("\u0000") === targetPath.join("\u0000"));
       if (index >= 0) return current.slice(0, index + 1);
-      return [targetPath];
+      return [{ path: targetPath }];
     });
   }
 
@@ -63,7 +76,15 @@ export function EditorShell({ value, host }: EditorShellProps) {
           path={path}
           host={host}
           onNavigate={handleNavigate}
-          onApplyValue={(nextValue) => setDocumentValue(setValueAtPath(documentValue, path, nextValue))}
+          onApplyValue={(nextValue) => {
+            if (currentPage.isReference) {
+              setPages((current) => current.map((page, index) => (
+                index === current.length - 1 ? { ...page, value: nextValue } : page
+              )));
+              return;
+            }
+            setDocumentValue(setValueAtPath(documentValue, path, nextValue));
+          }}
         />
       </section>
     </div>
