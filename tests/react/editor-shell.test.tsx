@@ -39,3 +39,31 @@ test("opens nested structures in a stacked subpage flow and can go back", () => 
   expect(screen.getByText("Page 2")).toBeInTheDocument();
   expect(screen.getByText("stats")).toBeInTheDocument();
 });
+
+test("expands host-provided reference nodes through a resolver", () => {
+  render(
+    <EditorShell
+      value={{ profile: { companion: { $ref: "characters/hero" } } }}
+      host={{
+        isReferenceNode(value) {
+          return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
+        },
+        getReferenceLabel(value) {
+          return String((value as { $ref: string }).$ref);
+        },
+        resolveReference(value) {
+          if ((value as { $ref: string }).$ref === "characters/hero") {
+            return { id: "hero", stats: { hp: 10 } };
+          }
+          return null;
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "companion reference characters/hero" }));
+  expect(screen.getByText("Page 3")).toBeInTheDocument();
+  expect(screen.getByText("hero")).toBeInTheDocument();
+  expect(screen.getByText("stats")).toBeInTheDocument();
+});

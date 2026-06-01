@@ -1,16 +1,18 @@
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { useEffect, useState } from "react";
+import type { EditorHost } from "./host";
 
 type ValueInspectorProps = {
   value: unknown;
   path: JsonPath;
+  host?: EditorHost;
   onNavigate: (path: JsonPath) => void;
   onApplyValue: (nextValue: unknown) => void;
 };
 
-export function ValueInspector({ value, path, onNavigate, onApplyValue }: ValueInspectorProps) {
-  const entries = describeEntries(value);
+export function ValueInspector({ value, path, host, onNavigate, onApplyValue }: ValueInspectorProps) {
+  const entries = describeEntries(value, host);
   const typeLabel = describeType(value);
   const [draft, setDraft] = useState(() => JSON.stringify(value, null, 2));
 
@@ -76,13 +78,13 @@ type InspectorEntry = {
   canNavigate: boolean;
 };
 
-function describeEntries(value: unknown): InspectorEntry[] {
+function describeEntries(value: unknown, host?: EditorHost): InspectorEntry[] {
   if (Array.isArray(value)) {
     return value.map((item, index) => ({
       key: String(index),
       segment: index,
-      type: describeType(item),
-      preview: previewValue(item),
+      type: describeType(item, host),
+      preview: previewValue(item, host),
       canNavigate: isNavigable(item),
     }));
   }
@@ -91,8 +93,8 @@ function describeEntries(value: unknown): InspectorEntry[] {
     return Object.entries(value as Record<string, unknown>).map(([key, item]) => ({
       key,
       segment: key,
-      type: describeType(item),
-      preview: previewValue(item),
+      type: describeType(item, host),
+      preview: previewValue(item, host),
       canNavigate: isNavigable(item),
     }));
   }
@@ -100,13 +102,15 @@ function describeEntries(value: unknown): InspectorEntry[] {
   return [];
 }
 
-function describeType(value: unknown): string {
+function describeType(value: unknown, host?: EditorHost): string {
+  if (host?.isReferenceNode?.(value)) return "reference";
   if (Array.isArray(value)) return "array";
   if (value === null) return "null";
   return typeof value;
 }
 
-function previewValue(value: unknown): string {
+function previewValue(value: unknown, host?: EditorHost): string {
+  if (host?.isReferenceNode?.(value)) return host.getReferenceLabel?.(value) ?? "reference";
   if (Array.isArray(value)) return `${value.length} items`;
   if (value && typeof value === "object") return `${Object.keys(value as Record<string, unknown>).length} fields`;
   if (typeof value === "string") return value;

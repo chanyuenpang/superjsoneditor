@@ -2,20 +2,30 @@ import { useMemo, useState } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
 import type { JsonPath } from "../core/path";
 import { Breadcrumbs } from "./Breadcrumbs";
+import type { EditorHost } from "./host";
 import { ValueInspector } from "./ValueInspector";
 
 type EditorShellProps = {
   value: unknown;
+  host?: EditorHost;
 };
 
-export function EditorShell({ value }: EditorShellProps) {
+export function EditorShell({ value, host }: EditorShellProps) {
   const [documentValue, setDocumentValue] = useState(value);
   const [pages, setPages] = useState<JsonPath[]>([[]]);
   const path = pages[pages.length - 1] ?? [];
   const currentValue = useMemo(() => getValueAtPath(documentValue, path), [documentValue, path]);
 
   function handleNavigate(nextPath: JsonPath) {
+    const targetValue = getValueAtPath(documentValue, nextPath);
+    const resolvedValue = host?.isReferenceNode?.(targetValue)
+      ? (host.resolveReference?.(targetValue) ?? targetValue)
+      : targetValue;
+
     setPages((current) => [...current, nextPath]);
+    if (resolvedValue !== targetValue) {
+      setDocumentValue((currentDocument: unknown) => setValueAtPath(currentDocument, nextPath, resolvedValue));
+    }
   }
 
   function handleJump(targetPath: JsonPath) {
@@ -51,6 +61,7 @@ export function EditorShell({ value }: EditorShellProps) {
         <ValueInspector
           value={currentValue}
           path={path}
+          host={host}
           onNavigate={handleNavigate}
           onApplyValue={(nextValue) => setDocumentValue(setValueAtPath(documentValue, path, nextValue))}
         />
