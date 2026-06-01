@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createNavigationState, goBack, openPath } from "../../src/core/navigation";
+import { createNavigationState, goBack, jumpToPath, openPath } from "../../src/core/navigation";
 
 describe("navigation state", () => {
   test("opens a normal nested page from the document root", () => {
@@ -39,5 +39,33 @@ describe("navigation state", () => {
 
     const next = goBack(state);
     expect(next.pages).toEqual([{ path: [] }]);
+  });
+
+  test("keeps only the immediate parent and current page when drilling deeper", () => {
+    const state = createNavigationState({ dic: { array: [{ dic2: { value: 1 } }] } });
+    const first = openPath(state, ["dic"]);
+    const second = openPath(first, ["dic", "array"]);
+    const third = openPath(second, ["dic", "array", 0]);
+
+    expect(second.pages).toEqual([{ path: [] }, { path: ["dic"] }, { path: ["dic", "array"] }]);
+    expect(third.pages).toEqual([
+      { path: [] },
+      { path: ["dic"] },
+      { path: ["dic", "array"] },
+      { path: ["dic", "array", 0] },
+    ]);
+  });
+
+  test("rebuilds visible pages from the target breadcrumb path", () => {
+    const state = createNavigationState({ dic: { array: [{ dic2: { value: 1 } }] } });
+    const next = jumpToPath(state, ["dic", "array", 0, "dic2"]);
+
+    expect(next.pages).toEqual([
+      { path: [] },
+      { path: ["dic"] },
+      { path: ["dic", "array"] },
+      { path: ["dic", "array", 0] },
+      { path: ["dic", "array", 0, "dic2"] },
+    ]);
   });
 });

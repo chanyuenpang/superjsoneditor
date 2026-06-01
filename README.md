@@ -1,26 +1,32 @@
 # Super JSON Editor
 
-Super JSON Editor 是一个独立的、可复用的通用 JSON 编辑器项目。
+Super JSON Editor is a reusable, embeddable generic JSON editor.
 
-当前目标分为两层：
+The product goal is straightforward:
 
-1. 构建一个可被任意网页项目引用的通用 JSON 编辑器内核与 UI 组件。
-2. 基于这个通用编辑器，为 `tiny-world` 构建一个专用的资产编辑器。
+1. Build a generic JSON editor that can be embedded into arbitrary web projects
+2. Reach a product-grade interaction and visual quality modeled after `Nocturne`'s `data-editor`
 
-## 当前阶段
+This repository is for the generic editor itself.
+Host-project-specific rules should stay outside this repo.
 
-当前仓库处于规格澄清阶段，优先沉淀设计文档，不急着进入实现。
+## Current Stage
 
-已确认的方向：
+The project is currently in `Phase 1: Interaction Convergence`.
 
-- 项目显示名使用 `Super JSON Editor`
-- 项目目录和仓库名使用 `super-json-editor`
-- 优先做“可被各种项目引用”的通用编辑器，而不是先做桌面壳
-- `tiny-world` 作为第一批落地宿主项目之一
-- 通用编辑器与项目专用资产编辑器拆成两层，而不是混成一个应用
+That means:
 
-## 文档
+- The editor shell is implemented and runnable
+- The stack navigation model exists
+- Array, object, primitive, and reference editing flows already exist in working form
+- The current focus is making the interaction model feel correct and mature
 
-- [项目定位与范围](G:\Projects\super-json-editor\docs\specs\2026-06-01-project-scope.md)
-- [第一版规格草案](G:\Projects\super-json-editor\docs\specs\2026-06-01-v1-spec-draft.md)
-- [技术实现文档](G:\Projects\super-json-editor\docs\specs\2026-06-01-technical-design.md)
+The project is no longer only in a spec phase.
+It is also not yet in a stable product-foundation phase, because core interaction semantics are still being refined.
+
+## Documents
+
+- [Project Scope](G:\Projects\super-json-editor\docs\specs\2026-06-01-project-scope.md)
+- [V1 Spec Draft](G:\Projects\super-json-editor\docs\specs\2026-06-01-v1-spec-draft.md)
+- [Technical Design](G:\Projects\super-json-editor\docs\specs\2026-06-01-technical-design.md)
+- [Product Roadmap](G:\Projects\super-json-editor\docs\plans\2026-06-01-product-roadmap.md)

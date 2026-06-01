@@ -55,16 +55,16 @@ export function goBack(state: NavigationState): NavigationState {
 }
 
 export function jumpToPath(state: NavigationState, targetPath: JsonPath): NavigationState {
-  const index = state.pages.findIndex((page) => page.path.join("\u0000") === targetPath.join("\u0000"));
-  if (index >= 0) {
-    return {
-      ...state,
-      pages: state.pages.slice(0, index + 1),
-    };
-  }
-
   return {
     ...state,
-    pages: [{ path: targetPath }],
+    pages: buildPagesForPath(targetPath),
   };
+}
+
+function buildPagesForPath(targetPath: JsonPath): NavigationPage[] {
+  const pages: NavigationPage[] = [{ path: [] }];
+  for (let index = 0; index < targetPath.length; index += 1) {
+    pages.push({ path: targetPath.slice(0, index + 1) });
+  }
+  return pages;
 }
