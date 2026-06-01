@@ -12,11 +12,14 @@ type ValueInspectorProps = {
   host?: EditorHost;
   isReference?: boolean;
   activeChildSegment?: string | number;
+  readOnly?: boolean;
   onNavigateUp?: () => void;
   onNavigate: (path: JsonPath) => void;
   onApplyValue: (nextValue: unknown) => void;
   onSave?: () => void;
   onReload?: () => void;
+  canSave?: boolean;
+  canReload?: boolean;
   showPersistenceActions?: boolean;
   onEditModeChange?: (isEditing: boolean) => void;
 };
@@ -45,8 +48,11 @@ function ObjectPage({
   onApplyValue,
   onSave,
   onReload,
+  canSave = true,
+  canReload = true,
   showPersistenceActions = false,
   onEditModeChange,
+  readOnly = false,
 }: ValueInspectorProps & { value: Record<string, unknown> }) {
   const [rawOpen, setRawOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -114,7 +120,7 @@ function ObjectPage({
       />
       <div className="node-page__content">
         {rawOpen ? (
-          <RawJsonEditor value={value} onApplyValue={onApplyValue} />
+          <RawJsonEditor readOnly={readOnly} value={value} onApplyValue={onApplyValue} />
         ) : (
           <div className="object-page-body">
             <div className="object-scroll">
@@ -132,7 +138,7 @@ function ObjectPage({
                       <span>{host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key}</span>
                       <div className="property-heading__actions">
                         <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
-                        {editMode ? (
+                        {editMode && !readOnly ? (
                           <button
                             className="danger-icon-button"
                             type="button"
@@ -162,12 +168,13 @@ function ObjectPage({
                         <span className="entry-preview">{key}</span>
                       </button>
                     ) : (
-                      renderPrimitiveEditor({
-                        value: fieldValue,
-                        ariaLabel: `Field ${key}`,
-                        onChange(nextValue) {
-                          onApplyValue({
-                            ...value,
+                          renderPrimitiveEditor({
+                            value: fieldValue,
+                            ariaLabel: `Field ${key}`,
+                            readOnly,
+                            onChange(nextValue) {
+                              onApplyValue({
+                                ...value,
                             [key]: nextValue,
                           });
                         },
@@ -176,7 +183,7 @@ function ObjectPage({
                   </section>
                 ))}
                 {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
-                {editMode ? (
+                {editMode && !readOnly ? (
                   <div className="add-object-form">
                     <div className="add-object-form__fields">
                       <input
@@ -232,26 +239,32 @@ function ObjectPage({
             </div>
             <section className="editor-actions-panel">
               <div className="editor-actions-row">
-                <button
-                  className="ghost-button compact-button"
-                  type="button"
-                  onPointerDown={(event) => event.preventDefault()}
-                  onPointerUp={handleEditModeToggle}
-                  onClick={(event) => {
-                    if (event.detail !== 0) return;
-                    handleEditModeToggle();
-                  }}
-                >
-                  {editMode ? "Done" : "Edit"}
-                </button>
+                {!readOnly ? (
+                  <button
+                    className="ghost-button compact-button"
+                    type="button"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onPointerUp={handleEditModeToggle}
+                    onClick={(event) => {
+                      if (event.detail !== 0) return;
+                      handleEditModeToggle();
+                    }}
+                  >
+                    {editMode ? "Done" : "Edit"}
+                  </button>
+                ) : null}
                 {showPersistenceActions && !editMode ? (
                   <>
-                    <button className="ghost-button compact-button" type="button" onClick={onReload}>
-                      Reload
-                    </button>
-                    <button className="ghost-button compact-button" type="button" onClick={onSave}>
-                      Save
-                    </button>
+                    {canReload ? (
+                      <button className="ghost-button compact-button" type="button" onClick={onReload}>
+                        Reload
+                      </button>
+                    ) : null}
+                    {canSave ? (
+                      <button className="ghost-button compact-button" type="button" onClick={onSave}>
+                        Save
+                      </button>
+                    ) : null}
                   </>
                 ) : null}
               </div>
@@ -275,8 +288,11 @@ function ArrayPage({
   onApplyValue,
   onSave,
   onReload,
+  canSave = true,
+  canReload = true,
   showPersistenceActions = false,
   onEditModeChange,
+  readOnly = false,
 }: ValueInspectorProps & { value: unknown[] }) {
   const [rawOpen, setRawOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -329,7 +345,7 @@ function ArrayPage({
       />
       <div className="node-page__content">
         {rawOpen ? (
-          <RawJsonEditor value={value} onApplyValue={onApplyValue} />
+          <RawJsonEditor readOnly={readOnly} value={value} onApplyValue={onApplyValue} />
         ) : (
           <div className="array-page-body">
             <div className="table-shell">
@@ -398,7 +414,7 @@ function ArrayPage({
                           key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
                           onClick={clickable ? () => onNavigate([...path, index]) : undefined}
                       >
-                        {editMode ? (
+                        {editMode && !readOnly ? (
                           <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
                             <div className="row-action-buttons">
                               <button
@@ -455,7 +471,7 @@ function ArrayPage({
 
                     return (
                       <tr className={activeChildSegment === index ? "is-active-row" : undefined} data-row-index={index} key={`${index}:${String(item)}`}>
-                        {editMode ? (
+                        {editMode && !readOnly ? (
                           <td className="array-column--sticky array-column--actions">
                             <div className="row-action-buttons">
                               <button
@@ -500,6 +516,7 @@ function ArrayPage({
                             renderPrimitiveEditor({
                               value: item,
                               ariaLabel: `Array item ${index}`,
+                              readOnly,
                               onChange(nextValue) {
                                 onApplyValue(setValueAtPath(value, [index], nextValue));
                               },
@@ -509,7 +526,7 @@ function ArrayPage({
                       </tr>
                     );
                   })}
-                  {editMode && pendingRow !== null ? (
+                  {editMode && !readOnly && pendingRow !== null ? (
                     renderPendingArrayRow({
                       value,
                       pendingRow,
@@ -530,26 +547,32 @@ function ArrayPage({
             </div>
             <section className="editor-actions-panel editor-actions-panel--table">
               <div className="editor-actions-row">
-                <button
-                  className="ghost-button compact-button"
-                  type="button"
-                  onPointerDown={(event) => event.preventDefault()}
-                  onPointerUp={handleEditModeToggle}
-                  onClick={(event) => {
-                    if (event.detail !== 0) return;
-                    handleEditModeToggle();
-                  }}
-                >
-                  {editMode ? "Done" : "Edit"}
-                </button>
+                {!readOnly ? (
+                  <button
+                    className="ghost-button compact-button"
+                    type="button"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onPointerUp={handleEditModeToggle}
+                    onClick={(event) => {
+                      if (event.detail !== 0) return;
+                      handleEditModeToggle();
+                    }}
+                  >
+                    {editMode ? "Done" : "Edit"}
+                  </button>
+                ) : null}
                 {showPersistenceActions && !editMode ? (
                   <>
-                    <button className="ghost-button compact-button" type="button" onClick={onReload}>
-                      Reload
-                    </button>
-                    <button className="ghost-button compact-button" type="button" onClick={onSave}>
-                      Save
-                    </button>
+                    {canReload ? (
+                      <button className="ghost-button compact-button" type="button" onClick={onReload}>
+                        Reload
+                      </button>
+                    ) : null}
+                    {canSave ? (
+                      <button className="ghost-button compact-button" type="button" onClick={onSave}>
+                        Save
+                      </button>
+                    ) : null}
                   </>
                 ) : null}
               </div>
@@ -561,7 +584,7 @@ function ArrayPage({
   );
 }
 
-function PrimitivePage({ value, savedValue, path, title, isReference = false, onNavigateUp, onApplyValue }: ValueInspectorProps) {
+function PrimitivePage({ value, savedValue, path, title, isReference = false, onNavigateUp, onApplyValue, readOnly = false }: ValueInspectorProps) {
   const [rawOpen, setRawOpen] = useState(false);
   const pathKey = path.join("/");
 
@@ -581,7 +604,7 @@ function PrimitivePage({ value, savedValue, path, title, isReference = false, on
       />
       <div className="node-page__content">
         {rawOpen ? (
-          <RawJsonEditor value={value} onApplyValue={onApplyValue} />
+          <RawJsonEditor readOnly={readOnly} value={value} onApplyValue={onApplyValue} />
         ) : (
           <div className="property-list">
             <section className={["property-block", "object-field-row", isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
@@ -592,6 +615,7 @@ function PrimitivePage({ value, savedValue, path, title, isReference = false, on
               {renderPrimitiveEditor({
                 value,
                 ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
+                readOnly,
                 onChange: onApplyValue,
               })}
             </section>
@@ -630,7 +654,7 @@ function PageHeader(props: {
   );
 }
 
-function RawJsonEditor(props: { value: unknown; onApplyValue: (nextValue: unknown) => void }) {
+function RawJsonEditor(props: { value: unknown; readOnly?: boolean; onApplyValue: (nextValue: unknown) => void }) {
   const [draft, setDraft] = useState(() => JSON.stringify(props.value, null, 2));
 
   useEffect(() => {
@@ -645,13 +669,16 @@ function RawJsonEditor(props: { value: unknown; onApplyValue: (nextValue: unknow
       <div className="json-editor">
         <textarea
           aria-label="JSON value editor"
+          readOnly={props.readOnly}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
         />
         <div className="json-actions">
-          <button className="primary-button" type="button" onClick={() => props.onApplyValue(JSON.parse(draft))}>
-            Apply JSON
-          </button>
+          {!props.readOnly ? (
+            <button className="primary-button" type="button" onClick={() => props.onApplyValue(JSON.parse(draft))}>
+              Apply JSON
+            </button>
+          ) : null}
         </div>
       </div>
     </section>
@@ -661,6 +688,7 @@ function RawJsonEditor(props: { value: unknown; onApplyValue: (nextValue: unknow
 function renderPrimitiveEditor(props: {
   value: unknown;
   ariaLabel: string;
+  readOnly?: boolean;
   onChange: (nextValue: unknown) => void;
 }) {
   if (typeof props.value === "boolean") {
@@ -669,6 +697,7 @@ function renderPrimitiveEditor(props: {
         <input
           aria-label={props.ariaLabel}
           checked={props.value}
+          disabled={props.readOnly}
           type="checkbox"
           onChange={(event) => props.onChange(event.target.checked)}
         />
@@ -682,6 +711,7 @@ function renderPrimitiveEditor(props: {
       <input
         aria-label={props.ariaLabel}
         className="detail-input"
+        disabled={props.readOnly}
         type="number"
         value={String(props.value)}
         onChange={(event) => props.onChange(Number(event.target.value))}
@@ -694,6 +724,7 @@ function renderPrimitiveEditor(props: {
       <input
         aria-label={props.ariaLabel}
         className="detail-input"
+        disabled={props.readOnly}
         value="null"
         onChange={(event) => props.onChange(event.target.value === "null" ? null : event.target.value)}
       />
@@ -706,6 +737,7 @@ function renderPrimitiveEditor(props: {
       <textarea
         aria-label={props.ariaLabel}
         className="detail-input detail-textarea"
+        disabled={props.readOnly}
         rows={getMultilineEditorRows(text)}
         value={text}
         onChange={(event) => props.onChange(event.target.value)}
@@ -717,6 +749,7 @@ function renderPrimitiveEditor(props: {
     <input
       aria-label={props.ariaLabel}
       className="detail-input"
+      disabled={props.readOnly}
       value={text}
       onChange={(event) => props.onChange(event.target.value)}
     />

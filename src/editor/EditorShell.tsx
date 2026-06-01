@@ -7,18 +7,34 @@ import type { EditorHost } from "./host";
 import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, samePath, type StackAnimation } from "./stack-motion";
 import { ValueInspector } from "./ValueInspector";
 
-type EditorShellProps = {
+export type EditorDocuments = Record<string, unknown>;
+
+export type EditorSaveHandler = (documents: EditorDocuments) => void | EditorDocuments | Promise<void | EditorDocuments>;
+export type EditorReloadHandler = () => void | EditorDocuments | Promise<void | EditorDocuments>;
+
+export type EditorShellProps = {
   documents?: Record<string, unknown>;
   rootSourceId?: string;
   value?: unknown;
   host?: EditorHost;
+  onSave?: EditorSaveHandler;
+  onReload?: EditorReloadHandler;
+  readOnly?: boolean;
 };
 
 const animationDurationMs = 500;
 const stackedPushEnterDurationMs = 500;
 
-export function EditorShell({ documents, rootSourceId = "main", value, host }: EditorShellProps) {
-  const initialDocuments = documents ?? { [rootSourceId]: value };
+export function EditorShell({
+  documents,
+  rootSourceId = "main",
+  value,
+  host,
+  onSave,
+  onReload,
+  readOnly = false,
+}: EditorShellProps) {
+  const initialDocuments = useMemo(() => normalizeDocuments(documents, rootSourceId, value), [documents, rootSourceId, value]);
   const [documentsBySourceId, setDocumentsBySourceId] = useState(initialDocuments);
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
@@ -37,20 +53,23 @@ export function EditorShell({ documents, rootSourceId = "main", value, host }: E
     [documentsBySourceId, savedDocumentsBySourceId],
   );
 
+  useEffect(() => {
+    setDocumentsBySourceId(initialDocuments);
+    setSavedDocumentsBySourceId(initialDocuments);
+    setPages(createNavigationState(rootSourceId, initialDocuments).pages);
+    setStackAnimation(null);
+    setSaveState("idle");
+    setIsEditingCurrentPage(false);
+  }, [initialDocuments, rootSourceId]);
+
   async function handleSave() {
+    if (readOnly || !onSave) return;
     setSaveState("saving");
     try {
-      const response = await fetch("/__save-demo-sources", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ documents: documentsBySourceId }),
-      });
-      if (!response.ok) {
-        throw new Error(`Save failed with status ${response.status}`);
-      }
-      setSavedDocumentsBySourceId(documentsBySourceId);
+      const maybeNextDocuments = await onSave(documentsBySourceId);
+      const nextDocuments = maybeNextDocuments ? maybeNextDocuments : documentsBySourceId;
+      setDocumentsBySourceId(nextDocuments);
+      setSavedDocumentsBySourceId(nextDocuments);
       setSaveState("saved");
       window.setTimeout(() => setSaveState("idle"), 2000);
     } catch {
@@ -58,12 +77,19 @@ export function EditorShell({ documents, rootSourceId = "main", value, host }: E
     }
   }
 
-  function handleReload() {
-    setDocumentsBySourceId(savedDocumentsBySourceId);
-    setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
-    setStackAnimation(null);
-    setSaveState("idle");
-    setIsEditingCurrentPage(false);
+  async function handleReload() {
+    try {
+      const nextDocuments = onReload ? await onReload() : savedDocumentsBySourceId;
+      const resolvedDocuments = nextDocuments ?? savedDocumentsBySourceId;
+      setDocumentsBySourceId(resolvedDocuments);
+      setSavedDocumentsBySourceId(resolvedDocuments);
+      setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
+      setStackAnimation(null);
+      setSaveState("idle");
+      setIsEditingCurrentPage(false);
+    } catch {
+      setSaveState("error");
+    }
   }
 
   useEffect(() => {
@@ -242,17 +268,19 @@ export function EditorShell({ documents, rootSourceId = "main", value, host }: E
           <div className="toolbar-spacer" />
           {saveState !== "idle" ? (
             <div className="toolbar-meta status-text">
-              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved source files" : "Save failed"}
+              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save failed"}
             </div>
           ) : null}
-          {isDirty && !isEditingCurrentPage ? (
+          {isDirty && !isEditingCurrentPage && !readOnly ? (
             <>
               <button className="ghost-button" type="button" onClick={handleReload}>
                 Reload
               </button>
-              <button className="primary-button" type="button" onClick={handleSave}>
-                Save
-              </button>
+              {onSave ? (
+                <button className="primary-button" type="button" onClick={handleSave}>
+                  Save
+                </button>
+              ) : null}
             </>
           ) : null}
           {pages.length > 1 ? (
@@ -303,9 +331,13 @@ export function EditorShell({ documents, rootSourceId = "main", value, host }: E
                   onNavigate={(nextPath) => handleNavigate(0, nextPath)}
                   onSave={handleSave}
                   onReload={handleReload}
-                  showPersistenceActions={isDirty}
+                  canSave={Boolean(onSave)}
+                  canReload={!readOnly}
+                  readOnly={readOnly}
+                  showPersistenceActions={isDirty && !readOnly}
                   onEditModeChange={setIsEditingCurrentPage}
                   onApplyValue={(nextValue) => {
+                    if (readOnly) return;
                     setDocumentsBySourceId((current) => ({
                       ...current,
                       [compactSourceId]: setValueAtPath(current[compactSourceId], currentPage.path, nextValue),
@@ -382,9 +414,13 @@ export function EditorShell({ documents, rootSourceId = "main", value, host }: E
                     onNavigate={(nextPath) => handleNavigate(index, nextPath)}
                     onSave={handleSave}
                     onReload={handleReload}
-                    showPersistenceActions={isDirty}
+                    canSave={Boolean(onSave)}
+                    canReload={!readOnly}
+                    readOnly={readOnly}
+                    showPersistenceActions={isDirty && !readOnly}
                     onEditModeChange={index === visiblePages.length - 1 ? setIsEditingCurrentPage : undefined}
                     onApplyValue={(nextValue) => {
+                      if (readOnly) return;
                       setDocumentsBySourceId((current) => ({
                         ...current,
                         [renderedPage.sourceId]: setValueAtPath(current[renderedPage.sourceId], renderedPage.path, nextValue),
@@ -486,6 +522,11 @@ export function EditorShell({ documents, rootSourceId = "main", value, host }: E
       </div>
     </div>
   );
+}
+
+function normalizeDocuments(documents: EditorDocuments | undefined, rootSourceId: string, value: unknown) {
+  if (documents) return documents;
+  return { [rootSourceId]: value };
 }
 
 function buildCompactPathOptions(pages: NavigationPage[], rootSourceId: string) {

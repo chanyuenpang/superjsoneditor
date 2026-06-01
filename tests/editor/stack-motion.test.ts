@@ -60,5 +60,10 @@ test("back from a two-page state uses pop animation", () => {
     6,
   );
 
-  expect(animation).toEqual({ direction: "pop", key: 6, exitingPage: page(["profile", "stats"]) });
+  expect(animation).toEqual({
+    direction: "pop",
+    key: 6,
+    exitingPage: page(["profile", "stats"]),
+    promotingPage: page(["profile"]),
+  });
 });

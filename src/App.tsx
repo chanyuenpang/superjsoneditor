@@ -1,4 +1,4 @@
-import { EditorShell } from "./editor/EditorShell";
+import { EditorShell, type EditorDocuments } from "./editor/EditorShell";
 import type { EditorHost } from "./editor/host";
 import heroDocument from "./demo-sources/characters/hero.json";
 import guideDocument from "./demo-sources/characters/guide.json";
@@ -9,6 +9,7 @@ import mainDocument from "./demo-sources/main.json";
 import moonCharmDocument from "./demo-sources/items/moon-charm.json";
 import introQuestDocument from "./demo-sources/quests/intro.json";
 import { DEMO_ROOT_SOURCE_ID } from "./demo-sources/manifest";
+import { saveDemoSources } from "./demo/saveDemoSources";
 
 const demoDocuments: Record<string, unknown> = {
   main: mainDocument,
@@ -39,5 +40,17 @@ const demoHost: EditorHost = {
 };
 
 export function App() {
-  return <EditorShell host={demoHost} rootSourceId={DEMO_ROOT_SOURCE_ID} documents={demoDocuments} />;
+  return (
+    <EditorShell
+      documents={demoDocuments}
+      host={demoHost}
+      onSave={handleDemoSave}
+      rootSourceId={DEMO_ROOT_SOURCE_ID}
+    />
+  );
+}
+
+async function handleDemoSave(documents: EditorDocuments) {
+  await saveDemoSources(documents);
+  return documents;
 }

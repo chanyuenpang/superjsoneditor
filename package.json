@@ -1,13 +1,34 @@
 {
   "name": "super-json-editor",
-  "private": true,
   "version": "0.1.0",
   "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/style.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "*.css"
+  ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "npm run build:app && npm run build:lib",
+    "build:app": "tsc --noEmit && vite build --outDir dist/demo",
+    "build:lib": "tsc -p tsconfig.lib.json && vite build --config vite.lib.config.ts",
     "test": "vitest run",
     "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

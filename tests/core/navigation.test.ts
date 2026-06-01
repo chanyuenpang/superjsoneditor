@@ -7,52 +7,66 @@ describe("navigation state", () => {
     const next = openPath(state, ["profile"]);
 
     expect(next.pages).toHaveLength(2);
-    expect(next.pages[1]).toEqual({ path: ["profile"] });
+    expect(next.pages[1]).toEqual({ sourceId: "main", path: ["profile"], navLabel: "profile" });
   });
 
   test("opens a resolved reference page without mutating the source document", () => {
-    const state = createNavigationState({ profile: { companion: { $ref: "characters/hero" } } });
+    const state = createNavigationState("main", {
+      main: { profile: { companion: { $ref: "characters/hero" } } },
+      "characters/hero": { id: "hero", stats: { hp: 10 } },
+    });
     const next = openPath(state, ["profile", "companion"], {
       isReferenceNode(value) {
         return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
       },
-      resolveReference() {
-        return { id: "hero", stats: { hp: 10 } };
+      resolveReferenceTarget(value, documents) {
+        const sourceId = String((value as { $ref: string }).$ref);
+        return {
+          sourceId,
+          path: [],
+          value: documents[sourceId],
+        };
       },
     });
 
     expect(next.pages).toHaveLength(2);
     expect(next.pages[1]).toEqual({
-      path: ["profile", "companion"],
-      value: { id: "hero", stats: { hp: 10 } },
+      sourceId: "characters/hero",
+      path: [],
+      navLabel: "companion",
       sourceValue: { $ref: "characters/hero" },
       isReference: true,
     });
-    expect(state.documentValue).toEqual({ profile: { companion: { $ref: "characters/hero" } } });
+    expect(state.documents?.main).toEqual({ profile: { companion: { $ref: "characters/hero" } } });
   });
 
   test("goes back by dropping the last page", () => {
     const state = {
-      documentValue: { profile: { name: "Lans" } },
-      pages: [{ path: [] }, { path: ["profile"] }],
+      documents: { main: { profile: { name: "Lans" } } },
+      rootSourceId: "main",
+      pages: [{ sourceId: "main", path: [] }, { sourceId: "main", path: ["profile"], navLabel: "profile" }],
     };
 
     const next = goBack(state);
-    expect(next.pages).toEqual([{ path: [] }]);
+    expect(next.pages).toEqual([{ sourceId: "main", path: [] }]);
   });
 
-  test("keeps only the immediate parent and current page when drilling deeper", () => {
+  test("keeps the breadcrumb path when drilling deeper", () => {
     const state = createNavigationState({ dic: { array: [{ dic2: { value: 1 } }] } });
     const first = openPath(state, ["dic"]);
     const second = openPath(first, ["dic", "array"]);
     const third = openPath(second, ["dic", "array", 0]);
 
-    expect(second.pages).toEqual([{ path: [] }, { path: ["dic"] }, { path: ["dic", "array"] }]);
+    expect(second.pages).toEqual([
+      { sourceId: "main", path: [] },
+      { sourceId: "main", path: ["dic"], navLabel: "dic" },
+      { sourceId: "main", path: ["dic", "array"], navLabel: "array" },
+    ]);
     expect(third.pages).toEqual([
-      { path: [] },
-      { path: ["dic"] },
-      { path: ["dic", "array"] },
-      { path: ["dic", "array", 0] },
+      { sourceId: "main", path: [] },
+      { sourceId: "main", path: ["dic"], navLabel: "dic" },
+      { sourceId: "main", path: ["dic", "array"], navLabel: "array" },
+      { sourceId: "main", path: ["dic", "array", 0], navLabel: "[0]" },
     ]);
   });
 
@@ -61,11 +75,11 @@ describe("navigation state", () => {
     const next = jumpToPath(state, ["dic", "array", 0, "dic2"]);
 
     expect(next.pages).toEqual([
-      { path: [] },
-      { path: ["dic"] },
-      { path: ["dic", "array"] },
-      { path: ["dic", "array", 0] },
-      { path: ["dic", "array", 0, "dic2"] },
+      { sourceId: "main", path: [] },
+      { sourceId: "main", path: ["dic"], navLabel: "dic" },
+      { sourceId: "main", path: ["dic", "array"], navLabel: "array" },
+      { sourceId: "main", path: ["dic", "array", 0], navLabel: "[0]" },
+      { sourceId: "main", path: ["dic", "array", 0, "dic2"], navLabel: "dic2" },
     ]);
   });
 });
