@@ -1027,6 +1027,53 @@ button {
   font-weight: 600;
 }
 
+.array-cell-summary--missing {
+  color: #9aa3b2;
+}
+
+.array-workspace td.array-cell--missing {
+  background: #f4f6f8;
+}
+
+.array-workspace td.array-cell--missing .array-cell-summary {
+  text-align: center;
+}
+
+.array-workspace td.array-cell--mixed {
+  background: #fbfcfd;
+  border-top: 1px solid #edf1f5;
+  border-bottom: 1px solid #edf1f5;
+  padding: 0 10px;
+}
+
+.array-cell--mixed-primary {
+  background: #f5f8fb;
+}
+
+.array-cell--mixed-secondary {
+  text-align: left;
+}
+
+.array-cell--mixed-merged {
+  padding-right: 12px;
+}
+
+.array-cell-merged-placeholder {
+  display: block;
+  min-height: 30px;
+  width: 100%;
+}
+
+.array-cell-summary--mixed-type {
+  color: #5b6675;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.array-cell-summary--mixed-count {
+  color: #6c7887;
+}
+
 .compact-button {
   min-height: 28px;
   padding: 0 8px;

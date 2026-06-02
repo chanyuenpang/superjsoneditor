@@ -288,7 +288,7 @@ function ArrayPage({
   const [suppressRowActionsUntil, setSuppressRowActionsUntil] = useState(0);
   const pathKey = path.join("/");
   const columns = useMemo(() => getArrayColumns(value, host), [value, host]);
-  const objectRows = useMemo(() => isObjectRowArray(value, host), [value, host]);
+  const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
   const columnWidths = useMemo(() => getArrayColumnWidths(value, columns, host), [value, columns, host]);
   const tableWidth = useMemo(
     () => columns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
@@ -396,8 +396,73 @@ function ArrayPage({
                   ) : null}
                   {value.map((item, index) => {
                     if (objectRows) {
-                      const record = item as Record<string, unknown>;
+                      const objectRow = isObjectTableRow(item, host);
                       const clickable = isNavigable(item);
+                      if (!objectRow) {
+                        const mixedPreview = previewValue(item, host);
+                        return (
+                          <tr
+                            className={[
+                              "array-row--mixed",
+                              clickable ? "is-clickable" : "",
+                              activeChildSegment === index ? "is-active-row" : "",
+                            ].filter(Boolean).join(" ")}
+                            data-row-index={index}
+                            key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
+                            onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                          >
+                            {editMode && !readOnly ? (
+                              <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
+                                <div className="row-action-buttons">
+                                  <button
+                                    className="ghost-button compact-button"
+                                    disabled={Date.now() < suppressRowActionsUntil}
+                                    type="button"
+                                    onPointerDown={(event) => event.preventDefault()}
+                                    onPointerUp={(event) => {
+                                      event.stopPropagation();
+                                      const next = [...value];
+                                      next.splice(index + 1, 0, cloneJsonValue(item));
+                                      onApplyValue(next);
+                                    }}
+                                  >
+                                    Copy
+                                  </button>
+                                  <button
+                                    className="danger-icon-button"
+                                    disabled={Date.now() < suppressRowActionsUntil}
+                                    type="button"
+                                    onPointerDown={(event) => event.preventDefault()}
+                                    onPointerUp={(event) => {
+                                      event.stopPropagation();
+                                      onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            ) : null}
+                            {columns.length > 0 ? (
+                              <td className="array-column--sticky array-cell--mixed array-cell--mixed-primary">
+                                <span className="array-cell-summary array-cell-summary--mixed-type">{describeType(item, host)}</span>
+                              </td>
+                            ) : null}
+                            {columns.length > 1 ? (
+                              <td className="array-cell--mixed array-cell--mixed-secondary">
+                                <span className="array-cell-summary array-cell-summary--mixed-count">{mixedPreview}</span>
+                              </td>
+                            ) : null}
+                            {columns.length > 2 ? (
+                              <td className="array-cell--mixed array-cell--mixed-merged" colSpan={columns.length - 2}>
+                                <span className="array-cell-merged-placeholder" aria-hidden="true" />
+                              </td>
+                            ) : null}
+                          </tr>
+                        );
+                      }
+
+                      const record = item as Record<string, unknown>;
                       return (
                         <tr
                           className={[
@@ -440,12 +505,16 @@ function ArrayPage({
                             </div>
                           </td>
                         ) : null}
-                          {columns.map((column, columnIndex) => (
+                          {columns.map((column, columnIndex) => {
+                            const hasColumn = Object.prototype.hasOwnProperty.call(record, column);
+                            return (
                             <td
                               className={
-                                columnIndex === 0
-                                  ? ["array-column--sticky", editMode ? "array-column--after-actions" : ""].filter(Boolean).join(" ")
-                                  : undefined
+                                [
+                                  columnIndex === 0 ? "array-column--sticky" : "",
+                                  editMode && columnIndex === 0 ? "array-column--after-actions" : "",
+                                  !hasColumn ? "array-cell--missing" : "",
+                                ].filter(Boolean).join(" ") || undefined
                               }
                               key={`${index}:${column}`}
                             >
@@ -453,12 +522,14 @@ function ArrayPage({
                                 className={[
                                   "array-cell-summary",
                                   columnIndex === 0 ? "array-cell-summary--identity" : "",
+                                  !hasColumn ? "array-cell-summary--missing" : "",
                                 ].filter(Boolean).join(" ")}
                               >
-                                {previewValue(record[column], host)}
+                                {hasColumn ? previewValue(record[column], host) : "-"}
                               </span>
                             </td>
-                          ))}
+                            );
+                          })}
                         </tr>
                       );
                     }
@@ -790,9 +861,10 @@ function renderPrimitiveEditor(props: {
 }
 
 function getArrayColumns(items: unknown[], host?: EditorHost) {
-  if (isObjectRowArray(items, host)) {
+  if (hasObjectTableRows(items, host)) {
     const columns = new Set<string>();
     for (const item of items) {
+      if (!isObjectTableRow(item, host)) continue;
       for (const key of Object.keys(item as Record<string, unknown>)) columns.add(key);
     }
     return prioritizeArrayColumns([...columns]);
@@ -825,10 +897,12 @@ function getArrayColumnWidths(items: unknown[], columns: string[], host?: Editor
     const headerWidth = measureColumnText(column);
     let contentWidth = headerWidth;
 
-    if (isObjectRowArray(items, host)) {
+    if (hasObjectTableRows(items, host)) {
       for (let index = 0; index < sampleSize; index += 1) {
-        const item = items[index] as Record<string, unknown>;
-        contentWidth = Math.max(contentWidth, measureColumnText(previewValue(item[column], host)));
+        const item = items[index];
+        if (!isObjectTableRow(item, host)) continue;
+        const record = item as Record<string, unknown>;
+        contentWidth = Math.max(contentWidth, measureColumnText(previewValue(record[column], host)));
       }
       widths[column] = clampColumnWidth(contentWidth, column);
       continue;
@@ -875,8 +949,12 @@ function measureColumnText(value: string) {
   return 32 + Math.min(visibleLength, 48) * 7.5;
 }
 
-function isObjectRowArray(items: unknown[], host?: EditorHost) {
-  return items.length > 0 && items.every((item) => isPlainObject(item) && !host?.isReferenceNode?.(item));
+function hasObjectTableRows(items: unknown[], host?: EditorHost) {
+  return items.some((item) => isObjectTableRow(item, host));
+}
+
+function isObjectTableRow(item: unknown, host?: EditorHost) {
+  return isPlainObject(item) && !host?.isReferenceNode?.(item);
 }
 
 function summarizeRowIdentity(value: unknown, index: number, path: JsonPath, host?: EditorHost) {
@@ -917,9 +995,9 @@ function createDefaultValueForType(type: ObjectDraftType) {
 function createDefaultArrayRow(items: unknown[], host?: EditorHost) {
   if (items.length === 0) return {};
 
-  if (isObjectRowArray(items, host)) {
+  if (hasObjectTableRows(items, host)) {
     const columns = getArrayColumns(items, host);
-    const seed = items.find((item) => isPlainObject(item) && !host?.isReferenceNode?.(item)) as Record<string, unknown> | undefined;
+    const seed = items.find((item) => isObjectTableRow(item, host)) as Record<string, unknown> | undefined;
     const nextRow: Record<string, unknown> = {};
     for (const column of columns) {
       nextRow[column] = createEmptyValueFromSample(seed?.[column]);

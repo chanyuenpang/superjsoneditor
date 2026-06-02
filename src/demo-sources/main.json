@@ -98,17 +98,6 @@
       "retryBudget": 2,
       "alertsOpen": 1,
       "isArchived": false,
-      "lastUpdatedAt": "2026-06-01T09:18:00Z",
-      "releaseChannel": "stable",
-      "datasetVersion": "2026.06.01-r4",
-      "tags": [
-        "core",
-        "observatory",
-        "north"
-      ],
-      "primaryCharacter": {
-        "$ref": "characters/hero"
-      },
       "activeQuest": {
         "$ref": "quests/intro"
       },
@@ -117,6 +106,16 @@
       },
       "summary": "Baseline node with low latency and one outstanding alert for an aging cache shard."
     },
+    [
+      "test",
+      "test2",
+      "test3"
+    ],
+    [
+      "test",
+      "test2",
+      "test3"
+    ],
     {
       "rowId": "telemetry-002",
       "entityName": "Sunken Vault Relay Mirror",
@@ -133,9 +132,6 @@
       "queueDepth": 17,
       "retryBudget": 5,
       "alertsOpen": 4,
-      "isArchived": false,
-      "lastUpdatedAt": "2026-06-01T09:21:00Z",
-      "releaseChannel": "preview",
       "datasetVersion": "2026.06.01-r4",
       "tags": [
         "vault",

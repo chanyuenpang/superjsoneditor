@@ -39,6 +39,17 @@ test("host save receives the full document map and clears dirty state", async ()
   await waitFor(() => expect(screen.queryByRole("button", { name: "Save" })).toBeNull());
 });
 
+test("unavailable save attempts can explain that deployed demo changes do not persist", () => {
+  const handleUnavailableSave = vi.fn();
+  render(<EditorShell documents={{ main: { hello: "world" } }} onUnavailableSaveAttempt={handleUnavailableSave} />);
+
+  fireEvent.change(screen.getByLabelText("Field hello"), { target: { value: "galaxy" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+  expect(handleUnavailableSave).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+});
+
 test("reload without a host callback reverts to the last saved snapshot", () => {
   render(<EditorShell documents={{ main: { hello: "world" } }} onSave={() => undefined} />);
 
@@ -80,6 +91,40 @@ test("array pages render a table workspace", () => {
   expect(screen.getByRole("columnheader", { name: "id" })).toBeInTheDocument();
   expect(screen.getByRole("columnheader", { name: "hp" })).toBeInTheDocument();
   expect(screen.getByText("hero")).toBeInTheDocument();
+});
+
+test("array pages render missing object fields as gray dash placeholders", () => {
+  const { container } = render(<EditorShell value={{ party: [{ id: "hero", hp: 10 }, { id: "guide" }] }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "party array 2 items" }));
+
+  const missingTableCell = container.querySelector("td.array-cell--missing");
+  const missingCell = container.querySelector(".array-cell-summary--missing");
+  expect(missingTableCell).not.toBeNull();
+  expect(missingCell).not.toBeNull();
+  expect(missingCell?.textContent).toBe("-");
+});
+
+test("mixed object arrays keep object columns and collapse non-object rows", () => {
+  const { container } = render(
+    <EditorShell
+      value={{ party: [{ id: "hero", hp: 10, mp: 4, role: "tank" }, ["slash", "guard"], { id: "guide", hp: 6, mp: 9, role: "support" }] }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "party array 3 items" }));
+
+  expect(screen.getByRole("columnheader", { name: "id" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "hp" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Type" })).toBeNull();
+  expect(screen.queryByRole("columnheader", { name: "Value" })).toBeNull();
+  const mixedRow = container.querySelector('tr[data-row-index="1"]');
+  const mixedCells = mixedRow?.querySelectorAll("td");
+  const mergedCell = mixedRow?.querySelector("td[colspan='2']");
+  expect(mixedCells?.[0]?.textContent).toContain("array");
+  expect(mixedCells?.[1]?.textContent).toContain("2 items");
+  expect(mergedCell).not.toBeNull();
+  expect(mergedCell?.textContent).toBe("");
 });
 
 test("page back button and toolbar back both use pop animation", () => {

@@ -18,6 +18,7 @@ export type EditorShellProps = {
   value?: unknown;
   host?: EditorHost;
   onSave?: EditorSaveHandler;
+  onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
   readOnly?: boolean;
 };
@@ -31,6 +32,7 @@ export function EditorShell({
   value,
   host,
   onSave,
+  onUnavailableSaveAttempt,
   onReload,
   readOnly = false,
 }: EditorShellProps) {
@@ -294,8 +296,8 @@ export function EditorShell({
               <button className="ghost-button" type="button" onClick={handleReload}>
                 Reload
               </button>
-              {onSave ? (
-                <button className="primary-button" type="button" onClick={handleSave}>
+              {onSave || onUnavailableSaveAttempt ? (
+                <button className="primary-button" type="button" onClick={onSave ? handleSave : onUnavailableSaveAttempt}>
                   Save
                 </button>
               ) : null}
