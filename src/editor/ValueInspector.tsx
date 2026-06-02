@@ -3,17 +3,22 @@ import { setValueAtPath } from "../core/document";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import type { EditorHost } from "./host";
+import type { EditorSchema, EditorValidationError, EditorValidationResult } from "./schema";
 
 type ValueInspectorProps = {
   value: unknown;
   savedValue?: unknown;
+  sourceId?: string;
   path: JsonPath;
   title?: string;
   host?: EditorHost;
+  schema?: EditorSchema;
+  validationResult?: EditorValidationResult | null;
   isReference?: boolean;
   referenceScopeDepth?: number;
   referenceSourceLabel?: string;
   activeChildSegment?: string | number;
+  activeReferenceSourceId?: string;
   readOnly?: boolean;
   onNavigateUp?: () => void;
   onNavigate: (path: JsonPath) => void;
@@ -36,9 +41,12 @@ export function ValueInspector(props: ValueInspectorProps) {
 function ObjectPage({
   value,
   savedValue,
+  sourceId,
   path,
   title,
   host,
+  schema,
+  validationResult,
   isReference = false,
   referenceScopeDepth,
   referenceSourceLabel,
@@ -55,7 +63,7 @@ function ObjectPage({
   const [newKeyType, setNewKeyType] = useState<ObjectDraftType>("string");
   const keyExists = newKey.trim().length > 0 && Object.prototype.hasOwnProperty.call(value, newKey.trim());
   const pathKey = path.join("/");
-  const [fieldOrder, setFieldOrder] = useState(() => Object.keys(value));
+  const [fieldOrder, setFieldOrder] = useState(() => getOrderedKeys(value, schema));
   const fields = useMemo(
     () => fieldOrder
       .filter((key) => Object.prototype.hasOwnProperty.call(value, key))
@@ -69,12 +77,12 @@ function ObjectPage({
     setSuppressEditToggleUntil(0);
     setNewKey("");
     setNewKeyType("string");
-    setFieldOrder(Object.keys(value));
-  }, [pathKey]);
+    setFieldOrder(getOrderedKeys(value, schema));
+  }, [pathKey, schema, value]);
 
   useEffect(() => {
     setFieldOrder((current) => {
-      const nextKeys = Object.keys(value);
+      const nextKeys = getOrderedKeys(value, schema);
       const preserved = current.filter((key) => nextKeys.includes(key));
       const appended = nextKeys.filter((key) => !preserved.includes(key));
       const nextOrder = [...preserved, ...appended];
@@ -83,7 +91,7 @@ function ObjectPage({
       }
       return nextOrder;
     });
-  }, [value]);
+  }, [schema, value]);
 
   useEffect(() => {
     onEditModeChange?.(editMode);
@@ -136,8 +144,9 @@ function ObjectPage({
                     key={key}
                   >
                     <div className="property-heading">
-                      <span>{host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key}</span>
+                      <span>{schema?.properties?.[key]?.title ?? host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key}</span>
                       <div className="property-heading__actions">
+                        {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
                         <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
                         {editMode && !readOnly ? (
                           <button
@@ -154,6 +163,7 @@ function ObjectPage({
                         ) : null}
                       </div>
                     </div>
+                    {schema?.properties?.[key]?.description ? <div className="form-hint">{schema.properties[key]?.description}</div> : null}
                     {isNavigable(fieldValue) ? (
                       <button
                         aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
@@ -172,6 +182,7 @@ function ObjectPage({
                           renderPrimitiveEditor({
                             value: fieldValue,
                             ariaLabel: `Field ${key}`,
+                            schema: schema?.properties?.[key],
                             readOnly,
                             onChange(nextValue) {
                               onApplyValue({
@@ -181,6 +192,9 @@ function ObjectPage({
                         },
                       })
                     )}
+                    {getFieldError(validationResult, sourceId, [...path, key]) ? (
+                      <div className="form-hint form-hint--danger">{getFieldError(validationResult, sourceId, [...path, key])?.message}</div>
+                    ) : null}
                   </section>
                 ))}
                 {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
@@ -275,6 +289,7 @@ function ArrayPage({
   referenceScopeDepth,
   referenceSourceLabel,
   activeChildSegment,
+  activeReferenceSourceId,
   onNavigateUp,
   onNavigate,
   onApplyValue,
@@ -290,10 +305,11 @@ function ArrayPage({
   const columns = useMemo(() => getArrayColumns(value, host), [value, host]);
   const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
   const columnWidths = useMemo(() => getArrayColumnWidths(value, columns, host), [value, columns, host]);
-  const tableWidth = useMemo(
+  const tableMinWidth = useMemo(
     () => columns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
     [columns, columnWidths],
   );
+  const tableWidth = tableMinWidth + (editMode ? 144 : 0);
 
   useEffect(() => {
     setRawOpen(false);
@@ -346,7 +362,10 @@ function ArrayPage({
               <div className="table-scroll">
               <table
                 className="data-table array-workspace"
-                style={{ width: `${tableWidth + (editMode ? 144 : 0)}px`, minWidth: `${tableWidth + (editMode ? 144 : 0)}px` }}
+                style={{
+                  width: objectRows ? `${tableWidth}px` : "100%",
+                  minWidth: `${tableWidth}px`,
+                }}
               >
                 <colgroup>
                   {editMode ? <col data-column="__edit__" style={{ width: "144px" }} /> : null}
@@ -395,9 +414,10 @@ function ArrayPage({
                     </tr>
                   ) : null}
                   {value.map((item, index) => {
+                    const clickable = isNavigable(item);
+                    const isActiveReferenceRow = activeReferenceSourceId != null && inferReferenceSourceId(item, host) === activeReferenceSourceId;
                     if (objectRows) {
                       const objectRow = isObjectTableRow(item, host);
-                      const clickable = isNavigable(item);
                       if (!objectRow) {
                         const mixedPreview = previewValue(item, host);
                         return (
@@ -405,7 +425,7 @@ function ArrayPage({
                             className={[
                               "array-row--mixed",
                               clickable ? "is-clickable" : "",
-                              activeChildSegment === index ? "is-active-row" : "",
+                              activeChildSegment === index || isActiveReferenceRow ? "is-active-row" : "",
                             ].filter(Boolean).join(" ")}
                             data-row-index={index}
                             key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
@@ -535,16 +555,25 @@ function ArrayPage({
                     }
 
                     return (
-                      <tr className={activeChildSegment === index ? "is-active-row" : undefined} data-row-index={index} key={`${index}:${String(item)}`}>
+                      <tr
+                        className={[
+                          clickable ? "is-clickable" : "",
+                          activeChildSegment === index || isActiveReferenceRow ? "is-active-row" : "",
+                        ].filter(Boolean).join(" ")}
+                        data-row-index={index}
+                        key={`${index}:${String(item)}`}
+                        onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                      >
                         {editMode && !readOnly ? (
-                          <td className="array-column--sticky array-column--actions">
+                          <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
                             <div className="row-action-buttons">
                               <button
                                 className="ghost-button compact-button"
                                 disabled={Date.now() < suppressRowActionsUntil}
                                 type="button"
                                 onPointerDown={(event) => event.preventDefault()}
-                                onPointerUp={() => {
+                                onPointerUp={(event) => {
+                                  event.stopPropagation();
                                   const next = [...value];
                                   next.splice(index + 1, 0, cloneJsonValue(item));
                                   onApplyValue(next);
@@ -557,7 +586,10 @@ function ArrayPage({
                                 disabled={Date.now() < suppressRowActionsUntil}
                                 type="button"
                                 onPointerDown={(event) => event.preventDefault()}
-                                onPointerUp={() => onApplyValue(value.filter((_, rowIndex) => rowIndex !== index))}
+                                onPointerUp={(event) => {
+                                  event.stopPropagation();
+                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                }}
                               >
                                 Delete
                               </button>
@@ -571,11 +603,20 @@ function ArrayPage({
                             <button
                               className={["nested-entry-button", "inline", getTypeToneClass(item, host)].filter(Boolean).join(" ")}
                               type="button"
-                              onClick={() => onNavigate([...path, index])}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onNavigate([...path, index]);
+                              }}
                             >
                               <span className="entry-key">{summarizeRowIdentity(item, index, path, host)}</span>
-                              <span className={["entry-type", getTypeToneClass(item, host)].filter(Boolean).join(" ")}>{describeType(item, host)}</span>
-                              <span className="entry-preview">{previewValue(item, host)}</span>
+                              {host?.isReferenceNode?.(item) ? (
+                                null
+                              ) : (
+                                <>
+                                  <span className={["entry-type", getTypeToneClass(item, host)].filter(Boolean).join(" ")}>{describeType(item, host)}</span>
+                                  <span className="entry-preview">{previewValue(item, host)}</span>
+                                </>
+                              )}
                             </button>
                           ) : (
                             renderPrimitiveEditor({
@@ -641,8 +682,11 @@ function ArrayPage({
 function PrimitivePage({
   value,
   savedValue,
+  sourceId,
   path,
   title,
+  schema,
+  validationResult,
   isReference = false,
   referenceScopeDepth,
   referenceSourceLabel,
@@ -683,15 +727,20 @@ function PrimitivePage({
               <div className="property-list">
                 <section className={["property-block", "object-field-row", isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
                   <div className="property-heading">
-                    <span>{path.at(-1) == null ? "value" : String(path.at(-1))}</span>
+                    <span>{schema?.title ?? (path.at(-1) == null ? "value" : String(path.at(-1)))}</span>
                     <small className={["field-type", getTypeToneClass(value)].filter(Boolean).join(" ")}>{describeType(value)}</small>
                   </div>
+                  {schema?.description ? <div className="form-hint">{schema.description}</div> : null}
                   {renderPrimitiveEditor({
                     value,
                     ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
+                    schema,
                     readOnly,
                     onChange: onApplyValue,
                   })}
+                  {getFieldError(validationResult, sourceId, path) ? (
+                    <div className="form-hint form-hint--danger">{getFieldError(validationResult, sourceId, path)?.message}</div>
+                  ) : null}
                 </section>
               </div>
             </div>
@@ -792,9 +841,28 @@ function RawJsonEditor(props: { value: unknown; readOnly?: boolean; onApplyValue
 function renderPrimitiveEditor(props: {
   value: unknown;
   ariaLabel: string;
+  schema?: EditorSchema;
   readOnly?: boolean;
   onChange: (nextValue: unknown) => void;
 }) {
+  if (props.schema?.enum?.length) {
+    return (
+      <select
+        aria-label={props.ariaLabel}
+        className="detail-input"
+        disabled={props.readOnly}
+        value={String(props.value ?? "")}
+        onChange={(event) => props.onChange(coerceSchemaEnumValue(event.target.value, props.schema?.enum ?? []))}
+      >
+        {props.schema.enum.map((option) => (
+          <option key={String(option)} value={String(option)}>
+            {String(option)}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   if (typeof props.value === "boolean") {
     return (
       <label className="checkbox-field">
@@ -974,6 +1042,15 @@ function inferValueTitle(value: unknown): string | null {
     }
   }
   return null;
+}
+
+function inferReferenceSourceId(value: unknown, host?: EditorHost): string | null {
+  if (!host?.isReferenceNode?.(value) || !isPlainObject(value)) {
+    return null;
+  }
+
+  const sourceId = value.$ref;
+  return typeof sourceId === "string" && sourceId ? sourceId : null;
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
@@ -1170,4 +1247,37 @@ function getMultilineEditorRows(value: string) {
 
   if (value.length >= 180) return 6;
   return 4;
+}
+
+function getOrderedKeys(value: Record<string, unknown>, schema?: EditorSchema) {
+  const currentKeys = Object.keys(value);
+  const schemaKeys = Object.keys(schema?.properties ?? {});
+  const prioritized = schemaKeys.filter((key) => currentKeys.includes(key));
+  const remaining = currentKeys.filter((key) => !prioritized.includes(key));
+  return [...prioritized, ...remaining];
+}
+
+function isRequiredField(schema: EditorSchema | undefined, key: string) {
+  return schema?.required?.includes(key) ?? false;
+}
+
+function getFieldError(
+  validationResult: EditorValidationResult | null | undefined,
+  sourceId: string | undefined,
+  path: JsonPath,
+): EditorValidationError | undefined {
+  return validationResult?.fieldErrors?.find((error) => {
+    const sameSource = !error.sourceId || !sourceId || error.sourceId === sourceId;
+    return sameSource && sameJsonPath(error.path, path);
+  });
+}
+
+function sameJsonPath(left: JsonPath, right: JsonPath) {
+  if (left.length !== right.length) return false;
+  return left.every((segment, index) => segment === right[index]);
+}
+
+function coerceSchemaEnumValue(rawValue: string, options: unknown[]) {
+  const match = options.find((option) => String(option) === rawValue);
+  return match ?? rawValue;
 }

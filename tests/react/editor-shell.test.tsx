@@ -2,11 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { test, vi } from "vitest";
 import { App } from "../../src/App";
 import { EditorShell } from "../../src/editor/EditorShell";
+import type { EditorSchemaHost, EditorValidationResult } from "../../src/editor/schema";
 
-test("renders a generic root document with the default title", () => {
+test("renders a generic root document with the root breadcrumb only", () => {
   render(<EditorShell value={{ hello: "world" }} />);
 
-  expect(screen.getByText("JSON Document")).toBeInTheDocument();
+  expect(screen.queryByText("JSON Document")).toBeNull();
   expect(screen.getAllByText("Root").length).toBeGreaterThanOrEqual(2);
   expect(screen.getByLabelText("Field hello")).toHaveValue("world");
 });
@@ -17,7 +18,7 @@ test("renders the demo shell without depending on demo-only chrome", () => {
   expect(screen.getByText("Super JSON Editor")).toBeInTheDocument();
   expect(screen.getByDisplayValue("campaign-alpha")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "characters array 2 items" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "wideRecords array 3 items" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "wideRecords array 5 items" })).toBeInTheDocument();
 });
 
 test("object pages edit primitive fields inline", () => {
@@ -237,4 +238,79 @@ test("reference edits can be saved through the host contract", async () => {
       "characters/hero": { id: "hero-updated", stats: { hp: 10 } },
     }),
   );
+});
+
+test("schema controls object field order and titles", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          title: { type: "string", title: "Title" },
+          id: { type: "string", title: "Identifier" },
+        },
+      };
+    },
+  };
+
+  const { container } = render(<EditorShell value={{ id: "quest_001", title: "First Quest" }} schemaHost={schemaHost} />);
+
+  const headings = [...container.querySelectorAll(".property-heading > span:first-child")].map((node) => node.textContent?.trim());
+  expect(headings.slice(0, 2)).toEqual(["Title", "Identifier"]);
+});
+
+test("schema enum fields render as selects", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema({ path }) {
+      if (path.length === 0) {
+        return {
+          type: "object",
+          properties: {
+            rarity: {
+              type: "string",
+              title: "Rarity",
+              enum: ["common", "rare", "legendary"],
+            },
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+
+  render(<EditorShell value={{ rarity: "rare" }} schemaHost={schemaHost} />);
+
+  expect(screen.getByLabelText("Field rarity")).toHaveDisplayValue("rare");
+  expect(screen.getByRole("option", { name: "legendary" })).toBeInTheDocument();
+});
+
+test("validation failures block save and show field errors", async () => {
+  const handleSave = vi.fn(async (documents: Record<string, unknown>) => documents);
+  const validateDocument = vi.fn(async (): Promise<EditorValidationResult> => ({
+    valid: false,
+    documentErrors: ["Schema validation failed"],
+    fieldErrors: [
+      {
+        sourceId: "main",
+        path: ["title"],
+        message: "Title is required",
+      },
+    ],
+  }));
+
+  render(
+    <EditorShell
+      documents={{ main: { title: "" } }}
+      onSave={handleSave}
+      validateDocument={validateDocument}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText("Field title"), { target: { value: "draft title" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
+
+  await waitFor(() => expect(validateDocument).toHaveBeenCalledTimes(1));
+  expect(handleSave).not.toHaveBeenCalled();
+  expect(screen.getByText("Title is required")).toBeInTheDocument();
+  expect(screen.getByText("Schema validation failed")).toBeInTheDocument();
 });

@@ -516,6 +516,12 @@ button {
   white-space: nowrap;
 }
 
+.breadcrumbs--align-left {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
 .breadcrumbs__button {
   flex: 0 0 auto;
   background: transparent;

@@ -4,6 +4,7 @@ import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type N
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import type { EditorHost } from "./host";
+import type { EditorSchema, EditorSchemaHost, EditorValidationResult, EditorValidationHandler } from "./schema";
 import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, getVisiblePages, samePath, type StackAnimation } from "./stack-motion";
 import { ValueInspector } from "./ValueInspector";
 
@@ -15,11 +16,15 @@ export type EditorReloadHandler = () => void | EditorDocuments | Promise<void | 
 export type EditorShellProps = {
   documents?: Record<string, unknown>;
   rootSourceId?: string;
+  rootPageTitle?: string;
+  showDocumentTitle?: boolean;
   value?: unknown;
   host?: EditorHost;
+  schemaHost?: EditorSchemaHost;
   onSave?: EditorSaveHandler;
   onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
+  validateDocument?: EditorValidationHandler;
   readOnly?: boolean;
 };
 
@@ -29,11 +34,15 @@ const stackedPushEnterDurationMs = 500;
 export function EditorShell({
   documents,
   rootSourceId = "main",
+  rootPageTitle = "Root",
+  showDocumentTitle = true,
   value,
   host,
+  schemaHost,
   onSave,
   onUnavailableSaveAttempt,
   onReload,
+  validateDocument,
   readOnly = false,
 }: EditorShellProps) {
   const initialDocuments = useMemo(() => normalizeDocuments(documents, rootSourceId, value), [documents, rootSourceId, value]);
@@ -43,6 +52,7 @@ export function EditorShell({
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
   const [stackAnimation, setStackAnimation] = useState<StackAnimation | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [validationResult, setValidationResult] = useState<EditorValidationResult | null>(null);
   const [isEditingCurrentPage, setIsEditingCurrentPage] = useState(false);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
@@ -51,7 +61,7 @@ export function EditorShell({
   const currentPage = pages[pages.length - 1] ?? { sourceId: rootSourceId, path: [] };
   const visiblePages = pages.slice(Math.max(0, pages.length - 2));
   const referenceScopeDepths = useMemo(() => buildReferenceScopeDepths(pages), [pages]);
-  const rootLabel = inferDocumentLabel(documentsBySourceId[rootSourceId]);
+  const rootLabel = inferDocumentLabel(documentsBySourceId[rootSourceId], rootPageTitle);
   const isCompactStack = stackViewportWidth > 0 && stackViewportWidth < 768;
   const isAtRootPage = (currentPage.sourceId ?? rootSourceId) === rootSourceId && currentPage.path.length === 0;
   const isDirty = useMemo(
@@ -70,6 +80,7 @@ export function EditorShell({
     setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
     setStackAnimation(null);
     setSaveState("idle");
+    setValidationResult(null);
     setIsEditingCurrentPage(false);
   }, [initialDocuments, initialDocumentsSnapshot]);
 
@@ -77,10 +88,21 @@ export function EditorShell({
     if (readOnly || !onSave) return;
     setSaveState("saving");
     try {
+      if (validateDocument) {
+        const nextValidation = await validateDocument(documentsBySourceId);
+        setValidationResult(nextValidation);
+        if (!nextValidation.valid) {
+          setSaveState("error");
+          return;
+        }
+      } else {
+        setValidationResult(null);
+      }
       const maybeNextDocuments = await onSave(documentsBySourceId);
       const nextDocuments = maybeNextDocuments ? maybeNextDocuments : documentsBySourceId;
       setDocumentsBySourceId(nextDocuments);
       setSavedDocumentsBySourceId(nextDocuments);
+      setValidationResult(null);
       setSaveState("saved");
       window.setTimeout(() => setSaveState("idle"), 2000);
     } catch {
@@ -97,6 +119,7 @@ export function EditorShell({
       setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
       setStackAnimation(null);
       setSaveState("idle");
+      setValidationResult(null);
       setIsEditingCurrentPage(false);
     } catch {
       setSaveState("error");
@@ -140,6 +163,17 @@ export function EditorShell({
     return undefined;
   }
 
+  function resolvePageSchema(page: NavigationPage): EditorSchema | undefined {
+    if (!schemaHost) return undefined;
+    const sourceId = page.sourceId ?? rootSourceId;
+    return schemaHost.getSchema({
+      sourceId,
+      path: page.path,
+      value: resolvePageValue(page),
+      documents: documentsBySourceId,
+    });
+  }
+
   function getPageTitle(page: NavigationPage) {
     if (page.navLabel) {
       if (page.path.some((segment) => typeof segment === "number")) {
@@ -155,9 +189,9 @@ export function EditorShell({
       return String(page.path.at(-1));
     }
     if (sourceId !== rootSourceId) {
-      return inferDocumentLabel(resolvePageValue(page));
+      return inferDocumentLabel(resolvePageValue(page), rootPageTitle);
     }
-    return "Root";
+    return rootPageTitle;
   }
 
   function getPageCrumbs() {
@@ -243,10 +277,12 @@ export function EditorShell({
     <div className="app-frame">
       <div className="workspace">
         <header className="toolbar">
-          <div className="toolbar-title">
-            <strong>{rootLabel}</strong>
-            <span>{getPageTitle(currentPage)}</span>
-          </div>
+          {showDocumentTitle ? (
+            <div className="toolbar-title">
+              <strong>{rootLabel}</strong>
+              <span>{getPageTitle(currentPage)}</span>
+            </div>
+          ) : null}
           {isCompactStack ? (
             <label className="breadcrumbs-select" aria-label="Path">
               <select
@@ -263,7 +299,7 @@ export function EditorShell({
                   handleJump(targetPage.path, targetPage.sourceId ?? rootSourceId);
                 }}
               >
-                {buildCompactPathOptions(pages, rootSourceId).map((option) => (
+                {buildCompactPathOptions(pages, rootSourceId, rootPageTitle).map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -271,9 +307,9 @@ export function EditorShell({
               </select>
             </label>
           ) : (
-            <div className="breadcrumbs" aria-label="Breadcrumb">
+            <div className={`breadcrumbs ${showDocumentTitle ? "" : "breadcrumbs--align-left"}`.trim()} aria-label="Breadcrumb">
               <button className="breadcrumbs__button" type="button" onClick={() => handleJump([], rootSourceId)}>
-                Root
+                {rootPageTitle}
               </button>
               {getPageCrumbs().map((crumb) => (
                 <span key={crumb.id}>
@@ -289,6 +325,11 @@ export function EditorShell({
           {saveState !== "idle" ? (
             <div className="toolbar-meta status-text">
               {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save failed"}
+            </div>
+          ) : null}
+          {validationResult?.documentErrors?.length ? (
+            <div className="toolbar-meta status-text">
+              {validationResult.documentErrors.join(" ")}
             </div>
           ) : null}
           {isDirty && !isEditingCurrentPage && !readOnly ? (
@@ -340,22 +381,27 @@ export function EditorShell({
                 key={`compact:${currentPage.path.join("/") || "root"}`}
                 style={{ left: 0, right: 0 }}
               >
-                <ValueInspector
-                  value={resolvePageValue(compactPage)}
-                  savedValue={getValueAtPath(savedDocumentsBySourceId[compactSourceId], currentPage.path)}
-                  path={currentPage.path}
+                  <ValueInspector
+                    value={resolvePageValue(compactPage)}
+                    savedValue={getValueAtPath(savedDocumentsBySourceId[compactSourceId], currentPage.path)}
+                    sourceId={compactSourceId}
+                    path={currentPage.path}
                   title={getPageTitle(compactPage)}
                   host={host}
-                  isReference={currentPage.isReference}
-                  referenceScopeDepth={referenceScopeDepths[compactPageIndex]}
-                  referenceSourceLabel={getReferenceSourceLabel(compactPage.sourceId, rootSourceId, referenceScopeDepths[compactPageIndex])}
-                  activeChildSegment={undefined}
-                  onNavigateUp={!isAtRootPage ? handleBack : undefined}
+                  schema={resolvePageSchema(compactPage)}
+                  validationResult={validationResult}
+                    isReference={currentPage.isReference}
+                    referenceScopeDepth={referenceScopeDepths[compactPageIndex]}
+                    referenceSourceLabel={getReferenceSourceLabel(compactPage.sourceId, rootSourceId, referenceScopeDepths[compactPageIndex])}
+                    activeChildSegment={undefined}
+                    activeReferenceSourceId={undefined}
+                    onNavigateUp={!isAtRootPage ? handleBack : undefined}
                   onNavigate={(nextPath) => handleNavigate(0, nextPath)}
                   readOnly={readOnly}
                   onEditModeChange={setIsEditingCurrentPage}
                   onApplyValue={(nextValue) => {
                     if (readOnly) return;
+                    setValidationResult(null);
                     setDocumentsBySourceId((current) => ({
                       ...current,
                       [compactSourceId]: setValueAtPath(current[compactSourceId], currentPage.path, nextValue),
@@ -371,19 +417,25 @@ export function EditorShell({
             {visiblePages.map((page, index) => {
               const fullPageIndex = pages.length - visiblePages.length + index;
               const pageSourceId = page.sourceId ?? rootSourceId;
-              const showRootPlaceholder = visiblePages.length === 1 && page.path.length === 0;
+              const pageValue = resolvePageValue(page);
+              const showRootPlaceholder =
+                visiblePages.length === 1 &&
+                page.path.length === 0 &&
+                !Array.isArray(pageValue);
               const renderedPage =
                 stackAnimation?.direction === "push" && stackAnimation.exitingPage && index === 0
                   ? { ...stackAnimation.exitingPage, sourceId: stackAnimation.exitingPage.sourceId ?? rootSourceId }
                   : { ...page, sourceId: pageSourceId };
-              const pageValue = resolvePageValue(renderedPage);
+              const renderedPageValue = samePath(renderedPage.path, page.path) && renderedPage.sourceId === pageSourceId
+                ? pageValue
+                : resolvePageValue(renderedPage);
               const isForeground = visiblePages.length > 1 ? index === visiblePages.length - 1 : !showRootPlaceholder;
               const depthClass = visiblePages.length > 1
                 ? (isForeground ? "stack-page--foreground" : "stack-page--background")
                 : (showRootPlaceholder ? "stack-page--background" : "stack-page--single");
-              const kindClass = Array.isArray(pageValue)
+              const kindClass = Array.isArray(renderedPageValue)
                 ? "stack-page--array"
-                : (pageValue && typeof pageValue === "object" ? "stack-page--object" : "stack-page--primitive");
+                : (renderedPageValue && typeof renderedPageValue === "object" ? "stack-page--object" : "stack-page--primitive");
               const classes = [
                 "stack-page",
                 depthClass,
@@ -418,15 +470,19 @@ export function EditorShell({
                   style={getStackPageStyle(depthClass)}
                 >
                   <ValueInspector
-                    value={pageValue}
+                    value={renderedPageValue}
                     savedValue={getValueAtPath(savedDocumentsBySourceId[renderedPage.sourceId], renderedPage.path)}
+                    sourceId={renderedPage.sourceId}
                     path={renderedPage.path}
                     title={getPageTitle(renderedPage)}
                     host={host}
+                    schema={resolvePageSchema(renderedPage)}
+                    validationResult={validationResult}
                     isReference={renderedPage.isReference}
                     referenceScopeDepth={referenceScopeDepths[fullPageIndex]}
                     referenceSourceLabel={getReferenceSourceLabel(renderedPage.sourceId, rootSourceId, referenceScopeDepths[fullPageIndex])}
                     activeChildSegment={deriveActiveChildSegment(renderedPage.path, currentPage.path)}
+                    activeReferenceSourceId={deriveActiveReferenceSourceId(renderedPage.sourceId, currentPage.sourceId ?? rootSourceId, rootSourceId)}
                     onNavigateUp={
                       index === visiblePages.length - 1
                         ? undefined
@@ -437,6 +493,7 @@ export function EditorShell({
                     onEditModeChange={index === visiblePages.length - 1 ? setIsEditingCurrentPage : undefined}
                     onApplyValue={(nextValue) => {
                       if (readOnly) return;
+                      setValidationResult(null);
                       setDocumentsBySourceId((current) => ({
                         ...current,
                         [renderedPage.sourceId]: setValueAtPath(current[renderedPage.sourceId], renderedPage.path, nextValue),
@@ -475,16 +532,20 @@ export function EditorShell({
                 <div className="stack-page--push-promote-mask">
                   <ValueInspector
                     value={resolvePageValue(visiblePages[0])}
+                    sourceId={visiblePages[0].sourceId ?? rootSourceId}
                     path={visiblePages[0].path}
-                  title={getPageTitle(visiblePages[0])}
-                  host={host}
-                  isReference={visiblePages[0].isReference}
-                  referenceScopeDepth={referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)]}
-                  referenceSourceLabel={getReferenceSourceLabel(visiblePages[0].sourceId, rootSourceId, referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)])}
-                  onNavigateUp={() => undefined}
-                  onNavigate={() => undefined}
-                  onApplyValue={() => undefined}
-                />
+                    title={getPageTitle(visiblePages[0])}
+                    host={host}
+                    schema={resolvePageSchema(visiblePages[0])}
+                    validationResult={validationResult}
+                    isReference={visiblePages[0].isReference}
+                    referenceScopeDepth={referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)]}
+                    referenceSourceLabel={getReferenceSourceLabel(visiblePages[0].sourceId, rootSourceId, referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)])}
+                    activeReferenceSourceId={undefined}
+                    onNavigateUp={() => undefined}
+                    onNavigate={() => undefined}
+                    onApplyValue={() => undefined}
+                  />
                 </div>
               </section>
             ) : null}
@@ -500,12 +561,16 @@ export function EditorShell({
               >
                 <ValueInspector
                   value={resolvePageValue(stackAnimation.exitingPage)}
+                  sourceId={stackAnimation.exitingPage.sourceId ?? rootSourceId}
                   path={stackAnimation.exitingPage.path}
                   title={getPageTitle(stackAnimation.exitingPage)}
                   host={host}
+                  schema={resolvePageSchema(stackAnimation.exitingPage)}
+                  validationResult={validationResult}
                   isReference={stackAnimation.exitingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
                   referenceSourceLabel={getReferenceSourceLabel(stackAnimation.exitingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage))}
+                  activeReferenceSourceId={undefined}
                   onNavigate={() => undefined}
                   onApplyValue={() => undefined}
                 />
@@ -525,12 +590,16 @@ export function EditorShell({
               >
                 <ValueInspector
                   value={resolvePageValue(stackAnimation.promotingPage)}
+                  sourceId={stackAnimation.promotingPage.sourceId ?? rootSourceId}
                   path={stackAnimation.promotingPage.path}
                   title={getPageTitle(stackAnimation.promotingPage)}
                   host={host}
+                  schema={resolvePageSchema(stackAnimation.promotingPage)}
+                  validationResult={validationResult}
                   isReference={stackAnimation.promotingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage)}
                   referenceSourceLabel={getReferenceSourceLabel(stackAnimation.promotingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage))}
+                  activeReferenceSourceId={undefined}
                   onNavigate={() => undefined}
                   onApplyValue={() => undefined}
                 />
@@ -550,11 +619,11 @@ function normalizeDocuments(documents: EditorDocuments | undefined, rootSourceId
   return { [rootSourceId]: value };
 }
 
-function buildCompactPathOptions(pages: NavigationPage[], rootSourceId: string) {
+function buildCompactPathOptions(pages: NavigationPage[], rootSourceId: string, rootPageTitle: string) {
   return [
-    { label: "Root", value: "0" },
+    { label: rootPageTitle, value: "0" },
     ...pages.slice(1).map((page, index) => ({
-      label: getCompactOptionLabel(page, rootSourceId),
+      label: getCompactOptionLabel(page, rootSourceId, rootPageTitle),
       value: String(index + 1),
     })),
   ];
@@ -571,13 +640,13 @@ function getAnimationDuration(animation: StackAnimation) {
   return animationDurationMs;
 }
 
-function inferDocumentLabel(value: unknown) {
+function inferDocumentLabel(value: unknown, fallback = "JSON Document") {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const record = value as Record<string, unknown>;
     if (typeof record.title === "string" && record.title) return record.title;
     if (typeof record.id === "string" && record.id) return record.id;
   }
-  return "JSON Document";
+  return fallback;
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
@@ -600,11 +669,21 @@ function deriveActiveChildSegment(pagePath: JsonPath, currentPath: JsonPath) {
   return isAncestor ? currentPath[pagePath.length] : undefined;
 }
 
-function getCompactOptionLabel(page: NavigationPage, rootSourceId: string) {
+function deriveActiveReferenceSourceId(
+  pageSourceId: string,
+  currentSourceId: string,
+  rootSourceId: string,
+) {
+  if (pageSourceId !== rootSourceId) return undefined;
+  if (currentSourceId === rootSourceId) return undefined;
+  return currentSourceId;
+}
+
+function getCompactOptionLabel(page: NavigationPage, rootSourceId: string, rootPageTitle: string) {
   if ((page.sourceId ?? rootSourceId) === rootSourceId && page.path.length > 0) {
     return formatPath(page.path);
   }
-  return page.navLabel ?? (page.path.length > 0 ? formatPath(page.path) : "Root");
+  return page.navLabel ?? (page.path.length > 0 ? formatPath(page.path) : rootPageTitle);
 }
 
 function buildReferenceScopeDepths(pages: NavigationPage[]) {
