@@ -25,15 +25,11 @@
       "inventory": [
         {
           "slot": "weapon",
-          "item": {
-            "$ref": "items/iron-sword"
-          }
+          "item": "asset://items/iron-sword.json"
         },
         {
           "slot": "charm",
-          "item": {
-            "$ref": "items/moon-charm"
-          }
+          "item": "asset://items/moon-charm.json"
         }
       ]
     },
@@ -51,27 +47,21 @@
     }
   ],
   "world": {
-    "activeQuest": {
-      "$ref": "quests/intro"
-    },
+    "activeQuest": "asset://quests/intro.json",
     "map": {
       "regions": [
         {
           "id": "north-forest",
           "threat": 2,
           "encounters": [
-            {
-              "$ref": "encounters/wolf-pack"
-            }
+            "asset://encounters/wolf-pack.json"
           ]
         },
         {
           "id": "sunken-vault",
           "threat": 5,
           "encounters": [
-            {
-              "$ref": "encounters/shadow-eye"
-            }
+            "asset://encounters/shadow-eye.json"
           ]
         }
       ]

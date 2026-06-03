@@ -11,33 +11,27 @@ describe("navigation state", () => {
   });
 
   test("opens a resolved reference page without mutating the source document", () => {
-    const state = createNavigationState("main", {
-      main: { profile: { companion: { $ref: "characters/hero" } } },
-      "characters/hero": { id: "hero", stats: { hp: 10 } },
-    });
+    const documents: Record<string, unknown> = {
+      main: { profile: { companion: "asset://characters/hero.json" } },
+      "asset://characters/hero.json": { id: "hero", stats: { hp: 10 } },
+    };
+    const state = createNavigationState("main", documents);
     const next = openPath(state, ["profile", "companion"], {
-      isReferenceNode(value) {
-        return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
-      },
-      resolveReferenceTarget(value, documents) {
-        const sourceId = String((value as { $ref: string }).$ref);
-        return {
-          sourceId,
-          path: [],
-          value: documents[sourceId],
-        };
+      loadReferenceSource(uri) {
+        return documents[uri];
       },
     });
 
     expect(next.pages).toHaveLength(2);
     expect(next.pages[1]).toEqual({
-      sourceId: "characters/hero",
+      sourceId: "asset://characters/hero.json",
       path: [],
       navLabel: "companion",
-      sourceValue: { $ref: "characters/hero" },
+      value: { id: "hero", stats: { hp: 10 } },
+      sourceValue: "asset://characters/hero.json",
       isReference: true,
     });
-    expect(state.documents?.main).toEqual({ profile: { companion: { $ref: "characters/hero" } } });
+    expect(state.documents?.main).toEqual({ profile: { companion: "asset://characters/hero.json" } });
   });
 
   test("goes back by dropping the last page", () => {

@@ -1,9 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
-import { setValueAtPath } from "../core/document";
+﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { getValueAtPath, setValueAtPath } from "../core/document";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
-import type { EditorHost } from "./host";
-import type { EditorSchema, EditorValidationError, EditorValidationResult } from "./schema";
+import { getReferenceLabel, getReferenceUri, isReferenceValue, resolveReferenceDocument, type EditorHost, type ReferenceErrorInfo } from "./host";
+import {
+  createDefaultArrayItem,
+  createDefaultValue,
+  createDefaultPropertyValue,
+  resolveNode,
+  resolveSchemaAtPath,
+  switchUnionBranch,
+  validateDocument as validateNodeBySchema,
+  type EditorSchema,
+  type EditorValidationError,
+  type EditorValidationResult,
+} from "./schema";
 
 type ValueInspectorProps = {
   value: unknown;
@@ -13,7 +24,9 @@ type ValueInspectorProps = {
   title?: string;
   host?: EditorHost;
   schema?: EditorSchema;
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined;
   validationResult?: EditorValidationResult | null;
+  referenceError?: ReferenceErrorInfo;
   isReference?: boolean;
   referenceScopeDepth?: number;
   referenceSourceLabel?: string;
@@ -21,12 +34,18 @@ type ValueInspectorProps = {
   activeReferenceSourceId?: string;
   readOnly?: boolean;
   onNavigateUp?: () => void;
+  onClosePage?: () => void;
   onNavigate: (path: JsonPath) => void;
   onApplyValue: (nextValue: unknown) => void;
   onEditModeChange?: (isEditing: boolean) => void;
+  enableRawEditor?: boolean;
 };
 
 export function ValueInspector(props: ValueInspectorProps) {
+  if (props.referenceError) {
+    return <ReferenceErrorPage {...props} referenceError={props.referenceError} />;
+  }
+
   if (Array.isArray(props.value)) {
     return <ArrayPage {...props} value={props.value} />;
   }
@@ -46,15 +65,18 @@ function ObjectPage({
   title,
   host,
   schema,
+  resolveNamedSchema,
   validationResult,
   isReference = false,
   referenceScopeDepth,
   referenceSourceLabel,
   onNavigateUp,
+  onClosePage,
   onNavigate,
   onApplyValue,
   onEditModeChange,
   readOnly = false,
+  enableRawEditor = true,
 }: ValueInspectorProps & { value: Record<string, unknown> }) {
   const [rawOpen, setRawOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -63,6 +85,22 @@ function ObjectPage({
   const [newKeyType, setNewKeyType] = useState<ObjectDraftType>("string");
   const keyExists = newKey.trim().length > 0 && Object.prototype.hasOwnProperty.call(value, newKey.trim());
   const pathKey = path.join("/");
+  const schemaState = schema
+    ? resolveNode({
+      rootSchema: schema,
+      documents: { current: value },
+      sourceId: "current",
+      path: [],
+      value,
+    })
+    : undefined;
+  const pageReadOnly = readOnly || schemaState?.constraints.readOnly === true;
+  const schemaAddablePropertyKeys = getAddablePropertyKeys(value, schema, schemaState?.objectCapabilities?.supportsDynamicKeys ?? false);
+  const usesSchemaPropertyCreation = Boolean(schema) && (schemaAddablePropertyKeys.length > 0 || schemaState?.objectCapabilities?.supportsDynamicKeys);
+  const hasSchemaPropertyChoices = schemaAddablePropertyKeys.some((key) => key.trim().length > 0);
+  const defaultSchemaPropertyKey = schemaAddablePropertyKeys[0] ?? "";
+  const canEditCurrentPage = Boolean(onEditModeChange);
+  const schemaSignature = JSON.stringify(schema ?? null);
   const [fieldOrder, setFieldOrder] = useState(() => getOrderedKeys(value, schema));
   const fields = useMemo(
     () => fieldOrder
@@ -75,10 +113,10 @@ function ObjectPage({
     setRawOpen(false);
     setEditMode(false);
     setSuppressEditToggleUntil(0);
-    setNewKey("");
+    setNewKey(usesSchemaPropertyCreation ? defaultSchemaPropertyKey : "");
     setNewKeyType("string");
     setFieldOrder(getOrderedKeys(value, schema));
-  }, [pathKey, schema, value]);
+  }, [defaultSchemaPropertyKey, pathKey, schemaSignature, usesSchemaPropertyCreation]);
 
   useEffect(() => {
     setFieldOrder((current) => {
@@ -107,6 +145,9 @@ function ObjectPage({
       setNewKeyType("string");
       return;
     }
+    if (usesSchemaPropertyCreation) {
+      setNewKey(defaultSchemaPropertyKey);
+    }
     setEditMode(true);
   }
 
@@ -119,12 +160,21 @@ function ObjectPage({
         referenceScopeDepth={referenceScopeDepth}
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
+        onClosePage={onClosePage}
+      />
+      <SchemaControlBar
+        schema={schema}
+        schemaState={schemaState}
+        value={value}
+        readOnly={pageReadOnly}
+        onApplyValue={onApplyValue}
       />
       <div className="node-page__content">
         {rawOpen ? (
           <RawJsonEditor
-            readOnly={readOnly}
+            readOnly={pageReadOnly}
             value={value}
+            schema={schema}
             onApplyValue={(nextValue) => {
               onApplyValue(nextValue);
               setRawOpen(false);
@@ -148,11 +198,13 @@ function ObjectPage({
                       <div className="property-heading__actions">
                         {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
                         <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
-                        {editMode && !readOnly ? (
+                        {editMode && !pageReadOnly ? (
                           <button
                             className="danger-icon-button"
                             type="button"
+                            disabled={isRequiredField(schema, key)}
                             onClick={() => {
+                              if (isRequiredField(schema, key)) return;
                               const nextValue = { ...value };
                               delete nextValue[key];
                               onApplyValue(nextValue);
@@ -164,6 +216,9 @@ function ObjectPage({
                       </div>
                     </div>
                     {schema?.properties?.[key]?.description ? <div className="form-hint">{schema.properties[key]?.description}</div> : null}
+                    {editMode && isRequiredField(schema, key) ? (
+                      <div className="form-hint">必填字段不能删除。</div>
+                    ) : null}
                     {isNavigable(fieldValue) ? (
                       <button
                         aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
@@ -174,19 +229,19 @@ function ObjectPage({
                         <span className="nested-entry-icon" aria-hidden="true">
                           {getStructureIcon(fieldValue, host)}
                         </span>
-                        <span className="entry-key">{previewValue(fieldValue, host)}</span>
-                        <span className={["entry-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</span>
-                        <span className="entry-preview">{key}</span>
+                        {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
                       </button>
                     ) : (
-                          renderPrimitiveEditor({
-                            value: fieldValue,
-                            ariaLabel: `Field ${key}`,
-                            schema: schema?.properties?.[key],
-                            readOnly,
-                            onChange(nextValue) {
-                              onApplyValue({
-                                ...value,
+                      renderPrimitiveEditor({
+                        value: fieldValue,
+                        ariaLabel: `Field ${key}`,
+                        schema: schema?.properties?.[key],
+                        path: [...path, key],
+                        host,
+                        readOnly: pageReadOnly,
+                        onChange(nextValue) {
+                          onApplyValue({
+                            ...value,
                             [key]: nextValue,
                           });
                         },
@@ -198,53 +253,69 @@ function ObjectPage({
                   </section>
                 ))}
                 {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
-                {editMode && !readOnly ? (
+                {(editMode || usesSchemaPropertyCreation) && !pageReadOnly ? (
                   <div className="add-object-form">
-                    <div className="add-object-form__fields">
-                      <input
-                        className="detail-input"
-                        placeholder="newKey"
-                        value={newKey}
-                        onChange={(event) => setNewKey(event.target.value)}
-                      />
-                      <select className="detail-input" value={newKeyType} onChange={(event) => setNewKeyType(event.target.value as ObjectDraftType)}>
-                        <option value="string">string</option>
-                        <option value="number">number</option>
-                        <option value="object">object</option>
-                        <option value="array">array</option>
-                      </select>
-                    </div>
+                    {usesSchemaPropertyCreation ? (
+                      <div className="add-object-form__fields">
+                        {hasSchemaPropertyChoices ? (
+                          <select className="detail-input" value={newKey} onChange={(event) => setNewKey(event.target.value)}>
+                            <option value="">Select property</option>
+                            {schemaAddablePropertyKeys.map((key) => (
+                              <option key={key} value={key}>
+                                {schema?.properties?.[key]?.title ?? key}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="detail-input"
+                            placeholder="newKey"
+                            value={newKey}
+                            onChange={(event) => setNewKey(event.target.value)}
+                          />
+                        )}
+                        <div className="form-hint">
+                          {schemaState?.objectCapabilities?.patternPropertyEntries?.length
+                            ? `动态字段需匹配: ${schemaState.objectCapabilities.patternPropertyEntries.map((entry) => entry.pattern).join(", ")}`
+                            : "新增字段将按 schema 约束生成默认值。"}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="add-object-form__fields">
+                        <input
+                          className="detail-input"
+                          placeholder="newKey"
+                          value={newKey}
+                          onChange={(event) => setNewKey(event.target.value)}
+                        />
+                        <select className="detail-input" value={newKeyType} onChange={(event) => setNewKeyType(event.target.value as ObjectDraftType)}>
+                          <option value="string">string</option>
+                          <option value="number">number</option>
+                          <option value="object">object</option>
+                          <option value="array">array</option>
+                        </select>
+                      </div>
+                    )}
                     <div className="add-object-form__actions">
                       <button
                         className="primary-button"
+                        aria-label="Add property"
                         disabled={newKey.trim().length === 0 || keyExists}
                         type="button"
                         onPointerDown={(event) => event.preventDefault()}
-                        onPointerUp={() => {
+                        onClick={() => {
                           const key = newKey.trim();
                           if (!key || Object.prototype.hasOwnProperty.call(value, key)) return;
                           setSuppressEditToggleUntil(Date.now() + 300);
                           onApplyValue({
                             ...value,
-                            [key]: createDefaultValueForType(newKeyType),
+                            [key]: usesSchemaPropertyCreation ? createDefaultPropertyValue(schema, key) : createDefaultValueForType(newKeyType),
                           });
-                          setNewKey("");
-                          setNewKeyType("string");
-                        }}
-                        onClick={(event) => {
-                          if (event.detail !== 0) return;
-                          const key = newKey.trim();
-                          if (!key || Object.prototype.hasOwnProperty.call(value, key)) return;
-                          setSuppressEditToggleUntil(Date.now() + 300);
-                          onApplyValue({
-                            ...value,
-                            [key]: createDefaultValueForType(newKeyType),
-                          });
-                          setNewKey("");
+                          setNewKey(usesSchemaPropertyCreation ? getAddablePropertyKeys({ ...value, [key]: true }, schema)[0] ?? "" : "");
                           setNewKeyType("string");
                         }}
                       >
-                        Create key
+                        Add property
                       </button>
                     </div>
                     {keyExists ? <small className="form-hint form-hint--danger">Key already exists.</small> : null}
@@ -254,19 +325,17 @@ function ObjectPage({
             </div>
             <section className="editor-actions-panel">
               <div className="editor-actions-row">
-                <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
-                  Raw
-                </button>
-                {!readOnly ? (
+                {enableRawEditor && canEditCurrentPage ? (
+                  <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
+                    Raw
+                  </button>
+                ) : null}
+                {!pageReadOnly && canEditCurrentPage ? (
                   <button
                     className="ghost-button compact-button"
                     type="button"
                     onPointerDown={(event) => event.preventDefault()}
-                    onPointerUp={handleEditModeToggle}
-                    onClick={(event) => {
-                      if (event.detail !== 0) return;
-                      handleEditModeToggle();
-                    }}
+                    onClick={handleEditModeToggle}
                   >
                     {editMode ? "Done" : "Edit"}
                   </button>
@@ -282,47 +351,109 @@ function ObjectPage({
 
 function ArrayPage({
   value,
+  sourceId,
   path,
   title,
   host,
+  schema,
+  resolveNamedSchema,
+  validationResult,
   isReference = false,
   referenceScopeDepth,
   referenceSourceLabel,
   activeChildSegment,
   activeReferenceSourceId,
   onNavigateUp,
+  onClosePage,
   onNavigate,
   onApplyValue,
   onEditModeChange,
   readOnly = false,
+  enableRawEditor = true,
 }: ValueInspectorProps & { value: unknown[] }) {
   const [rawOpen, setRawOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [suppressEditToggleUntil, setSuppressEditToggleUntil] = useState(0);
   const [pendingRow, setPendingRow] = useState<unknown | null>(null);
   const [suppressRowActionsUntil, setSuppressRowActionsUntil] = useState(0);
+  const [hostActionError, setHostActionError] = useState<string | null>(null);
+  const [isCreatingReferenceRow, setIsCreatingReferenceRow] = useState(false);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tableViewportWidth, setTableViewportWidth] = useState(0);
   const pathKey = path.join("/");
-  const columns = useMemo(() => getArrayColumns(value, host), [value, host]);
+  const canEditCurrentPage = Boolean(onEditModeChange);
+  const schemaState = schema
+    ? resolveNode({
+      rootSchema: schema,
+      documents: { current: value },
+      sourceId: "current",
+      path: [],
+      value,
+    })
+    : undefined;
+  const pageReadOnly = readOnly || schemaState?.constraints.readOnly === true;
+  const minItemsReached = (schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length;
+  const maxItemsReached =
+    schemaState?.arrayCapabilities?.maxItems !== undefined && value.length >= schemaState.arrayCapabilities.maxItems;
+  const arrayError = getFieldError(validationResult, sourceId, path)?.message ?? getLocalSchemaError(schemaState);
+  const schemaItemsSignature = JSON.stringify(schema?.items ?? null);
+  const referenceViewSchema = useMemo(
+    () => resolveReferenceViewSchema(schema?.items, resolveNamedSchema),
+    [resolveNamedSchema, schema?.items],
+  );
+  const referenceViewColumns = useMemo(
+    () => getReferenceViewColumns(value, referenceViewSchema, host),
+    [host, referenceViewSchema, value],
+  );
+  const showReferenceProjectionTable = referenceViewColumns.length > 0;
+  const referenceItemSchema = schema?.items;
+  const referenceSchema = referenceItemSchema?.["x-editor"]?.reference;
+  const showStructuralRowActions = editMode && !pageReadOnly;
+  const columns = useMemo(
+    () => getArrayColumns(value, host, schema?.items, referenceViewColumns),
+    [value, host, schema?.items, referenceViewColumns],
+  );
   const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
-  const columnWidths = useMemo(() => getArrayColumnWidths(value, columns, host), [value, columns, host]);
+  const columnWidths = useMemo(
+    () => getArrayColumnWidths(value, columns, host, schema?.items, referenceViewColumns),
+    [value, columns, host, schema?.items, referenceViewColumns],
+  );
   const tableMinWidth = useMemo(
     () => columns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
     [columns, columnWidths],
   );
   const tableWidth = tableMinWidth + (editMode ? 144 : 0);
+  const trailingColumnKey = columns.at(-1) ?? null;
+  const resolvedTableWidth = Math.max(tableWidth, tableViewportWidth);
+  const expandedTrailingWidth = Math.max(0, tableViewportWidth - tableWidth - 1);
+  // 预留 1px，避免 collapsed border / sticky 分隔线导致横向滚动条。
 
+  // 棰勭暀 1px锛岄伩鍏?collapsed border / sticky 鍒嗛殧绾挎妸 filler 琛ㄦ牸鎾戝嚭妯悜婊氬姩鏉°€?
   useEffect(() => {
     setRawOpen(false);
     setEditMode(false);
     setSuppressEditToggleUntil(0);
     setPendingRow(null);
     setSuppressRowActionsUntil(0);
-  }, [pathKey]);
+    setHostActionError(null);
+    setIsCreatingReferenceRow(false);
+  }, [pathKey, schemaItemsSignature]);
 
   useEffect(() => {
     onEditModeChange?.(editMode);
     return () => onEditModeChange?.(false);
   }, [editMode, onEditModeChange]);
+
+  useEffect(() => {
+    const node = tableScrollRef.current;
+    if (!node) return;
+    const updateWidth = () => setTableViewportWidth(node.clientWidth);
+    updateWidth();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => updateWidth());
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   function handleEditModeToggle() {
     if (Date.now() < suppressEditToggleUntil) return;
@@ -333,7 +464,41 @@ function ArrayPage({
       return;
     }
     setEditMode(true);
-    setPendingRow(createDefaultArrayRow(value, host));
+    setHostActionError(null);
+    if (showReferenceProjectionTable) {
+      setPendingRow(null);
+      return;
+    }
+    setPendingRow(createDefaultArrayRow(value, schema?.items, host));
+  }
+
+  async function handleCreateReferenceRow() {
+    if (maxItemsReached) {
+      return;
+    }
+    if (!host?.createReferenceRow) {
+      setHostActionError("褰撳墠瀹夸富鏈帴鍏ュ紩鐢ㄨ鍒涘缓鑳藉姏");
+      return;
+    }
+    try {
+      setIsCreatingReferenceRow(true);
+      setHostActionError(null);
+      const createdValue = await host.createReferenceRow({
+        path,
+        value,
+        schema: referenceItemSchema,
+        reference: referenceSchema,
+      });
+      if (createdValue === undefined) {
+        return;
+      }
+      setSuppressRowActionsUntil(Date.now() + 450);
+      onApplyValue([...value, cloneJsonValue(createdValue)]);
+    } catch (error) {
+      setHostActionError(error instanceof Error ? error.message : "创建引用行失败。");
+    } finally {
+      setIsCreatingReferenceRow(false);
+    }
   }
 
   return (
@@ -345,12 +510,21 @@ function ArrayPage({
         referenceScopeDepth={referenceScopeDepth}
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
+        onClosePage={onClosePage}
+      />
+      <SchemaControlBar
+        schema={schema}
+        schemaState={schemaState}
+        value={value}
+        readOnly={pageReadOnly}
+        onApplyValue={onApplyValue}
       />
       <div className="node-page__content">
         {rawOpen ? (
           <RawJsonEditor
-            readOnly={readOnly}
+            readOnly={pageReadOnly}
             value={value}
+            schema={schema}
             onApplyValue={(nextValue) => {
               onApplyValue(nextValue);
               setRawOpen(false);
@@ -358,28 +532,30 @@ function ArrayPage({
           />
         ) : (
           <div className="array-page-body">
+            {arrayError ? <div className="form-hint form-hint--danger">{arrayError}</div> : null}
+            {hostActionError ? <div className="form-hint form-hint--danger">{hostActionError}</div> : null}
             <div className="table-shell">
-              <div className="table-scroll">
+              <div className="table-scroll" ref={tableScrollRef}>
               <table
                 className="data-table array-workspace"
                 style={{
-                  width: objectRows ? `${tableWidth}px` : "100%",
+                  width: `${resolvedTableWidth}px`,
                   minWidth: `${tableWidth}px`,
                 }}
               >
                 <colgroup>
-                  {editMode ? <col data-column="__edit__" style={{ width: "144px" }} /> : null}
+                  {showStructuralRowActions ? <col data-column="__edit__" style={{ width: "144px" }} /> : null}
                   {columns.map((column) => (
                     <col
                       data-column={column}
                       key={column}
-                      style={{ width: `${columnWidths[column] ?? 140}px` }}
+                      style={{ width: `${(columnWidths[column] ?? 140) + (column === trailingColumnKey ? expandedTrailingWidth : 0)}px` }}
                     />
                   ))}
                 </colgroup>
                 <thead>
                   <tr>
-                    {editMode ? (
+                    {showStructuralRowActions ? (
                       <th className="array-column--sticky array-column--actions" aria-label="Actions">
                         <div className="array-column-header">
                           <span>Actions</span>
@@ -388,27 +564,42 @@ function ArrayPage({
                       </th>
                     ) : null}
                     {columns.map((column, columnIndex) => (
+                      (() => {
+                        const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
+                        const columnLabel = column === "#"
+                          ? "#"
+                          : (referenceColumn?.title ?? schema?.items?.properties?.[column]?.title ?? column);
+                        const isDescriptionColumn = referenceColumn?.key === "description";
+                        return (
                       <th
-                        aria-label={column}
-                        className={
-                          columnIndex === 0
-                            ? ["array-column--sticky", editMode ? "array-column--after-actions" : ""].filter(Boolean).join(" ")
-                            : undefined
+                        aria-label={columnLabel}
+                            className={
+                              [
+                                columnIndex === 0 ? "array-column--sticky" : "",
+                                showStructuralRowActions && columnIndex === 0 ? "array-column--after-actions" : "",
+                                column === "#" ? "array-column--index" : "",
+                                isImageDisplaySchema(referenceColumn?.columnSchema) ? "array-column--image" : "",
+                                isDescriptionColumn ? "array-column--description" : "",
+                              ].filter(Boolean).join(" ") || undefined
                         }
                         key={column}
                       >
                         <div className="array-column-header">
-                          <span>{column}</span>
-                          <small className={getTypeToneClassForType(describeArrayColumnType(value, column, host))}>{describeArrayColumnType(value, column, host)}</small>
+                              <span>{columnLabel}</span>
+                          {column === "#" ? null : !showReferenceProjectionTable ? (
+                            <small className={getTypeToneClassForType(describeArrayColumnType(value, column, host))}>{describeArrayColumnType(value, column, host)}</small>
+                          ) : null}
                         </div>
                       </th>
+                        );
+                      })()
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {value.length === 0 ? (
                     <tr className="array-empty-row">
-                      <td className="array-empty-cell" colSpan={columns.length + (editMode ? 1 : 0)}>
+                      <td className="array-empty-cell" colSpan={columns.length + (showStructuralRowActions ? 1 : 0)}>
                         This array has no items.
                       </td>
                     </tr>
@@ -416,6 +607,86 @@ function ArrayPage({
                   {value.map((item, index) => {
                     const clickable = isNavigable(item);
                     const isActiveReferenceRow = activeReferenceSourceId != null && inferReferenceSourceId(item, host) === activeReferenceSourceId;
+                    if (showReferenceProjectionTable) {
+                      return (
+                        <tr
+                          className={[
+                            clickable ? "is-clickable" : "",
+                            activeChildSegment === index || isActiveReferenceRow ? "is-active-row" : "",
+                          ].filter(Boolean).join(" ")}
+                          data-row-index={index}
+                          key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
+                          onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                        >
+                          {showStructuralRowActions ? (
+                            <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
+                              <div className="row-action-buttons">
+                                <button
+                                  className="ghost-button compact-button"
+                                  disabled={Date.now() < suppressRowActionsUntil}
+                                  type="button"
+                                  onPointerDown={(event) => event.preventDefault()}
+                                  onPointerUp={(event) => {
+                                    event.stopPropagation();
+                                    const next = [...value];
+                                    next.splice(index + 1, 0, cloneJsonValue(item));
+                                    onApplyValue(next);
+                                  }}
+                                >
+                                  Copy
+                                </button>
+                                <button
+                                  className="danger-icon-button"
+                                  disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
+                                  type="button"
+                                  onPointerDown={(event) => event.preventDefault()}
+                                  onPointerUp={(event) => {
+                                    event.stopPropagation();
+                                    if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
+                                    onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          ) : null}
+                          {columns.map((column, columnIndex) => {
+                            if (column === "#") {
+                              return (
+                                <td
+                                  className={[
+                                    "array-column--sticky",
+                                    "array-column--index",
+                                    showStructuralRowActions ? "array-column--after-actions" : "",
+                                  ].filter(Boolean).join(" ")}
+                                  key={`${index}:index`}
+                                >
+                                  <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{index + 1}</span>
+                                </td>
+                              );
+                            }
+                            const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
+                            if (!referenceColumn) {
+                              return <td key={`${index}:${column}`} />;
+                            }
+                            const imageColumn = isImageDisplaySchema(referenceColumn.columnSchema);
+                            return (
+                              <td
+                                className={[
+                                  columnIndex === 0 ? "array-column--sticky" : "",
+                                  imageColumn ? "array-column--image" : "",
+                                  referenceColumn.key === "description" ? "array-column--description" : "",
+                                ].filter(Boolean).join(" ") || undefined}
+                                key={`${index}:${column}`}
+                              >
+                                {renderReferenceTableCell(item, referenceColumn, schema?.items, resolveNamedSchema, host)}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    }
                     if (objectRows) {
                       const objectRow = isObjectTableRow(item, host);
                       if (!objectRow) {
@@ -431,7 +702,7 @@ function ArrayPage({
                             key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
                             onClick={clickable ? () => onNavigate([...path, index]) : undefined}
                           >
-                            {editMode && !readOnly ? (
+                            {showStructuralRowActions ? (
                               <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
                                 <div className="row-action-buttons">
                                   <button
@@ -450,11 +721,12 @@ function ArrayPage({
                                   </button>
                                   <button
                                     className="danger-icon-button"
-                                    disabled={Date.now() < suppressRowActionsUntil}
+                                    disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
                                     type="button"
                                     onPointerDown={(event) => event.preventDefault()}
-                                    onPointerUp={(event) => {
+                                   onPointerUp={(event) => {
                                       event.stopPropagation();
+                                      if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
                                       onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
                                     }}
                                   >
@@ -493,13 +765,13 @@ function ArrayPage({
                           key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
                           onClick={clickable ? () => onNavigate([...path, index]) : undefined}
                       >
-                        {editMode && !readOnly ? (
+                        {showStructuralRowActions ? (
                           <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
                             <div className="row-action-buttons">
-                              <button
-                                className="ghost-button compact-button"
-                                disabled={Date.now() < suppressRowActionsUntil}
-                                type="button"
+                                  <button
+                                    className="ghost-button compact-button"
+                                    disabled={Date.now() < suppressRowActionsUntil}
+                                    type="button"
                                 onPointerDown={(event) => event.preventDefault()}
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
@@ -512,11 +784,12 @@ function ArrayPage({
                               </button>
                               <button
                                 className="danger-icon-button"
-                                disabled={Date.now() < suppressRowActionsUntil}
+                                disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
                                 type="button"
                                 onPointerDown={(event) => event.preventDefault()}
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
+                                  if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
                                   onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
                                 }}
                               >
@@ -532,7 +805,7 @@ function ArrayPage({
                               className={
                                 [
                                   columnIndex === 0 ? "array-column--sticky" : "",
-                                  editMode && columnIndex === 0 ? "array-column--after-actions" : "",
+                                  showStructuralRowActions && columnIndex === 0 ? "array-column--after-actions" : "",
                                   !hasColumn ? "array-cell--missing" : "",
                                 ].filter(Boolean).join(" ") || undefined
                               }
@@ -564,7 +837,7 @@ function ArrayPage({
                         key={`${index}:${String(item)}`}
                         onClick={clickable ? () => onNavigate([...path, index]) : undefined}
                       >
-                        {editMode && !readOnly ? (
+                        {showStructuralRowActions ? (
                           <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
                             <div className="row-action-buttons">
                               <button
@@ -583,11 +856,12 @@ function ArrayPage({
                               </button>
                               <button
                                 className="danger-icon-button"
-                                disabled={Date.now() < suppressRowActionsUntil}
+                                disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
                                 type="button"
                                 onPointerDown={(event) => event.preventDefault()}
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
+                                  if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
                                   onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
                                 }}
                               >
@@ -596,7 +870,9 @@ function ArrayPage({
                             </div>
                           </td>
                         ) : null}
-                        <td className={["array-column--sticky", editMode ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>{index}</td>
+                        <td className={["array-column--sticky", "array-column--index", showStructuralRowActions ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>
+                          <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{index + 1}</span>
+                        </td>
                         <td>{describeType(item, host)}</td>
                         <td>
                           {isNavigable(item) ? (
@@ -608,21 +884,18 @@ function ArrayPage({
                                 onNavigate([...path, index]);
                               }}
                             >
-                              <span className="entry-key">{summarizeRowIdentity(item, index, path, host)}</span>
-                              {host?.isReferenceNode?.(item) ? (
-                                null
-                              ) : (
-                                <>
-                                  <span className={["entry-type", getTypeToneClass(item, host)].filter(Boolean).join(" ")}>{describeType(item, host)}</span>
-                                  <span className="entry-preview">{previewValue(item, host)}</span>
-                                </>
-                              )}
+                              <span className="nested-entry-icon" aria-hidden="true">
+                                {getStructureIcon(item, host)}
+                              </span>
+                              {renderNestedEntryContent(item, schema?.items, host, resolveNamedSchema, summarizeRowIdentity(item, index, path, host))}
                             </button>
                           ) : (
                             renderPrimitiveEditor({
                               value: item,
                               ariaLabel: `Array item ${index}`,
-                              readOnly,
+                              path: [...path, index],
+                              host,
+                              readOnly: pageReadOnly,
                               onChange(nextValue) {
                                 onApplyValue(setValueAtPath(value, [index], nextValue));
                               },
@@ -632,40 +905,50 @@ function ArrayPage({
                       </tr>
                     );
                   })}
-                  {editMode && !readOnly && pendingRow !== null ? (
-                    renderPendingArrayRow({
-                      value,
-                      pendingRow,
-                      columns,
-                      objectRows,
-                      host,
-                      onChangePendingRow: setPendingRow,
-                      onCreate() {
-                        setSuppressRowActionsUntil(Date.now() + 450);
-                        onApplyValue([...value, cloneJsonValue(pendingRow)]);
-                        setPendingRow(createDefaultArrayRow(value.length > 0 ? [...value, pendingRow] : value, host));
-                      },
-                    })
-                  ) : null}
+                    {showStructuralRowActions && showReferenceProjectionTable ? (
+                      renderReferenceCreateRow({
+                        columns,
+                        createDisabled: maxItemsReached || isCreatingReferenceRow,
+                        onCreate: handleCreateReferenceRow,
+                      })
+                    ) : null}
+                    {showStructuralRowActions && !showReferenceProjectionTable && pendingRow !== null ? (
+                      renderPendingArrayRow({
+                        value,
+                        pendingRow,
+                        columns,
+                        objectRows,
+                        host,
+                        useMergedValueCell: showReferenceProjectionTable,
+                        onChangePendingRow: setPendingRow,
+                        onCreate() {
+                          if (maxItemsReached) {
+                            return;
+                          }
+                          setSuppressRowActionsUntil(Date.now() + 450);
+                          onApplyValue([...value, cloneJsonValue(pendingRow)]);
+                          setPendingRow(createDefaultArrayRow([...value, pendingRow], schema?.items, host));
+                        },
+                        createDisabled: maxItemsReached,
+                      })
+                    ) : null}
                 </tbody>
               </table>
             </div>
             </div>
             <section className="editor-actions-panel editor-actions-panel--table">
               <div className="editor-actions-row">
-                <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
-                  Raw
-                </button>
-                {!readOnly ? (
+                {enableRawEditor && canEditCurrentPage ? (
+                  <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
+                    Raw
+                  </button>
+                ) : null}
+                {!pageReadOnly && canEditCurrentPage ? (
                   <button
                     className="ghost-button compact-button"
                     type="button"
                     onPointerDown={(event) => event.preventDefault()}
-                    onPointerUp={handleEditModeToggle}
-                    onClick={(event) => {
-                      if (event.detail !== 0) return;
-                      handleEditModeToggle();
-                    }}
+                    onClick={handleEditModeToggle}
                   >
                     {editMode ? "Done" : "Edit"}
                   </button>
@@ -685,17 +968,32 @@ function PrimitivePage({
   sourceId,
   path,
   title,
+  host,
   schema,
   validationResult,
   isReference = false,
   referenceScopeDepth,
   referenceSourceLabel,
   onNavigateUp,
+  onClosePage,
   onApplyValue,
+  onEditModeChange,
   readOnly = false,
+  enableRawEditor = true,
 }: ValueInspectorProps) {
   const [rawOpen, setRawOpen] = useState(false);
   const pathKey = path.join("/");
+  const canEditCurrentPage = Boolean(onEditModeChange);
+  const schemaState = schema
+    ? resolveNode({
+      rootSchema: schema,
+      documents: { current: value },
+      sourceId: "current",
+      path: [],
+      value,
+    })
+    : undefined;
+  const pageReadOnly = readOnly || schemaState?.constraints.readOnly === true;
 
   useEffect(() => {
     setRawOpen(false);
@@ -710,12 +1008,21 @@ function PrimitivePage({
         referenceScopeDepth={referenceScopeDepth}
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
+        onClosePage={onClosePage}
+      />
+      <SchemaControlBar
+        schema={schema}
+        schemaState={schemaState}
+        value={value}
+        readOnly={pageReadOnly}
+        onApplyValue={onApplyValue}
       />
       <div className="node-page__content">
         {rawOpen ? (
           <RawJsonEditor
-            readOnly={readOnly}
+            readOnly={pageReadOnly}
             value={value}
+            schema={schema}
             onApplyValue={(nextValue) => {
               onApplyValue(nextValue);
               setRawOpen(false);
@@ -735,7 +1042,9 @@ function PrimitivePage({
                     value,
                     ariaLabel: `Field ${path.at(-1) == null ? "value" : String(path.at(-1))}`,
                     schema,
-                    readOnly,
+                    path,
+                    host,
+                    readOnly: pageReadOnly,
                     onChange: onApplyValue,
                   })}
                   {getFieldError(validationResult, sourceId, path) ? (
@@ -746,13 +1055,55 @@ function PrimitivePage({
             </div>
             <section className="editor-actions-panel">
               <div className="editor-actions-row">
-                <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
-                  Raw
-                </button>
+                {enableRawEditor && canEditCurrentPage ? (
+                  <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
+                    Raw
+                  </button>
+                ) : null}
               </div>
             </section>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function ReferenceErrorPage({
+  path,
+  title,
+  referenceError,
+  referenceScopeDepth,
+  referenceSourceLabel,
+  onNavigateUp,
+  onClosePage,
+}: ValueInspectorProps & { referenceError: ReferenceErrorInfo }) {
+  return (
+    <section className="node-page node-page--primitive">
+      <PageHeader
+        path={path}
+        title={title ?? "Reference Error"}
+        isReference
+        referenceScopeDepth={referenceScopeDepth}
+        referenceSourceLabel={referenceSourceLabel}
+        onNavigateUp={onNavigateUp}
+        onClosePage={onClosePage}
+      />
+      <div className="node-page__content">
+        <div className="object-page-body">
+          <div className="object-scroll">
+            <div className="property-list">
+              <section className="property-block object-field-row">
+                <div className="property-heading">
+                  <span>Reference Error</span>
+                  <small className="field-type tone-reference">reference</small>
+                </div>
+                <div className="form-hint form-hint--danger">{referenceError.message}</div>
+                <div className="form-hint">{referenceError.uri}</div>
+              </section>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -765,6 +1116,7 @@ function PageHeader(props: {
   referenceScopeDepth?: number;
   referenceSourceLabel?: string;
   onNavigateUp?: () => void;
+  onClosePage?: () => void;
 }) {
   return (
     <div
@@ -784,12 +1136,57 @@ function PageHeader(props: {
       </div>
       <div className="page-header__actions">
         {props.referenceSourceLabel ? <div className="detail-source-label">{props.referenceSourceLabel}</div> : null}
+        {props.onClosePage ? (
+          <button className="ghost-button compact-button" type="button" onClick={props.onClosePage}>
+            Close
+          </button>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function RawJsonEditor(props: { value: unknown; readOnly?: boolean; onApplyValue: (nextValue: unknown) => void }) {
+function SchemaControlBar(props: {
+  schema?: EditorSchema;
+  schemaState?: ReturnType<typeof resolveNode>;
+  value: unknown;
+  readOnly?: boolean;
+  onApplyValue: (nextValue: unknown) => void;
+}) {
+  const unionCapabilities = props.schemaState?.unionCapabilities;
+  if (!unionCapabilities || props.readOnly) {
+    return null;
+  }
+
+  const activeOption = unionCapabilities.activeOptionIndex;
+  return (
+    <div className="property-list" style={{ paddingTop: 10, paddingBottom: 0 }}>
+      <section className="property-block object-field-row">
+        <div className="property-heading">
+          <span>Schema 鍒嗘敮</span>
+          <small className="field-type">{unionCapabilities.kind}</small>
+        </div>
+        <select
+          aria-label="Schema branch"
+          className="detail-input"
+          value={String(activeOption ?? 0)}
+          onChange={(event) => {
+            const targetIndex = Number(event.target.value);
+            props.onApplyValue(switchUnionBranch(props.value, props.schema, targetIndex));
+          }}
+        >
+          {unionCapabilities.options.map((option) => (
+            <option key={option.index} value={option.index}>
+              {option.title}
+            </option>
+          ))}
+        </select>
+      </section>
+    </div>
+  );
+}
+
+function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?: boolean; onApplyValue: (nextValue: unknown) => void }) {
   const [draft, setDraft] = useState(() => JSON.stringify(props.value, null, 2));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -801,6 +1198,15 @@ function RawJsonEditor(props: { value: unknown; readOnly?: boolean; onApplyValue
   function handleApplyJson() {
     try {
       const nextValue = JSON.parse(draft);
+      if (props.schema) {
+        const validation = validateNodeBySchema(props.schema, nextValue);
+        if (!validation.valid) {
+          const fieldMessage = validation.fieldErrors?.[0]?.message;
+          const documentMessage = validation.documentErrors?.[0];
+          setErrorMessage(fieldMessage ?? documentMessage ?? "Schema validation failed");
+          return;
+        }
+      }
       setErrorMessage(null);
       props.onApplyValue(nextValue);
     } catch (error) {
@@ -842,15 +1248,68 @@ function renderPrimitiveEditor(props: {
   value: unknown;
   ariaLabel: string;
   schema?: EditorSchema;
+  path: JsonPath;
+  host?: EditorHost;
   readOnly?: boolean;
   onChange: (nextValue: unknown) => void;
 }) {
-  if (props.schema?.enum?.length) {
-    return (
+  const readOnly = props.readOnly || props.schema?.const !== undefined;
+  const nullableBranch = getNullableBranchSchema(props.schema);
+  const nullableLabel = getNullableBranchLabel(nullableBranch);
+  const referenceOptions = props.schema?.["x-editor"]?.reference && props.host?.getReferenceOptions
+    ? props.host.getReferenceOptions({
+      path: props.path,
+      value: props.value,
+      schema: props.schema,
+      reference: props.schema["x-editor"]?.reference,
+    })
+    : [];
+
+  if (nullableBranch) {
+    if (props.value === null) {
+      return (
+        <div className="nullable-editor">
+          <button
+            className="ghost-button compact-button"
+            type="button"
+            disabled={readOnly}
+            onClick={() => props.onChange(createDefaultValue(nullableBranch))}
+          >
+            {`Set ${nullableLabel} value`}
+          </button>
+          <div className="form-hint">This field currently stores null.</div>
+        </div>
+      );
+    }
+  }
+
+  if (referenceOptions.length > 0) {
+    return withNullableControls(
       <select
         aria-label={props.ariaLabel}
         className="detail-input"
-        disabled={props.readOnly}
+        disabled={readOnly}
+        value={String(props.value ?? "")}
+        onChange={(event) => props.onChange(event.target.value)}
+      >
+        {referenceOptions.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
+    );
+  }
+
+  if (props.schema?.enum?.length) {
+    return withNullableControls(
+      <select
+        aria-label={props.ariaLabel}
+        className="detail-input"
+        disabled={readOnly}
         value={String(props.value ?? "")}
         onChange={(event) => props.onChange(coerceSchemaEnumValue(event.target.value, props.schema?.enum ?? []))}
       >
@@ -859,44 +1318,56 @@ function renderPrimitiveEditor(props: {
             {String(option)}
           </option>
         ))}
-      </select>
+      </select>,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
     );
   }
 
   if (typeof props.value === "boolean") {
-    return (
+    return withNullableControls(
       <label className="checkbox-field">
         <input
           aria-label={props.ariaLabel}
           checked={props.value}
-          disabled={props.readOnly}
+          disabled={readOnly}
           type="checkbox"
           onChange={(event) => props.onChange(event.target.checked)}
         />
         <span>{props.value ? "True" : "False"}</span>
-      </label>
+      </label>,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
     );
   }
 
   if (typeof props.value === "number") {
-    return (
-      <input
-        aria-label={props.ariaLabel}
-        className="detail-input"
-        disabled={props.readOnly}
-        type="number"
-        value={String(props.value)}
-        onChange={(event) => props.onChange(Number(event.target.value))}
-      />
+    return withNullableControls(
+        <input
+          aria-label={props.ariaLabel}
+          className="detail-input"
+          disabled={readOnly}
+          type="number"
+          step={props.schema?.multipleOf ?? (props.schema?.type === "integer" ? 1 : "any")}
+          min={props.schema?.exclusiveMinimum ?? props.schema?.minimum}
+          max={props.schema?.exclusiveMaximum ?? props.schema?.maximum}
+          value={String(props.value)}
+          onChange={(event) => props.onChange(Number(event.target.value))}
+        />,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
     );
   }
 
-  if (props.value === null) {
+  if (props.value === null && !props.schema?.enum?.length) {
     return (
       <input
         aria-label={props.ariaLabel}
         className="detail-input"
-        disabled={props.readOnly}
+        disabled={readOnly}
         value="null"
         onChange={(event) => props.onChange(event.target.value === "null" ? null : event.target.value)}
       />
@@ -905,32 +1376,109 @@ function renderPrimitiveEditor(props: {
 
   const text = typeof props.value === "string" ? props.value : String(props.value ?? "");
   if (shouldUseMultilineEditor(text)) {
-    return (
-      <textarea
-        aria-label={props.ariaLabel}
-        className="detail-input detail-textarea"
-        disabled={props.readOnly}
-        rows={getMultilineEditorRows(text)}
-        value={text}
-        onChange={(event) => props.onChange(event.target.value)}
-      />
+    return withNullableControls(
+        <textarea
+          aria-label={props.ariaLabel}
+          className="detail-input detail-textarea"
+          disabled={readOnly}
+          rows={getMultilineEditorRows(text)}
+          value={text}
+          onChange={(event) => props.onChange(event.target.value)}
+      />,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
     );
   }
 
-  return (
+  return withNullableControls(
     <input
       aria-label={props.ariaLabel}
       className="detail-input"
-      disabled={props.readOnly}
+      disabled={readOnly}
+      maxLength={props.schema?.maxLength}
+      minLength={props.schema?.minLength}
+      pattern={props.schema?.pattern}
       value={text}
       onChange={(event) => props.onChange(event.target.value)}
-    />
+    />,
+    nullableBranch,
+    readOnly,
+    () => props.onChange(null),
   );
 }
 
-function getArrayColumns(items: unknown[], host?: EditorHost) {
+function withNullableControls(
+  control: ReactNode,
+  nullableBranch: EditorSchema | undefined,
+  readOnly: boolean,
+  onSetNull: () => void,
+) {
+  if (!nullableBranch) return control;
+  return (
+    <div className="nullable-editor">
+      {control}
+      <button className="ghost-button compact-button" type="button" disabled={readOnly} onClick={onSetNull}>
+        Set null
+      </button>
+    </div>
+  );
+}
+
+function getNullableBranchSchema(schema?: EditorSchema): EditorSchema | undefined {
+  if (!schema) return undefined;
+  if (Array.isArray(schema.type) && schema.type.includes("null")) {
+    const nonNullTypes = schema.type.filter((type) => type !== "null");
+    if (nonNullTypes.length === 1) {
+      return {
+        ...schema,
+        type: nonNullTypes[0],
+      };
+    }
+  }
+  const unionOptions = schema.oneOf ?? schema.anyOf;
+  if (!unionOptions?.length) return undefined;
+  return unionOptions.find((option) => {
+    if (option.const === null) return false;
+    if (Array.isArray(option.type)) return !option.type.every((type) => type === "null");
+    return option.type !== "null";
+  });
+}
+
+function getNullableBranchLabel(schema?: EditorSchema): string {
+  if (!schema) return "value";
+  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+  if (typeof type === "string") return type;
+  if (schema.properties || schema.additionalProperties || schema.patternProperties) return "object";
+  if (schema.items) return "array";
+  if (schema.enum?.length) return typeof schema.enum[0];
+  const fallback = createDefaultValue(schema);
+  if (fallback === null) return "value";
+  if (Array.isArray(fallback)) return "array";
+  return typeof fallback === "object" ? "object" : typeof fallback;
+}
+
+type ReferenceViewColumn = {
+  key: string;
+  title: string;
+  path: JsonPath;
+  columnSchema?: EditorSchema;
+};
+
+function getArrayColumns(
+  items: unknown[],
+  host?: EditorHost,
+  itemSchema?: EditorSchema,
+  referenceViewColumns: ReferenceViewColumn[] = [],
+) {
+  if (referenceViewColumns.length > 0) {
+    return ["#", ...referenceViewColumns.map((column) => column.key)];
+  }
   if (hasObjectTableRows(items, host)) {
     const columns = new Set<string>();
+    for (const key of Object.keys(itemSchema?.properties ?? {})) {
+      columns.add(key);
+    }
     for (const item of items) {
       if (!isObjectTableRow(item, host)) continue;
       for (const key of Object.keys(item as Record<string, unknown>)) columns.add(key);
@@ -952,13 +1500,37 @@ function prioritizeArrayColumns(columns: string[]) {
   return [...preferred, ...remaining];
 }
 
-function getArrayColumnWidths(items: unknown[], columns: string[], host?: EditorHost) {
+function getArrayColumnWidths(
+  items: unknown[],
+  columns: string[],
+  host?: EditorHost,
+  itemSchema?: EditorSchema,
+  referenceViewColumns: ReferenceViewColumn[] = [],
+) {
   const widths: Record<string, number> = {};
   const sampleSize = Math.min(items.length, 40);
 
   for (const column of columns) {
+    const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
+    if (referenceColumn) {
+      if (isImageDisplaySchema(referenceColumn.columnSchema)) {
+        const preview = referenceColumn.columnSchema?.["x-editor"]?.display?.preview;
+        const previewWidth = preview?.width ?? 40;
+        widths[column] = Math.max(72, Math.min(120, previewWidth + 32));
+        continue;
+      }
+      const headerWidth = measureColumnText(referenceColumn.title);
+      let contentWidth = headerWidth;
+      for (let index = 0; index < sampleSize; index += 1) {
+        const cellText = getReferenceTableCellText(items[index], referenceColumn, itemSchema, host);
+        contentWidth = Math.max(contentWidth, measureColumnText(cellText));
+      }
+      widths[column] = clampColumnWidth(contentWidth, referenceColumn.title);
+      continue;
+    }
+
     if (column === "#") {
-      widths[column] = 64;
+      widths[column] = 45;
       continue;
     }
 
@@ -1022,7 +1594,7 @@ function hasObjectTableRows(items: unknown[], host?: EditorHost) {
 }
 
 function isObjectTableRow(item: unknown, host?: EditorHost) {
-  return isPlainObject(item) && !host?.isReferenceNode?.(item);
+  return isPlainObject(item) && !isReferenceValue(item);
 }
 
 function summarizeRowIdentity(value: unknown, index: number, path: JsonPath, host?: EditorHost) {
@@ -1045,16 +1617,11 @@ function inferValueTitle(value: unknown): string | null {
 }
 
 function inferReferenceSourceId(value: unknown, host?: EditorHost): string | null {
-  if (!host?.isReferenceNode?.(value) || !isPlainObject(value)) {
-    return null;
-  }
-
-  const sourceId = value.$ref;
-  return typeof sourceId === "string" && sourceId ? sourceId : null;
+  return getReferenceUri(value);
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
-  if (host?.isReferenceNode?.(value)) return "reference";
+  if (isReferenceValue(value)) return "reference";
   if (Array.isArray(value)) return "array";
   if (value === null) return "null";
   return typeof value;
@@ -1069,7 +1636,11 @@ function createDefaultValueForType(type: ObjectDraftType) {
   return "";
 }
 
-function createDefaultArrayRow(items: unknown[], host?: EditorHost) {
+function createDefaultArrayRow(items: unknown[], itemsSchema?: EditorSchema, host?: EditorHost) {
+  if (itemsSchema) {
+    return createDefaultArrayItem(itemsSchema);
+  }
+
   if (items.length === 0) return {};
 
   if (hasObjectTableRows(items, host)) {
@@ -1084,6 +1655,15 @@ function createDefaultArrayRow(items: unknown[], host?: EditorHost) {
 
   const sample = items[0];
   return createEmptyValueFromSample(sample);
+}
+
+function getAddablePropertyKeys(value: Record<string, unknown>, schema?: EditorSchema, supportsDynamicKeys = false) {
+  if (!schema?.properties) {
+    return supportsDynamicKeys ? [""] : [];
+  }
+
+  const keys = Object.keys(schema.properties).filter((key) => !Object.prototype.hasOwnProperty.call(value, key));
+  return keys.length > 0 ? keys : (supportsDynamicKeys ? [""] : []);
 }
 
 function createEmptyValueFromSample(sample: unknown): unknown {
@@ -1116,9 +1696,35 @@ function renderPendingArrayRow(props: {
   columns: string[];
   objectRows: boolean;
   host?: EditorHost;
+  useMergedValueCell?: boolean;
   onChangePendingRow: (nextRow: unknown) => void;
   onCreate: () => void;
+  createDisabled?: boolean;
 }) {
+  if (props.useMergedValueCell) {
+    const span = Math.max(1, props.columns.length);
+    return (
+      <tr className="array-row--pending" data-row-index="pending">
+        <td className="array-column--sticky array-column--actions">
+          <div className="row-action-buttons">
+            <button
+              className="primary-button compact-button"
+              type="button"
+              disabled={props.createDisabled}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={props.onCreate}
+            >
+              Create row
+            </button>
+          </div>
+        </td>
+        <td className="array-cell--pending-merged" colSpan={span}>
+          {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow)}
+        </td>
+      </tr>
+    );
+  }
+
   if (props.objectRows) {
     const record = isPlainObject(props.pendingRow) ? props.pendingRow : {};
     return (
@@ -1128,10 +1734,11 @@ function renderPendingArrayRow(props: {
             <button
               className="primary-button compact-button"
               type="button"
+              disabled={props.createDisabled}
               onPointerDown={(event) => event.preventDefault()}
-              onPointerUp={props.onCreate}
+              onClick={props.onCreate}
             >
-              Create
+              Create row
             </button>
           </div>
         </td>
@@ -1160,10 +1767,11 @@ function renderPendingArrayRow(props: {
           <button
             className="primary-button compact-button"
             type="button"
+            disabled={props.createDisabled}
             onPointerDown={(event) => event.preventDefault()}
-            onPointerUp={props.onCreate}
+            onClick={props.onCreate}
           >
-            Create
+            Create row
           </button>
         </div>
       </td>
@@ -1171,6 +1779,34 @@ function renderPendingArrayRow(props: {
       <td>{pendingType}</td>
       <td>
         {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow)}
+      </td>
+    </tr>
+  );
+}
+
+function renderReferenceCreateRow(props: {
+  columns: string[];
+  createDisabled?: boolean;
+  onCreate: () => void;
+}) {
+  const span = Math.max(1, props.columns.length);
+  return (
+    <tr className="array-row--pending" data-row-index="pending">
+      <td className="array-column--sticky array-column--actions">
+        <div className="row-action-buttons">
+          <button
+            className="primary-button compact-button"
+            type="button"
+            disabled={props.createDisabled}
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={props.onCreate}
+          >
+            Create row
+          </button>
+        </div>
+      </td>
+      <td className="array-cell--pending-merged" colSpan={span}>
+        <span className="array-cell-summary array-cell-summary--pending">鏂板缓寮曠敤椤瑰皢鐢卞涓诲垱寤哄苟鍥炲～</span>
       </td>
     </tr>
   );
@@ -1188,6 +1824,7 @@ function renderPendingArrayCell(value: unknown, onChange: (nextValue: unknown) =
   return renderPrimitiveEditor({
     value,
     ariaLabel: "Pending array item",
+    path: [],
     onChange,
   });
 }
@@ -1204,14 +1841,14 @@ function getTypeToneClassForType(type: string) {
 }
 
 function describeStructureIcon(value: unknown, host?: EditorHost) {
-  if (host?.isReferenceNode?.(value)) return "↗";
+  if (isReferenceValue(value)) return "->";
   if (Array.isArray(value)) return "[]";
   if (isPlainObject(value)) return "{}";
-  return "·";
+  return ".";
 }
 
 function previewValue(value: unknown, host?: EditorHost): string {
-  if (host?.isReferenceNode?.(value)) return host.getReferenceLabel?.(value) ?? "reference";
+  if (isReferenceValue(value)) return getReferenceLabel(value);
   if (Array.isArray(value)) return `${value.length} items`;
   if (isPlainObject(value)) return `${Object.keys(value).length} fields`;
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -1219,15 +1856,330 @@ function previewValue(value: unknown, host?: EditorHost): string {
   return String(value);
 }
 
+function renderNestedEntryContent(
+  value: unknown,
+  schema: EditorSchema | undefined,
+  host?: EditorHost,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
+  fallbackLabel?: string,
+) {
+  if (!isReferenceValue(value)) {
+    return <span className="entry-key">{fallbackLabel ?? previewValue(value, host)}</span>;
+  }
+
+  const referenceSchema = schema?.["x-editor"]?.reference;
+  const targetSchemaRef = referenceSchema?.target?.schemaRef;
+  const targetSchema = targetSchemaRef ? resolveNamedSchema?.(targetSchemaRef) : undefined;
+  const referenceViewSchema = resolveReferenceViewSchema(schema, resolveNamedSchema);
+  const referenceViewColumns = getReferenceViewColumnsFromSchema(referenceViewSchema);
+  if (!targetSchema || referenceViewColumns.length === 0) {
+    return <span className="entry-key">{fallbackLabel ?? previewValue(value, host)}</span>;
+  }
+
+  const uri = getReferenceUri(value);
+  if (!uri) {
+    return <span className="entry-key">{fallbackLabel ?? previewValue(value, host)}</span>;
+  }
+
+  const resolved = resolveReferenceDocument(uri, host);
+  if (!resolved.ok) {
+    return <span className="entry-key">{fallbackLabel ?? previewValue(value, host)}</span>;
+  }
+
+  return (
+    <div className={`reference-preview reference-preview--${referenceSchema?.view?.layout ?? "inline"}`.trim()}>
+      {renderReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host)}
+    </div>
+  );
+}
+
+function renderReferenceProjection(
+  targetValue: unknown,
+  targetSchema: EditorSchema,
+  columns: ReferenceViewColumn[],
+  host?: EditorHost,
+) {
+  const entries = columns
+    .map((column) => {
+      const fieldValue = getValueAtPath(targetValue, column.path);
+      const fieldSchema = mergeProjectedFieldSchema(
+        resolveSchemaAtPath(targetSchema, column.path, targetValue),
+        column.columnSchema,
+      );
+      if (fieldValue == null || fieldValue === "") {
+        return null;
+      }
+      return {
+        key: column.key,
+        label: column.title || inferReferenceFieldLabel(fieldSchema, column.path),
+        value: renderReferenceFieldValue(fieldValue, fieldSchema, host),
+      };
+    })
+    .filter((entry: { key: string; label: string; value: ReactNode } | null): entry is { key: string; label: string; value: ReactNode } => entry != null);
+
+  if (entries.length === 0) {
+    return <span className="entry-key">{previewValue(targetValue, host)}</span>;
+  }
+
+  return (
+    <div className="reference-preview__group">
+        {entries.map((entry: { key: string; label: string; value: ReactNode }) => (
+          <div className="reference-preview__row" key={entry.key}>
+          <span className="reference-preview__label">{entry.label}</span>
+          <span className="reference-preview__value">{entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function getReferenceTableCellText(
+  value: unknown,
+  column: ReferenceViewColumn,
+  itemSchema: EditorSchema | undefined,
+  host?: EditorHost,
+) {
+  if (!isReferenceValue(value)) {
+    return previewValue(value, host);
+  }
+  const uri = getReferenceUri(value);
+  if (!uri) {
+    return previewValue(value, host);
+  }
+  const resolved = resolveReferenceDocument(uri, host);
+  if (!resolved.ok) {
+    return previewValue(value, host);
+  }
+  const targetSchemaRef = itemSchema?.["x-editor"]?.reference?.target?.schemaRef;
+  const fieldValue = getValueAtPath(resolved.value, column.path);
+  if (fieldValue == null || fieldValue === "") {
+    return "";
+  }
+  if (typeof fieldValue === "string") {
+    return fieldValue;
+  }
+  if (typeof fieldValue === "number" || typeof fieldValue === "boolean") {
+    return String(fieldValue);
+  }
+  if (Array.isArray(fieldValue)) {
+    return `${fieldValue.length} items`;
+  }
+  if (targetSchemaRef) {
+    return previewValue(fieldValue, host);
+  }
+  return previewValue(fieldValue, host);
+}
+
+function renderReferenceTableCell(
+  value: unknown,
+  column: ReferenceViewColumn,
+  itemSchema: EditorSchema | undefined,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
+  host?: EditorHost,
+) {
+  if (!isReferenceValue(value)) {
+    return <span className="array-cell-summary">{previewValue(value, host)}</span>;
+  }
+
+  const referenceSchema = itemSchema?.["x-editor"]?.reference;
+  const targetSchemaRef = referenceSchema?.target?.schemaRef;
+  const targetSchema = targetSchemaRef ? resolveNamedSchema?.(targetSchemaRef) : undefined;
+  const uri = getReferenceUri(value);
+  if (!uri || !targetSchema) {
+    return <span className="array-cell-summary">{previewValue(value, host)}</span>;
+  }
+
+  const resolved = resolveReferenceDocument(uri, host);
+  if (!resolved.ok) {
+    return <span className="array-cell-summary">{previewValue(value, host)}</span>;
+  }
+
+  const fieldValue = getValueAtPath(resolved.value, column.path);
+  const fieldSchema = mergeProjectedFieldSchema(
+    resolveSchemaAtPath(targetSchema, column.path, resolved.value),
+    column.columnSchema,
+  );
+  if (fieldValue == null || fieldValue === "") {
+    return <span className="array-cell-summary array-cell-summary--missing">-</span>;
+  }
+
+  const rendered = renderReferenceFieldValue(fieldValue, fieldSchema, host);
+  if (typeof rendered === "string") {
+    return <span className="array-cell-summary">{rendered}</span>;
+  }
+  return <span className="array-cell-summary array-cell-summary--projection">{rendered}</span>;
+}
+
+function resolveReferenceViewSchema(
+  schema: EditorSchema | undefined,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
+) {
+  const schemaRef = schema?.["x-editor"]?.reference?.view?.schemaRef;
+  return schemaRef ? resolveNamedSchema?.(schemaRef) : undefined;
+}
+
+function getReferenceViewColumns(
+  items: unknown[],
+  viewSchema: EditorSchema | undefined,
+  host?: EditorHost,
+) {
+  const columns = getReferenceViewColumnsFromSchema(viewSchema);
+  if (columns.length === 0) {
+    return [];
+  }
+
+  return columns.filter((column) =>
+    items.some((item) => {
+      if (!isReferenceValue(item)) return false;
+      const uri = getReferenceUri(item);
+      if (!uri) return false;
+      const resolved = resolveReferenceDocument(uri, host);
+      if (!resolved.ok) return false;
+      const fieldValue = getValueAtPath(resolved.value, column.path);
+      return fieldValue != null && fieldValue !== "";
+    }),
+  );
+}
+
+function getReferenceViewColumnsFromSchema(viewSchema: EditorSchema | undefined): ReferenceViewColumn[] {
+  if (!viewSchema?.properties) {
+    return [];
+  }
+
+  const columns: ReferenceViewColumn[] = [];
+  for (const [key, propertySchema] of Object.entries(viewSchema.properties)) {
+    const projectionPath = propertySchema["x-editor"]?.projection?.path;
+    if (!projectionPath?.length) {
+      continue;
+    }
+    columns.push({
+      key,
+      title: propertySchema.title ?? key,
+      path: projectionPath,
+      columnSchema: propertySchema,
+    });
+  }
+  return columns;
+}
+
+function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefined, host?: EditorHost): ReactNode {
+  const display = schema?.["x-editor"]?.display;
+  if (typeof value === "string" && display?.kind === "image") {
+    return <ImagePreview value={value} schema={schema} host={host} />;
+  }
+  if (typeof value === "string" && (display?.text?.sentenceLimit ?? 0) > 0) {
+    return extractLeadingSentences(value, display?.text?.sentenceLimit ?? 1);
+  }
+  if (typeof value === "string" && isIconLikeField(schema)) {
+    return <span className="reference-preview__icon-path">{value}</span>;
+  }
+  if (Array.isArray(value)) {
+    const previewItems = value.slice(0, 3).map((item) => previewValue(item, host));
+    const suffix = value.length > 3 ? ` +${value.length - 3}` : "";
+    return `${previewItems.join(", ")}${suffix}`;
+  }
+  if (typeof value === "boolean") {
+    return value ? "True" : "False";
+  }
+  if (value === null) {
+    return "null";
+  }
+  return previewValue(value, host);
+}
+
+function extractLeadingSentences(value: string, sentenceLimit: number) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  if (sentenceLimit <= 0) {
+    return normalized;
+  }
+
+  const matches = normalized.match(/[^.!?。！？]+[.!?。！？]?/g) ?? [];
+  const sentences = matches
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (sentences.length === 0) {
+    return normalized;
+  }
+
+  return sentences.slice(0, sentenceLimit).join(" ");
+}
+
+function isImageDisplaySchema(schema: EditorSchema | undefined) {
+  return schema?.["x-editor"]?.display?.kind === "image";
+}
+
+function mergeProjectedFieldSchema(targetSchema: EditorSchema | undefined, viewSchema: EditorSchema | undefined): EditorSchema | undefined {
+  if (!targetSchema) {
+    return viewSchema;
+  }
+  if (!viewSchema) {
+    return targetSchema;
+  }
+
+  return {
+    ...targetSchema,
+    ...viewSchema,
+    "x-editor": {
+      ...(targetSchema["x-editor"] ?? {}),
+      ...(viewSchema["x-editor"] ?? {}),
+    },
+  };
+}
+
 function getStructureIcon(value: unknown, host?: EditorHost) {
-  if (host?.isReferenceNode?.(value)) return "->";
+  if (isReferenceValue(value)) return "->";
   if (Array.isArray(value)) return "[]";
   if (isPlainObject(value)) return "{}";
   return ".";
 }
 
+function inferReferenceFieldLabel(schema: EditorSchema | undefined, path: JsonPath) {
+  return schema?.title ?? String(path.at(-1) ?? "value");
+}
+
+function isIconLikeField(schema: EditorSchema | undefined) {
+  const schemaTitle = schema?.title?.toLowerCase() ?? "";
+  const schemaDescription = schema?.description?.toLowerCase() ?? "";
+  return schemaTitle.includes("icon") || schemaDescription.includes("icon");
+}
+
 function isNavigable(value: unknown): boolean {
-  return Array.isArray(value) || isPlainObject(value);
+  return isReferenceValue(value) || Array.isArray(value) || isPlainObject(value);
+}
+
+function ImagePreview({ value, schema, host }: { value: string; schema?: EditorSchema; host?: EditorHost }) {
+  const [loadFailed, setLoadFailed] = useState(false);
+  const preview = schema?.["x-editor"]?.display?.preview;
+  const width = preview?.width ?? 40;
+  const height = preview?.height ?? width;
+  const fit = preview?.fit ?? "contain";
+  const label = schema?.title ?? "Image";
+  const resolvedValue = host?.resolveDisplayUrl?.(value, schema) ?? value;
+
+  if (loadFailed) {
+    return (
+      <span className="reference-preview__image-fallback" style={{ width, height }} title={value}>
+        {value}
+      </span>
+    );
+  }
+
+  return (
+    <img
+      alt={label}
+      className="reference-preview__image"
+      height={height}
+      src={resolvedValue}
+      style={{ width: `${width}px`, height: `${height}px`, objectFit: fit }}
+      title={value}
+      width={width}
+      onError={() => setLoadFailed(true)}
+    />
+  );
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -1270,6 +2222,11 @@ function getFieldError(
     const sameSource = !error.sourceId || !sourceId || error.sourceId === sourceId;
     return sameSource && sameJsonPath(error.path, path);
   });
+}
+
+function getLocalSchemaError(schemaState: ReturnType<typeof resolveNode> | undefined): string | undefined {
+  if (!schemaState?.errors?.length) return undefined;
+  return schemaState.errors.find((error) => error.path.length === 0)?.message ?? schemaState.errors[0]?.message;
 }
 
 function sameJsonPath(left: JsonPath, right: JsonPath) {

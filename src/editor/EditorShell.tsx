@@ -3,9 +3,18 @@ import { getValueAtPath, setValueAtPath } from "../core/document";
 import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type NavigationPage } from "../core/navigation";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
-import type { EditorHost } from "./host";
+import { isReferenceValue, type EditorHost } from "./host";
 import type { EditorSchema, EditorSchemaHost, EditorValidationResult, EditorValidationHandler } from "./schema";
-import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, getVisiblePages, samePath, type StackAnimation } from "./stack-motion";
+import { resolveSchemaAtPath, validateDocument as validateBySchema } from "./schema";
+import {
+  determineBackAnimation,
+  determineJumpAnimation,
+  determineNavigateAnimation,
+  determinePinnedRootNavigateAnimation,
+  getVisiblePages,
+  samePath,
+  type StackAnimation,
+} from "./stack-motion";
 import { ValueInspector } from "./ValueInspector";
 
 export type EditorDocuments = Record<string, unknown>;
@@ -18,6 +27,9 @@ export type EditorShellProps = {
   rootSourceId?: string;
   rootPageTitle?: string;
   showDocumentTitle?: boolean;
+  layoutMode?: "stack-flow" | "pinned-root";
+  leftPageFullscreen?: boolean;
+  compactBreakpoint?: number;
   value?: unknown;
   host?: EditorHost;
   schemaHost?: EditorSchemaHost;
@@ -26,6 +38,7 @@ export type EditorShellProps = {
   onReload?: EditorReloadHandler;
   validateDocument?: EditorValidationHandler;
   readOnly?: boolean;
+  enableRawEditor?: boolean;
 };
 
 const animationDurationMs = 500;
@@ -36,6 +49,9 @@ export function EditorShell({
   rootSourceId = "main",
   rootPageTitle = "Root",
   showDocumentTitle = true,
+  layoutMode = "stack-flow",
+  leftPageFullscreen = false,
+  compactBreakpoint = 768,
   value,
   host,
   schemaHost,
@@ -44,6 +60,7 @@ export function EditorShell({
   onReload,
   validateDocument,
   readOnly = false,
+  enableRawEditor = true,
 }: EditorShellProps) {
   const initialDocuments = useMemo(() => normalizeDocuments(documents, rootSourceId, value), [documents, rootSourceId, value]);
   const initialDocumentsSnapshot = useMemo(() => JSON.stringify(initialDocuments), [initialDocuments]);
@@ -57,12 +74,23 @@ export function EditorShell({
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
   const [stackViewportWidth, setStackViewportWidth] = useState(0);
+  const [windowViewportWidth, setWindowViewportWidth] = useState(
+    typeof window === "undefined" ? 0 : window.innerWidth,
+  );
   const animationKeyRef = useRef(0);
+  const rootPage = pages[0] ?? { sourceId: rootSourceId, path: [] };
   const currentPage = pages[pages.length - 1] ?? { sourceId: rootSourceId, path: [] };
-  const visiblePages = pages.slice(Math.max(0, pages.length - 2));
+  const isCompactStack = compactBreakpoint > 0 && windowViewportWidth > 0 && windowViewportWidth < compactBreakpoint;
+  const isPinnedRootLayout = layoutMode === "pinned-root" && !isCompactStack;
+  const prefersDualPageStackFlow = leftPageFullscreen && !isCompactStack;
+  const visiblePages = isPinnedRootLayout
+    ? ((currentPage.sourceId ?? rootSourceId) === rootSourceId && currentPage.path.length === 0 ? [rootPage] : [rootPage, currentPage])
+    : (prefersDualPageStackFlow ? getVisiblePages(pages) : [currentPage]);
+  const hasVisibleRightPage = visiblePages.length > 1;
+  const useFullscreenLeftPage = leftPageFullscreen && !hasVisibleRightPage;
+  const usesSplitLayout = !isCompactStack && (isPinnedRootLayout || (prefersDualPageStackFlow && hasVisibleRightPage));
   const referenceScopeDepths = useMemo(() => buildReferenceScopeDepths(pages), [pages]);
   const rootLabel = inferDocumentLabel(documentsBySourceId[rootSourceId], rootPageTitle);
-  const isCompactStack = stackViewportWidth > 0 && stackViewportWidth < 768;
   const isAtRootPage = (currentPage.sourceId ?? rootSourceId) === rootSourceId && currentPage.path.length === 0;
   const isDirty = useMemo(
     () => JSON.stringify(documentsBySourceId) !== JSON.stringify(savedDocumentsBySourceId),
@@ -88,8 +116,8 @@ export function EditorShell({
     if (readOnly || !onSave) return;
     setSaveState("saving");
     try {
-      if (validateDocument) {
-        const nextValidation = await validateDocument(documentsBySourceId);
+      const nextValidation = await runValidation(documentsBySourceId);
+      if (nextValidation) {
         setValidationResult(nextValidation);
         if (!nextValidation.valid) {
           setSaveState("error");
@@ -146,6 +174,14 @@ export function EditorShell({
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateViewportWidth = () => setWindowViewportWidth(window.innerWidth);
+    updateViewportWidth();
+    window.addEventListener("resize", updateViewportWidth);
+    return () => window.removeEventListener("resize", updateViewportWidth);
+  }, []);
+
+  useEffect(() => {
     if (!stackAnimation) return;
     const timeoutId = window.setTimeout(() => setStackAnimation(null), getAnimationDuration(stackAnimation));
     return () => window.clearTimeout(timeoutId);
@@ -166,12 +202,49 @@ export function EditorShell({
   function resolvePageSchema(page: NavigationPage): EditorSchema | undefined {
     if (!schemaHost) return undefined;
     const sourceId = page.sourceId ?? rootSourceId;
-    return schemaHost.getSchema({
+    const directSchema = schemaHost.getSchema({
       sourceId,
       path: page.path,
       value: resolvePageValue(page),
       documents: documentsBySourceId,
     });
+    if (directSchema) {
+      return directSchema;
+    }
+
+    const rootSchema = schemaHost.getSchema({
+      sourceId,
+      path: [],
+      value: documentsBySourceId[sourceId],
+      documents: documentsBySourceId,
+    });
+    return resolveSchemaAtPath(rootSchema, page.path);
+  }
+
+  function resolveNamedSchema(name: string): EditorSchema | undefined {
+    return schemaHost?.getNamedSchema?.(name);
+  }
+
+  async function runValidation(nextDocuments: EditorDocuments): Promise<EditorValidationResult | null> {
+    if (validateDocument) {
+      return validateDocument(nextDocuments);
+    }
+    if (!schemaHost) {
+      return null;
+    }
+
+    const rootSchema = schemaHost.getSchema({
+      sourceId: rootSourceId,
+      path: [],
+      value: nextDocuments[rootSourceId],
+      documents: nextDocuments,
+    });
+
+    if (!rootSchema) {
+      return null;
+    }
+
+    return validateBySchema(rootSchema, nextDocuments[rootSourceId], { sourceId: rootSourceId });
   }
 
   function getPageTitle(page: NavigationPage) {
@@ -207,7 +280,7 @@ export function EditorShell({
   const rightSlotWidth = Math.max(0, stackViewportWidth - leftSlotWidth);
 
   function getStackPageStyle(depthClass: string) {
-    if (depthClass === "stack-page--single") {
+    if (!usesSplitLayout || depthClass === "stack-page--single" || depthClass === "stack-page--fullscreen-left") {
       return { left: 0, right: 0 };
     }
     if (depthClass === "stack-page--background") {
@@ -216,14 +289,58 @@ export function EditorShell({
     return { left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` };
   }
 
+  function getPinnedVisiblePagesForPages(targetPages: NavigationPage[]) {
+    const pinnedRootPage = targetPages[0] ?? { sourceId: rootSourceId, path: [] };
+    const pinnedCurrentPage = targetPages[targetPages.length - 1] ?? pinnedRootPage;
+    const isPinnedAtRoot =
+      (pinnedCurrentPage.sourceId ?? rootSourceId) === rootSourceId &&
+      pinnedCurrentPage.path.length === 0;
+    return isPinnedAtRoot ? [pinnedRootPage] : [pinnedRootPage, pinnedCurrentPage];
+  }
+
   function handleNavigate(fromIndex: number, nextPath: JsonPath) {
     animationKeyRef.current += 1;
     setPages((currentPages) => {
-      const actualIndex = isCompactStack ? currentPages.length - 1 : Math.max(0, currentPages.length - 2) + fromIndex;
+      const actualIndex = isCompactStack || !isPinnedRootLayout
+        ? currentPages.length - 1
+        : (fromIndex === 0 ? 0 : currentPages.length - 1);
       const sourceIsForeground = actualIndex === currentPages.length - 1;
       const basePages = sourceIsForeground ? currentPages : currentPages.slice(0, actualIndex + 1);
-      const nextPages = openPath({ documents: documentsBySourceId, rootSourceId, pages: basePages }, nextPath, host).pages;
-      setStackAnimation(isCompactStack ? null : determineNavigateAnimation(currentPages, nextPages, actualIndex, animationKeyRef.current));
+      const nextState = openPath({ documents: documentsBySourceId, rootSourceId, pages: basePages }, nextPath, host);
+      const nextPages = nextState.pages;
+      if (nextState.documents) {
+        setDocumentsBySourceId((currentDocuments) => (
+          currentDocuments === nextState.documents
+            ? currentDocuments
+            : nextState.documents ?? currentDocuments
+        ));
+        setSavedDocumentsBySourceId((currentSavedDocuments) => {
+          const merged = { ...currentSavedDocuments };
+          let changed = false;
+          for (const [sourceId, value] of Object.entries(nextState.documents ?? {})) {
+            if (!(sourceId in merged)) {
+              merged[sourceId] = value;
+              changed = true;
+            }
+          }
+          return changed ? merged : currentSavedDocuments;
+        });
+      }
+      if (isCompactStack) {
+        setStackAnimation(null);
+      } else if (isPinnedRootLayout) {
+        const currentAnimationPages = getPinnedVisiblePagesForPages(currentPages);
+        const nextAnimationPages = getPinnedVisiblePagesForPages(nextPages);
+        const animation =
+          currentAnimationPages.length === 2
+            ? determinePinnedRootNavigateAnimation(currentAnimationPages, nextAnimationPages, animationKeyRef.current)
+            : determineNavigateAnimation(currentAnimationPages, nextAnimationPages, 0, animationKeyRef.current);
+        setStackAnimation(animation);
+      } else if (nextPages.length > currentPages.length) {
+        setStackAnimation({ direction: "push", key: animationKeyRef.current });
+      } else {
+        setStackAnimation(null);
+      }
       return nextPages;
     });
   }
@@ -234,7 +351,17 @@ export function EditorShell({
       const nextPages = sourceId === rootSourceId && targetPath.length === 0
         ? jumpToPath({ documents: documentsBySourceId, rootSourceId, pages: currentPages }, targetPath).pages
         : jumpToPage({ documents: documentsBySourceId, rootSourceId, pages: currentPages }, { sourceId, path: targetPath }).pages;
-      setStackAnimation(isCompactStack ? null : determineJumpAnimation(currentPages, nextPages, animationKeyRef.current));
+      if (isCompactStack || !isPinnedRootLayout) {
+        setStackAnimation(isCompactStack || !isPinnedRootLayout ? null : determineJumpAnimation(currentPages, nextPages, animationKeyRef.current));
+      } else {
+        setStackAnimation(
+          determineJumpAnimation(
+            getPinnedVisiblePagesForPages(currentPages),
+            getPinnedVisiblePagesForPages(nextPages),
+            animationKeyRef.current,
+          ),
+        );
+      }
       return nextPages;
     });
   }
@@ -243,16 +370,30 @@ export function EditorShell({
     animationKeyRef.current += 1;
     setPages((currentPages) => {
       const nextPages = goBack({ documents: documentsBySourceId, rootSourceId, pages: currentPages }).pages;
-      const currentVisiblePages = getVisiblePages(currentPages);
-      const leftVisiblePage = currentVisiblePages[0];
-      const isRootPinnedLeftPage =
-        currentVisiblePages.length === 2 &&
-        (leftVisiblePage?.sourceId ?? rootSourceId) === rootSourceId &&
-        (leftVisiblePage?.path.length ?? 0) === 0;
+      if (isCompactStack) {
+        setStackAnimation(null);
+      } else if (isPinnedRootLayout) {
+        const currentVisiblePages = getPinnedVisiblePagesForPages(currentPages);
+        const leftVisiblePage = currentVisiblePages[0];
+        const isRootPinnedLeftPage =
+          currentVisiblePages.length === 2 &&
+          (leftVisiblePage?.sourceId ?? rootSourceId) === rootSourceId &&
+          (leftVisiblePage?.path.length ?? 0) === 0;
 
-      setStackAnimation(
-        isCompactStack || isRootPinnedLeftPage ? null : determineBackAnimation(currentPages, nextPages, animationKeyRef.current),
-      );
+        setStackAnimation(
+          isRootPinnedLeftPage
+            ? determineBackAnimation(currentVisiblePages, getPinnedVisiblePagesForPages(nextPages), animationKeyRef.current)
+            : determineBackAnimation(currentVisiblePages, getPinnedVisiblePagesForPages(nextPages), animationKeyRef.current),
+        );
+      } else {
+        const promotingPage = currentPages[currentPages.length - 2];
+        const exitingPage = currentPages[currentPages.length - 1];
+        setStackAnimation(
+          promotingPage && exitingPage
+            ? { direction: "pop", key: animationKeyRef.current, exitingPage, promotingPage }
+            : null,
+        );
+      }
       return nextPages;
     });
   }
@@ -268,7 +409,19 @@ export function EditorShell({
         { documents: documentsBySourceId, rootSourceId, pages: currentPages },
         { sourceId: visiblePages[0].sourceId, path: targetPath },
       ).pages;
-      setStackAnimation(isCompactStack ? null : determineBackAnimation(currentPages, nextPages, animationKeyRef.current));
+      if (isCompactStack) {
+        setStackAnimation(null);
+      } else if (isPinnedRootLayout) {
+        setStackAnimation(
+          determineBackAnimation(
+            getPinnedVisiblePagesForPages(currentPages),
+            getPinnedVisiblePagesForPages(nextPages),
+            animationKeyRef.current,
+          ),
+        );
+      } else {
+        setStackAnimation(determineBackAnimation(currentPages, nextPages, animationKeyRef.current));
+      }
       return nextPages;
     });
   }
@@ -388,8 +541,11 @@ export function EditorShell({
                     path={currentPage.path}
                   title={getPageTitle(compactPage)}
                   host={host}
-                  schema={resolvePageSchema(compactPage)}
+                    schema={resolvePageSchema(compactPage)}
+                    resolveNamedSchema={resolveNamedSchema}
                   validationResult={validationResult}
+                  enableRawEditor={enableRawEditor}
+                    referenceError={currentPage.referenceError}
                     isReference={currentPage.isReference}
                     referenceScopeDepth={referenceScopeDepths[compactPageIndex]}
                     referenceSourceLabel={getReferenceSourceLabel(compactPage.sourceId, rootSourceId, referenceScopeDepths[compactPageIndex])}
@@ -412,16 +568,17 @@ export function EditorShell({
                 );
               })()
             ) : null}
-            {!isCompactStack ? (
+            {!isCompactStack && !isPinnedRootLayout ? (
               <>
             {visiblePages.map((page, index) => {
               const fullPageIndex = pages.length - visiblePages.length + index;
               const pageSourceId = page.sourceId ?? rootSourceId;
               const pageValue = resolvePageValue(page);
               const showRootPlaceholder =
+                isPinnedRootLayout &&
                 visiblePages.length === 1 &&
                 page.path.length === 0 &&
-                !Array.isArray(pageValue);
+                !useFullscreenLeftPage;
               const renderedPage =
                 stackAnimation?.direction === "push" && stackAnimation.exitingPage && index === 0
                   ? { ...stackAnimation.exitingPage, sourceId: stackAnimation.exitingPage.sourceId ?? rootSourceId }
@@ -430,7 +587,9 @@ export function EditorShell({
                 ? pageValue
                 : resolvePageValue(renderedPage);
               const isForeground = visiblePages.length > 1 ? index === visiblePages.length - 1 : !showRootPlaceholder;
-              const depthClass = visiblePages.length > 1
+              const depthClass = !usesSplitLayout
+                ? (useFullscreenLeftPage ? "stack-page--fullscreen-left" : "stack-page--single")
+                : visiblePages.length > 1
                 ? (isForeground ? "stack-page--foreground" : "stack-page--background")
                 : (showRootPlaceholder ? "stack-page--background" : "stack-page--single");
               const kindClass = Array.isArray(renderedPageValue)
@@ -459,7 +618,7 @@ export function EditorShell({
                 samePath(renderedPage.path, stackAnimation.exitingPage.path)
                   ? "stack-page--replace-promote"
                   : "",
-                stackAnimation?.direction === "pop" && index === visiblePages.length - 1
+                stackAnimation?.direction === "pop" && index === visiblePages.length - 1 && isPinnedRootLayout
                   ? "stack-page--pop-target-hidden"
                   : "",
               ].filter(Boolean).join(" ");
@@ -477,16 +636,28 @@ export function EditorShell({
                     title={getPageTitle(renderedPage)}
                     host={host}
                     schema={resolvePageSchema(renderedPage)}
+                    resolveNamedSchema={resolveNamedSchema}
                     validationResult={validationResult}
+                    enableRawEditor={enableRawEditor}
+                    referenceError={renderedPage.referenceError}
                     isReference={renderedPage.isReference}
                     referenceScopeDepth={referenceScopeDepths[fullPageIndex]}
                     referenceSourceLabel={getReferenceSourceLabel(renderedPage.sourceId, rootSourceId, referenceScopeDepths[fullPageIndex])}
                     activeChildSegment={deriveActiveChildSegment(renderedPage.path, currentPage.path)}
                     activeReferenceSourceId={deriveActiveReferenceSourceId(renderedPage.sourceId, currentPage.sourceId ?? rootSourceId, rootSourceId)}
                     onNavigateUp={
+                      !isPinnedRootLayout
+                        ? undefined
+                        : (
                       index === visiblePages.length - 1
                         ? undefined
                         : (visiblePages.length === 2 && index === 0 && (renderedPage.path.length > 0 || renderedPage.isReference) ? handleContextBack : undefined)
+                        )
+                    }
+                    onClosePage={
+                      leftPageFullscreen && index === visiblePages.length - 1 && hasVisibleRightPage
+                        ? handleContextBack
+                        : undefined
                     }
                     onNavigate={(nextPath) => handleNavigate(index, nextPath)}
                     readOnly={readOnly}
@@ -503,52 +674,6 @@ export function EditorShell({
                 </section>
               );
             })}
-            {visiblePages.length === 1 && visiblePages[0]?.path.length === 0 ? (
-              <section
-                className="stack-page stack-page--foreground stack-page--empty"
-                aria-hidden="true"
-                style={{ left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` }}
-              >
-                <div className="stack-page__empty-state">
-                  <div className="stack-page__empty-title">Select a field to inspect</div>
-                  <div className="stack-page__empty-copy">Root stays pinned on the left so editing controls keep a stable width.</div>
-                </div>
-                </section>
-              ) : null}
-            {stackAnimation?.direction === "push" && stackAnimation.exitingPage && visiblePages.length === 2 ? (
-              <section
-                className={`stack-page stack-page--foreground stack-page--overlay stack-page--push-promote-shell ${
-                  visiblePages[0]?.isReference ? "is-reference" : ""
-                } ${
-                  Array.isArray(resolvePageValue(visiblePages[0]))
-                    ? "stack-page--array"
-                    : (resolvePageValue(visiblePages[0]) && typeof resolvePageValue(visiblePages[0]) === "object"
-                        ? "stack-page--object"
-                        : "stack-page--primitive")
-                }`}
-                key={`push-promote:${stackAnimation.key}:${visiblePages[0].path.join("/")}`}
-                style={{ left: `${leftSlotWidth}px` }}
-              >
-                <div className="stack-page--push-promote-mask">
-                  <ValueInspector
-                    value={resolvePageValue(visiblePages[0])}
-                    sourceId={visiblePages[0].sourceId ?? rootSourceId}
-                    path={visiblePages[0].path}
-                    title={getPageTitle(visiblePages[0])}
-                    host={host}
-                    schema={resolvePageSchema(visiblePages[0])}
-                    validationResult={validationResult}
-                    isReference={visiblePages[0].isReference}
-                    referenceScopeDepth={referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)]}
-                    referenceSourceLabel={getReferenceSourceLabel(visiblePages[0].sourceId, rootSourceId, referenceScopeDepths[Math.max(0, pages.length - visiblePages.length)])}
-                    activeReferenceSourceId={undefined}
-                    onNavigateUp={() => undefined}
-                    onNavigate={() => undefined}
-                    onApplyValue={() => undefined}
-                  />
-                </div>
-              </section>
-            ) : null}
             {stackAnimation?.direction === "pop" ? (
               <section
                 className={`stack-page stack-page--foreground stack-page--overlay stack-page--pop-exit ${
@@ -557,7 +682,7 @@ export function EditorShell({
                     : "stack-page--primitive"
                 } ${stackAnimation.exitingPage.isReference ? "is-reference" : ""}`}
                 key={`pop-exit:${stackAnimation.key}:${stackAnimation.exitingPage.path.join("/")}`}
-                style={{ left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` }}
+                style={usesSplitLayout ? { left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` } : { left: 0, right: 0 }}
               >
                 <ValueInspector
                   value={resolvePageValue(stackAnimation.exitingPage)}
@@ -566,45 +691,177 @@ export function EditorShell({
                   title={getPageTitle(stackAnimation.exitingPage)}
                   host={host}
                   schema={resolvePageSchema(stackAnimation.exitingPage)}
+                  resolveNamedSchema={resolveNamedSchema}
                   validationResult={validationResult}
+                  enableRawEditor={enableRawEditor}
+                  referenceError={stackAnimation.exitingPage.referenceError}
                   isReference={stackAnimation.exitingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
                   referenceSourceLabel={getReferenceSourceLabel(stackAnimation.exitingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage))}
                   activeReferenceSourceId={undefined}
+                  onClosePage={undefined}
                   onNavigate={() => undefined}
                   onApplyValue={() => undefined}
                 />
               </section>
             ) : null}
-            {stackAnimation?.direction === "pop" ? (
-              <section
-                className={`stack-page stack-page--background stack-page--overlay stack-page--pop-promote ${
-                  stackAnimation.promotingPage.isReference ? "is-reference" : ""
-                } ${
-                  resolvePageValue(stackAnimation.promotingPage) && typeof resolvePageValue(stackAnimation.promotingPage) === "object"
-                    ? (Array.isArray(resolvePageValue(stackAnimation.promotingPage)) ? "stack-page--array" : "stack-page--object")
-                    : "stack-page--primitive"
-                }`}
-                key={`pop-promote:${stackAnimation.key}:${stackAnimation.promotingPage.path.join("/")}`}
-                style={{ left: 0, width: `${rightSlotWidth}px` }}
-              >
-                <ValueInspector
-                  value={resolvePageValue(stackAnimation.promotingPage)}
-                  sourceId={stackAnimation.promotingPage.sourceId ?? rootSourceId}
-                  path={stackAnimation.promotingPage.path}
-                  title={getPageTitle(stackAnimation.promotingPage)}
-                  host={host}
-                  schema={resolvePageSchema(stackAnimation.promotingPage)}
-                  validationResult={validationResult}
-                  isReference={stackAnimation.promotingPage.isReference}
-                  referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage)}
-                  referenceSourceLabel={getReferenceSourceLabel(stackAnimation.promotingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage))}
-                  activeReferenceSourceId={undefined}
-                  onNavigate={() => undefined}
-                  onApplyValue={() => undefined}
-                />
-              </section>
+              </>
             ) : null}
+            {!isCompactStack && isPinnedRootLayout ? (
+              <>
+                {(() => {
+                  const pinnedRootSourceId = rootPage.sourceId ?? rootSourceId;
+                  const pinnedRootValue = resolvePageValue(rootPage);
+                  const pinnedRootKindClass = Array.isArray(pinnedRootValue)
+                    ? "stack-page--array"
+                    : (pinnedRootValue && typeof pinnedRootValue === "object" ? "stack-page--object" : "stack-page--primitive");
+                  return (
+                    <section
+                      className={[
+                        "stack-page",
+                        useFullscreenLeftPage ? "stack-page--fullscreen-left" : "stack-page--background",
+                        pinnedRootKindClass,
+                        rootPage.isReference ? "is-reference" : "",
+                      ].filter(Boolean).join(" ")}
+                      key="pinned-root:left"
+                      style={getStackPageStyle(useFullscreenLeftPage ? "stack-page--fullscreen-left" : "stack-page--background")}
+                    >
+                      <ValueInspector
+                        value={pinnedRootValue}
+                        savedValue={getValueAtPath(savedDocumentsBySourceId[pinnedRootSourceId], rootPage.path)}
+                        sourceId={pinnedRootSourceId}
+                        path={rootPage.path}
+                        title={getPageTitle(rootPage)}
+                        host={host}
+                        schema={resolvePageSchema(rootPage)}
+                        resolveNamedSchema={resolveNamedSchema}
+                        validationResult={validationResult}
+                        enableRawEditor={enableRawEditor}
+                        referenceError={rootPage.referenceError}
+                        isReference={rootPage.isReference}
+                        referenceScopeDepth={referenceScopeDepths[0]}
+                        referenceSourceLabel={getReferenceSourceLabel(rootPage.sourceId, rootSourceId, referenceScopeDepths[0])}
+                        activeChildSegment={deriveActiveChildSegment(rootPage.path, currentPage.path)}
+                        activeReferenceSourceId={deriveActiveReferenceSourceId(pinnedRootSourceId, currentPage.sourceId ?? rootSourceId, rootSourceId)}
+                        onNavigateUp={undefined}
+                        onClosePage={undefined}
+                        onNavigate={(nextPath) => handleNavigate(0, nextPath)}
+                        readOnly={readOnly}
+                        onEditModeChange={setIsEditingCurrentPage}
+                        onApplyValue={(nextValue) => {
+                          if (readOnly) return;
+                          setValidationResult(null);
+                          setDocumentsBySourceId((current) => ({
+                            ...current,
+                            [pinnedRootSourceId]: setValueAtPath(current[pinnedRootSourceId], rootPage.path, nextValue),
+                          }));
+                        }}
+                      />
+                    </section>
+                  );
+                })()}
+                {visiblePages.length === 1 ? (
+                  useFullscreenLeftPage ? null : (
+                    <section
+                      className="stack-page stack-page--foreground stack-page--empty"
+                      aria-hidden="true"
+                      style={{ left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` }}
+                    >
+                      <div className="stack-page__empty-state">
+                        <div className="stack-page__empty-title">Select a field to inspect</div>
+                        <div className="stack-page__empty-copy">Root stays pinned on the left so editing controls keep a stable width.</div>
+                      </div>
+                    </section>
+                  )
+                ) : (() => {
+                  const pinnedRightPage = visiblePages[1];
+                  const pinnedRightSourceId = pinnedRightPage.sourceId ?? rootSourceId;
+                  const pinnedRightValue = resolvePageValue(pinnedRightPage);
+                  const pinnedRightKindClass = Array.isArray(pinnedRightValue)
+                    ? "stack-page--array"
+                    : (pinnedRightValue && typeof pinnedRightValue === "object" ? "stack-page--object" : "stack-page--primitive");
+                  const pinnedRightClasses = [
+                    "stack-page",
+                    "stack-page--foreground",
+                    pinnedRightKindClass,
+                    "is-current",
+                    pinnedRightPage.isReference ? "is-reference" : "",
+                    stackAnimation?.direction === "push" ? "stack-page--push-enter" : "",
+                    stackAnimation?.direction === "replace" ? "stack-page--replace-enter" : "",
+                    stackAnimation?.direction === "pop" ? "stack-page--pop-target-hidden" : "",
+                  ].filter(Boolean).join(" ");
+
+                  return (
+                    <section
+                      className={pinnedRightClasses}
+                      key={`pinned-root:right:${pinnedRightSourceId}:${pinnedRightPage.path.join("/")}:${stackAnimation?.key ?? "live"}`}
+                      style={getStackPageStyle("stack-page--foreground")}
+                    >
+                      <ValueInspector
+                        value={pinnedRightValue}
+                        savedValue={getValueAtPath(savedDocumentsBySourceId[pinnedRightSourceId], pinnedRightPage.path)}
+                        sourceId={pinnedRightSourceId}
+                        path={pinnedRightPage.path}
+                        title={getPageTitle(pinnedRightPage)}
+                        host={host}
+                        schema={resolvePageSchema(pinnedRightPage)}
+                        resolveNamedSchema={resolveNamedSchema}
+                        validationResult={validationResult}
+                        enableRawEditor={enableRawEditor}
+                        referenceError={pinnedRightPage.referenceError}
+                        isReference={pinnedRightPage.isReference}
+                        referenceScopeDepth={referenceScopeDepths[Math.max(0, pages.length - 1)]}
+                        referenceSourceLabel={getReferenceSourceLabel(pinnedRightPage.sourceId, rootSourceId, referenceScopeDepths[Math.max(0, pages.length - 1)])}
+                        activeChildSegment={undefined}
+                        activeReferenceSourceId={deriveActiveReferenceSourceId(pinnedRightSourceId, currentPage.sourceId ?? rootSourceId, rootSourceId)}
+                        onNavigateUp={undefined}
+                        onClosePage={leftPageFullscreen ? handleContextBack : undefined}
+                        onNavigate={(nextPath) => handleNavigate(1, nextPath)}
+                        readOnly={readOnly}
+                        onEditModeChange={setIsEditingCurrentPage}
+                        onApplyValue={(nextValue) => {
+                          if (readOnly) return;
+                          setValidationResult(null);
+                          setDocumentsBySourceId((current) => ({
+                            ...current,
+                            [pinnedRightSourceId]: setValueAtPath(current[pinnedRightSourceId], pinnedRightPage.path, nextValue),
+                          }));
+                        }}
+                      />
+                    </section>
+                  );
+                })()}
+                {stackAnimation?.direction === "pop" ? (
+                  <section
+                    className={`stack-page stack-page--foreground stack-page--overlay stack-page--pop-exit ${
+                      resolvePageValue(stackAnimation.exitingPage) && typeof resolvePageValue(stackAnimation.exitingPage) === "object"
+                        ? (Array.isArray(resolvePageValue(stackAnimation.exitingPage)) ? "stack-page--array" : "stack-page--object")
+                        : "stack-page--primitive"
+                    } ${stackAnimation.exitingPage.isReference ? "is-reference" : ""}`}
+                    key={`pop-exit:${stackAnimation.key}:${stackAnimation.exitingPage.path.join("/")}`}
+                    style={{ left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` }}
+                  >
+                    <ValueInspector
+                      value={resolvePageValue(stackAnimation.exitingPage)}
+                      sourceId={stackAnimation.exitingPage.sourceId ?? rootSourceId}
+                      path={stackAnimation.exitingPage.path}
+                      title={getPageTitle(stackAnimation.exitingPage)}
+                      host={host}
+                      schema={resolvePageSchema(stackAnimation.exitingPage)}
+                      resolveNamedSchema={resolveNamedSchema}
+                      validationResult={validationResult}
+                      enableRawEditor={enableRawEditor}
+                      referenceError={stackAnimation.exitingPage.referenceError}
+                      isReference={stackAnimation.exitingPage.isReference}
+                      referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
+                      referenceSourceLabel={getReferenceSourceLabel(stackAnimation.exitingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage))}
+                      activeReferenceSourceId={undefined}
+                      onClosePage={undefined}
+                      onNavigate={() => undefined}
+                      onApplyValue={() => undefined}
+                    />
+                  </section>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -650,7 +907,7 @@ function inferDocumentLabel(value: unknown, fallback = "JSON Document") {
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
-  if (host?.isReferenceNode?.(value)) return "reference";
+  if (isReferenceValue(value)) return "reference";
   if (Array.isArray(value)) return "array";
   if (value === null) return "null";
   return typeof value;

@@ -12,11 +12,22 @@ export type {
   EditorSchema,
   EditorSchemaContext,
   EditorSchemaHost,
+  EditorMode,
+  ResolvedSchemaNode,
   EditorValidationError,
   EditorValidationHandler,
   EditorValidationResult,
 } from "./editor/schema";
-export type { NavigationPage, NavigationState, ReferenceResolver, ReferenceTarget } from "./core/navigation";
+export {
+  createDefaultArrayItem,
+  createDefaultPropertyValue,
+  createDefaultValue,
+  resolveNode,
+  resolveSchemaAtPath,
+  switchUnionBranch,
+  validateDocument,
+} from "./editor/schema";
+export type { NavigationPage, NavigationState } from "./core/navigation";
 export { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, samePath } from "./core/navigation";
 export type { JsonPath, PathSegment } from "./core/path";
 export { formatPath } from "./core/path";

@@ -1,19 +1,19 @@
 import type { EditorHost } from "../../src/editor/host";
 
 const references: Record<string, unknown> = {
-  "items/iron-sword": {
+  "asset://items/iron-sword.json": {
     id: "iron-sword",
     kind: "item",
     name: "Iron Sword",
     damage: { min: 3, max: 6 }
   },
-  "items/moon-charm": {
+  "asset://items/moon-charm.json": {
     id: "moon-charm",
     kind: "item",
     name: "Moon Charm",
     bonus: { manaRegen: 2 }
   },
-  "quests/intro": {
+  "asset://quests/intro.json": {
     id: "intro",
     kind: "quest",
     title: "Light the First Beacon",
@@ -22,12 +22,12 @@ const references: Record<string, unknown> = {
       { id: "light", text: "Ignite the beacon flame." }
     ]
   },
-  "encounters/wolf-pack": {
+  "asset://encounters/wolf-pack.json": {
     id: "wolf-pack",
     kind: "encounter",
     enemies: ["wolf", "wolf-alpha"]
   },
-  "encounters/shadow-eye": {
+  "asset://encounters/shadow-eye.json": {
     id: "shadow-eye",
     kind: "encounter",
     enemies: ["shadow-eye"],
@@ -36,14 +36,7 @@ const references: Record<string, unknown> = {
 };
 
 export const complexDemoHost: EditorHost = {
-  isReferenceNode(value) {
-    return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
-  },
-  getReferenceLabel(value) {
-    return String((value as { $ref: string }).$ref);
-  },
-  resolveReference(value) {
-    const key = (value as { $ref: string }).$ref;
-    return references[key] ?? { missing: true, $ref: key };
+  loadReferenceSource(uri) {
+    return references[uri];
   }
 };

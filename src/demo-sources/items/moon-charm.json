@@ -5,7 +5,5 @@
   "bonus": {
     "manaRegen": 2
   },
-  "boundEncounter": {
-    "$ref": "encounters/shadow-eye"
-  }
+  "boundEncounter": "asset://encounters/shadow-eye.json"
 }

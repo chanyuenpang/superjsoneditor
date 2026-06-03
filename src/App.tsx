@@ -15,29 +15,18 @@ const deployedDemoSaveMessage = "Save only works in local development. Changes i
 
 const demoDocuments: Record<string, unknown> = {
   main: mainDocument,
-  "items/iron-sword": ironSwordDocument,
-  "items/moon-charm": moonCharmDocument,
-  "quests/intro": introQuestDocument,
-  "encounters/wolf-pack": wolfPackDocument,
-  "encounters/shadow-eye": shadowEyeDocument,
-  "characters/hero": heroDocument,
-  "characters/guide": guideDocument,
+  "asset://items/iron-sword.json": ironSwordDocument,
+  "asset://items/moon-charm.json": moonCharmDocument,
+  "asset://quests/intro.json": introQuestDocument,
+  "asset://encounters/wolf-pack.json": wolfPackDocument,
+  "asset://encounters/shadow-eye.json": shadowEyeDocument,
+  "asset://characters/hero.json": heroDocument,
+  "asset://characters/guide.json": guideDocument,
 };
 
 const demoHost: EditorHost = {
-  isReferenceNode(value) {
-    return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
-  },
-  getReferenceLabel(value) {
-    return String((value as { $ref: string }).$ref);
-  },
-  resolveReferenceTarget(value, documents) {
-    const key = (value as { $ref: string }).$ref;
-    return {
-      sourceId: key,
-      path: [],
-      value: documents[key] ?? { missing: true, $ref: key },
-    };
+  loadReferenceSource(uri) {
+    return demoDocuments[uri];
   },
 };
 

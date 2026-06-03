@@ -13,8 +13,6 @@
     }
   ],
   "reward": {
-    "item": {
-      "$ref": "items/moon-charm"
-    }
+    "item": "asset://items/moon-charm.json"
   }
 }

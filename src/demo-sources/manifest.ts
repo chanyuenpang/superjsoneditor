@@ -2,11 +2,11 @@ export const DEMO_ROOT_SOURCE_ID = "main";
 
 export const DEMO_SOURCE_FILES: Record<string, string> = {
   main: "src/demo-sources/main.json",
-  "items/iron-sword": "src/demo-sources/items/iron-sword.json",
-  "items/moon-charm": "src/demo-sources/items/moon-charm.json",
-  "quests/intro": "src/demo-sources/quests/intro.json",
-  "encounters/wolf-pack": "src/demo-sources/encounters/wolf-pack.json",
-  "encounters/shadow-eye": "src/demo-sources/encounters/shadow-eye.json",
-  "characters/hero": "src/demo-sources/characters/hero.json",
-  "characters/guide": "src/demo-sources/characters/guide.json",
+  "asset://items/iron-sword.json": "src/demo-sources/items/iron-sword.json",
+  "asset://items/moon-charm.json": "src/demo-sources/items/moon-charm.json",
+  "asset://quests/intro.json": "src/demo-sources/quests/intro.json",
+  "asset://encounters/wolf-pack.json": "src/demo-sources/encounters/wolf-pack.json",
+  "asset://encounters/shadow-eye.json": "src/demo-sources/encounters/shadow-eye.json",
+  "asset://characters/hero.json": "src/demo-sources/characters/hero.json",
+  "asset://characters/guide.json": "src/demo-sources/characters/guide.json",
 };

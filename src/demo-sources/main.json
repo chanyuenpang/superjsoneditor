@@ -28,15 +28,11 @@
       "inventory": [
         {
           "slot": "weapon",
-          "item": {
-            "$ref": "items/iron-sword"
-          }
+          "item": "asset://items/iron-sword.json"
         },
         {
           "slot": "charm",
-          "item": {
-            "$ref": "items/moon-charm"
-          }
+          "item": "asset://items/moon-charm.json"
         }
       ]
     },
@@ -54,27 +50,21 @@
     }
   ],
   "world": {
-    "activeQuest": {
-      "$ref": "quests/intro"
-    },
+    "activeQuest": "asset://quests/intro.json",
     "map": {
       "regions": [
         {
           "id": "north-forest",
           "threat": 2,
           "encounters": [
-            {
-              "$ref": "encounters/wolf-pack"
-            }
+            "asset://encounters/wolf-pack.json"
           ]
         },
         {
           "id": "sunken-vault",
           "threat": 5,
           "encounters": [
-            {
-              "$ref": "encounters/shadow-eye"
-            }
+            "asset://encounters/shadow-eye.json"
           ]
         }
       ]
@@ -98,12 +88,8 @@
       "retryBudget": 2,
       "alertsOpen": 1,
       "isArchived": false,
-      "activeQuest": {
-        "$ref": "quests/intro"
-      },
-      "encounterPreset": {
-        "$ref": "encounters/wolf-pack"
-      },
+      "activeQuest": "asset://quests/intro.json",
+      "encounterPreset": "asset://encounters/wolf-pack.json",
       "summary": "Baseline node with low latency and one outstanding alert for an aging cache shard."
     },
     [
@@ -138,15 +124,9 @@
         "mirror",
         "staging"
       ],
-      "primaryCharacter": {
-        "$ref": "characters/guide"
-      },
-      "activeQuest": {
-        "$ref": "quests/intro"
-      },
-      "encounterPreset": {
-        "$ref": "encounters/shadow-eye"
-      },
+      "primaryCharacter": "asset://characters/guide.json",
+      "activeQuest": "asset://quests/intro.json",
+      "encounterPreset": "asset://encounters/shadow-eye.json",
       "summary": "Mirror relay is intentionally noisy to exercise overflow, sticky identity, and wide-column scanning."
     },
     {
@@ -174,15 +154,9 @@
         "index",
         "beta"
       ],
-      "primaryCharacter": {
-        "$ref": "characters/hero"
-      },
-      "activeQuest": {
-        "$ref": "quests/intro"
-      },
-      "encounterPreset": {
-        "$ref": "encounters/shadow-eye"
-      },
+      "primaryCharacter": "asset://characters/hero.json",
+      "activeQuest": "asset://quests/intro.json",
+      "encounterPreset": "asset://encounters/shadow-eye.json",
       "summary": "Paused indexer keeps intentionally long descriptive text so the table can show aggressive width pressure."
     }
   ]
