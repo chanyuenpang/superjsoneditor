@@ -53,13 +53,14 @@ export function openPath(
   const targetValue = getValueAtPath(currentDocument, path);
   const navLabel = getNavigationLabel(path);
   const referenceUri = getReferenceUri(targetValue);
+  const referenceSourceId = referenceUri ? (host?.resolveReferenceSourceId?.(referenceUri) ?? referenceUri) : null;
 
   if (referenceUri) {
     const resolved = resolveReferenceDocument(referenceUri, host);
     if (resolved.ok) {
       const nextDocuments = {
         ...documents,
-        [referenceUri]: resolved.value,
+        [referenceSourceId ?? referenceUri]: resolved.value,
       };
 
       return {
@@ -70,7 +71,7 @@ export function openPath(
         pages: [
           ...state.pages,
           {
-            sourceId: referenceUri,
+            sourceId: referenceSourceId ?? referenceUri,
             path: [],
             navLabel,
             value: resolved.value,
@@ -89,7 +90,7 @@ export function openPath(
       pages: [
         ...state.pages,
         {
-          sourceId: referenceUri,
+          sourceId: referenceSourceId ?? referenceUri,
           path: [],
           navLabel,
           sourceValue: targetValue,

@@ -94,8 +94,56 @@ export function determineBackAnimation(
   return null;
 }
 
+export function determinePinnedRootNavigateAnimation(
+  currentPages: NavigationPage[],
+  nextPages: NavigationPage[],
+  key: number,
+): StackAnimation | null {
+  const currentRightPage = getPinnedRootRightPage(currentPages);
+  const nextRightPage = getPinnedRootRightPage(nextPages);
+
+  if (!currentRightPage && nextRightPage) {
+    return { direction: "push", key };
+  }
+
+  if (currentRightPage && nextRightPage && !samePage(currentRightPage, nextRightPage)) {
+    return { direction: "replace", key, exitingPage: currentRightPage };
+  }
+
+  return null;
+}
+
+export function determinePinnedRootBackAnimation(
+  currentPages: NavigationPage[],
+  nextPages: NavigationPage[],
+  key: number,
+): StackAnimation | null {
+  const currentRightPage = getPinnedRootRightPage(currentPages);
+  const nextRightPage = getPinnedRootRightPage(nextPages);
+
+  if (currentRightPage && nextRightPage && !samePage(currentRightPage, nextRightPage)) {
+    return { direction: "replace", key, exitingPage: currentRightPage };
+  }
+
+  return null;
+}
+
 export function getVisiblePages(pages: NavigationPage[]) {
   return pages.slice(Math.max(0, pages.length - 2));
+}
+
+function getPinnedRootRightPage(pages: NavigationPage[]) {
+  const currentPage = pages[pages.length - 1];
+  if (!currentPage) return undefined;
+  if (!currentPage.path.length && !currentPage.sourceId) {
+    return undefined;
+  }
+  return currentPage.path.length === 0 && pages.length === 1 ? undefined : currentPage;
+}
+
+function samePage(left?: NavigationPage, right?: NavigationPage) {
+  if (!left || !right) return false;
+  return (left.sourceId ?? "") === (right.sourceId ?? "") && samePath(left.path, right.path);
 }
 
 export function samePath(left?: JsonPath, right?: JsonPath) {

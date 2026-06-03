@@ -1,9 +1,30 @@
 import type { JsonPath } from "../core/path";
+import type { EditorReferenceSchema, EditorSchema } from "./schema";
+
+export type EditorReferenceOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
 
 export type EditorHost = {
   loadReferenceSource?: (uri: string) => unknown;
+  resolveReferenceSourceId?: (uri: string) => string | undefined;
+  resolveDisplayUrl?: (value: string, schema?: EditorSchema) => string | undefined;
+  createReferenceRow?: (context: {
+    path: JsonPath;
+    value: unknown[];
+    schema?: EditorSchema;
+    reference?: EditorReferenceSchema;
+  }) => unknown | undefined | Promise<unknown | undefined>;
   getFieldLabel?: (path: JsonPath, fieldName: string, value: unknown) => string;
   getArrayItemLabel?: (path: JsonPath, index: number, value: unknown) => string;
+  getReferenceOptions?: (context: {
+    path: JsonPath;
+    value: unknown;
+    schema?: EditorSchema;
+    reference?: EditorReferenceSchema;
+  }) => EditorReferenceOption[];
 };
 
 export type ReferenceErrorInfo = {

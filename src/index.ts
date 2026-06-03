@@ -12,9 +12,20 @@ export type {
   EditorSchema,
   EditorSchemaContext,
   EditorSchemaHost,
+  EditorMode,
+  ResolvedSchemaNode,
   EditorValidationError,
   EditorValidationHandler,
   EditorValidationResult,
+} from "./editor/schema";
+export {
+  createDefaultArrayItem,
+  createDefaultPropertyValue,
+  createDefaultValue,
+  resolveNode,
+  resolveSchemaAtPath,
+  switchUnionBranch,
+  validateDocument,
 } from "./editor/schema";
 export type { NavigationPage, NavigationState } from "./core/navigation";
 export { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, samePath } from "./core/navigation";

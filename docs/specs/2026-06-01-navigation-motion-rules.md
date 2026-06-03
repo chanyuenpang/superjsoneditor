@@ -1,191 +1,185 @@
-# Navigation And Motion Rules
+# Super JSON Editor 导航与动效规则
 
-## Purpose
+## 目标
 
-This document defines the intended navigation and motion semantics for the `super-json-editor` page stack.
+本文档定义 `super-json-editor` 的导航与动效语义。
 
-It exists to stop the editor from treating all page changes as the same generic animation.
+它要解决的问题不是“让所有切页都动起来”，而是：
 
-The guiding principle is:
+- 动效要表达用户意图
+- 只有真正发生角色变化的页面才应该运动
+- 不相关的页面应尽量保持静止
 
-- motion should express user intent
-- only the pages that conceptually move should animate
-- unrelated pages should stay still
+## 先区分两种布局模式
 
----
+### `stack-flow`
 
-## Mental Model
+这是默认模式。
 
-The editor keeps a full internal navigation stack, but visually shows at most the last two pages.
+特点：
 
-Those two visible pages have roles:
+- 当前可见区域只强调当前工作页
+- 虽然内部仍有完整导航栈，但视觉上更接近“整页随导航流动”
+- 不要求始终保留左侧上下文页
 
-- left page: context page
-- right page: current working page
+### `pinned-root`
 
-Not every navigation event changes both roles.
-That is why motion cannot be handled by one universal push animation.
+这是固定 root 模式。
 
----
+特点：
 
-## Motion Types
+- 左侧 root 页固定
+- 右侧为当前工作页
+- 动效规则主要围绕“右侧页如何进入、替换、返回”展开
 
-There are two allowed motion types:
+下面的详细动效规则，主要针对 **`pinned-root`** 模式。
+`stack-flow` 更强调简洁和直接，不强求复杂上下文动效。
 
-### 1. Push
+## `pinned-root` 的心智模型
 
-Use when the current right page opens a deeper child page.
+编辑器内部维护完整导航栈，但视觉上最多强调最近两页：
 
-Visual meaning:
+- 左页：上下文页
+- 右页：当前工作页
 
-- the old left page exits
-- the old right page moves left and becomes the new context page
-- a new page enters from the right
+不是每次导航都会改变这两个角色，因此不能只用一种通用动画。
 
-This is the most expressive transition and should be reserved for real deeper navigation.
+## 动效类型
 
-### 2. Replace
+### 1. `push`
 
-Use when the left page remains the same, but the right page changes.
+当当前右页继续打开更深的子页时使用。
 
-Visual meaning:
+视觉含义：
 
-- the left page stays completely still
-- the old right page exits
-- the new right page enters
+- 老左页离场
+- 老右页左移，成为新的上下文页
+- 新右页从右侧进入
 
-This should be used for:
+### 2. `replace`
 
-- opening a sibling child from the left page
-- switching top-level entries while root remains the left page
-- other cases where the visual context stays but the active right page changes
+当左页保持不变，但右页被另一页替换时使用。
 
-## Navigation Rules
+视觉含义：
 
-## Rule A: Single page to two pages
+- 左页保持完全静止
+- 老右页离场
+- 新右页进入
 
-If only one page is visible and the current page opens a child:
+### 3. `cut`
 
-- use `push`
+当动效会误导用户时，直接切换，不强行动画。
 
-Reason:
+这通常出现在返回、跨层跳转、或上下文收缩时。
 
-- the existing page becomes context
-- the new child becomes current
+## `pinned-root` 导航规则
 
----
+### 规则 A：单页进入双页
 
-## Rule B: Right page opens a deeper child
+当当前只有 root 可见，且从 root 打开一个子页：
 
-If two pages are visible and the current right page opens a deeper child:
+- 使用 `push`
 
-- use `push`
+原因：
 
-Reason:
+- root 成为上下文页
+- 新子页成为工作页
 
-- the current right page is being promoted into the left context role
-- the old left page is leaving the visible window
-- a new right page is being created
+### 规则 B：右页继续深入
 
----
+当左右两页都可见，且当前右页继续打开更深层子页：
 
-## Rule C: Left page opens a sibling child
+- 使用 `push`
 
-If two pages are visible and the user clicks a nested item inside the left page:
+原因：
 
-- use `replace`
+- 当前右页被提升为新的左侧上下文
+- 新右页被创建
 
-Reason:
+### 规则 C：左页切换右页
 
-- the left page remains the same context page
-- only the right page changes
+当用户从左页点击另一个子项，只替换右页：
 
-The left page must not slide, flicker, or re-enter.
+- 使用 `replace`
 
----
+原因：
 
-## Rule D: Sidebar or top-level switch with root still visible
+- 左页上下文不变
+- 只有右页变化
 
-If the left page remains `root` and the user switches to another top-level item:
+### 规则 D：root 保持，右侧切换另一个顶层入口
 
-- use `replace`
+当左页仍然是 root，右侧切到另一个顶层项：
 
-Reason:
+- 使用 `replace`
 
-- `root` remains the context page
-- only the right page changes
+原因：
 
----
+- root 仍是稳定上下文
+- 右侧工作页变化
 
-## Rule E: Back from two visible pages to one page
+### 规则 E：从双页退回单页
 
-If the user goes back and the visible stack shrinks from two pages to one:
+当从“左页 + 右页”退回到只剩 root：
 
-- use a direct `cut`
+- 使用 `cut`
 
-Reason:
+原因：
 
-- back should not imply a rightward page-exit animation
-- the visible state should update immediately
+- 这是上下文收缩，不应该误导成“右页滑出”
 
----
+### 规则 F：从双页退回另一组双页
 
-## Rule F: Back from two visible pages to another two-page pair
+当返回后，旧左页变成新右页：
 
-If the user goes back and the old left page becomes the new right page:
+- 优先 `cut`
 
-- use a direct `cut`
+原因：
 
-Reason:
+- 这本质上仍然是可见历史收缩
+- 直接切比误导性位移动画更可信
 
-- this is still a contraction of visible history
-- direct replacement is preferable to a misleading exit animation
+### 规则 G：跳转且左页不变
 
----
+如果 breadcrumb 或其他 jump 保持左页不变，但更换右页：
 
-## Rule G: Jump that keeps the same left page but changes the right page
+- 使用 `replace`
 
-If a breadcrumb or other jump keeps the left visible page unchanged but replaces the right page:
+### 规则 H：大跨度跳转
 
-- use `replace`
+如果 jump 不保留清晰的 `push / replace` 关系：
 
-Reason:
+- 直接 `cut`
 
-- visual context is preserved
-- only the active page changes
+例如：
 
----
+- 从深层状态直接跳回 root
+- 跳到一个与当前可见角色关系不明确的远处页面
 
-## Rule H: Large discontinuous jumps
+## `stack-flow` 的约束
 
-If a jump changes the visible state in a way that does not preserve a clear push or replace relationship:
+`stack-flow` 不追求把所有内部历史都可视化出来。
 
-- do not force a generic animation
-- allow a direct cut
+它的规则更简单：
 
-Examples:
+- 默认展示当前工作页
+- 返回优先使用直接的 `Back`
+- 如无明显收益，不额外制造“上下文页必须出现”的动画
 
-- jump from a deep nested two-page state directly to root
-- jump to a distant page that does not preserve either visible role
+换句话说：
 
-Reason:
+- `stack-flow` 优先保证清晰和轻量
+- `pinned-root` 才强调左/右角色分化
 
-- forcing an unrelated motion makes the UI feel fake
-- direct cuts are preferable to misleading animation
+## 产品约束
 
----
+动效系统应始终优先：
 
-## Product Constraint
+- **不用误导性动画**
 
-The motion system should always prefer:
+而不是：
 
-- no animation
+- **为了动画覆盖率而强行运动**
 
-over:
-
-- a misleading animation
-
-This is especially important in a small product like `super-json-editor`.
-The goal is not maximal animation coverage.
-The goal is trustworthy interaction semantics.
+在 `super-json-editor` 里，可信的交互语义比“动画很多”更重要。
 
