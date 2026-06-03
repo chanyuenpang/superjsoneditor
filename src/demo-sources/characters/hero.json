@@ -2,9 +2,7 @@
   "profile": {
     "name": "Lans",
     "class": "Warden",
-    "activeQuest": {
-      "$ref": "quests/intro"
-    }
+    "activeQuest": "asset://quests/intro.json"
   },
   "stats": {
     "hp": 10,
@@ -17,15 +15,11 @@
   "inventory": [
     {
       "slot": "weapon",
-      "item": {
-        "$ref": "items/iron-sword"
-      }
+      "item": "asset://items/iron-sword.json"
     },
     {
       "slot": "charm",
-      "item": {
-        "$ref": "items/moon-charm"
-      }
+      "item": "asset://items/moon-charm.json"
     }
   ],
   "test": "hello world"

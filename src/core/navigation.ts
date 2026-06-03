@@ -1,17 +1,7 @@
+import type { EditorHost, ReferenceErrorInfo } from "../editor/host";
+import { getReferenceUri, resolveReferenceDocument } from "../editor/host";
 import { getValueAtPath } from "./document";
 import type { JsonPath } from "./path";
-
-export type ReferenceTarget = {
-  sourceId: string;
-  path: JsonPath;
-  value: unknown;
-};
-
-export type ReferenceResolver = {
-  isReferenceNode?: (value: unknown) => boolean;
-  resolveReferenceTarget?: (value: unknown, documents: Record<string, unknown>) => ReferenceTarget | undefined;
-  resolveReference?: (value: unknown) => unknown;
-};
 
 export type NavigationPage = {
   sourceId?: string;
@@ -20,6 +10,7 @@ export type NavigationPage = {
   value?: unknown;
   sourceValue?: unknown;
   isReference?: boolean;
+  referenceError?: ReferenceErrorInfo;
 };
 
 export type NavigationState = {
@@ -53,41 +44,68 @@ export function createNavigationState(rootSourceIdOrDocumentValue: string | unkn
 export function openPath(
   state: NavigationState,
   path: JsonPath,
-  resolver?: ReferenceResolver,
+  host?: EditorHost,
 ): NavigationState {
   const rootSourceId = getRootSourceId(state);
   const documents = getDocuments(state);
   const currentPage = ensurePageSourceId(state.pages[state.pages.length - 1] ?? { sourceId: rootSourceId, path: [] }, rootSourceId);
   const currentDocument = documents[currentPage.sourceId];
   const targetValue = getValueAtPath(currentDocument, path);
-  const target = resolver?.isReferenceNode?.(targetValue) ? resolver.resolveReferenceTarget?.(targetValue, documents) : undefined;
-  const fallbackResolved = resolver?.isReferenceNode?.(targetValue) ? resolver.resolveReference?.(targetValue) : undefined;
   const navLabel = getNavigationLabel(path);
-  const nextPage: NavigationPage = target
-    ? {
-        sourceId: target.sourceId,
-        path: target.path,
-        navLabel,
-        sourceValue: targetValue,
-        isReference: true,
-      }
-    : fallbackResolved !== undefined
-      ? {
-          sourceId: currentPage.sourceId,
-          path,
+  const referenceUri = getReferenceUri(targetValue);
+
+  if (referenceUri) {
+    const resolved = resolveReferenceDocument(referenceUri, host);
+    if (resolved.ok) {
+      const nextDocuments = {
+        ...documents,
+        [referenceUri]: resolved.value,
+      };
+
+      return {
+        ...state,
+        documentValue: nextDocuments[rootSourceId],
+        documents: nextDocuments,
+        rootSourceId,
+        pages: [
+          ...state.pages,
+          {
+            sourceId: referenceUri,
+            path: [],
+            navLabel,
+            value: resolved.value,
+            sourceValue: targetValue,
+            isReference: true,
+          },
+        ],
+      };
+    }
+
+    return {
+      ...state,
+      documentValue: documents[rootSourceId],
+      documents,
+      rootSourceId,
+      pages: [
+        ...state.pages,
+        {
+          sourceId: referenceUri,
+          path: [],
           navLabel,
-          value: fallbackResolved,
           sourceValue: targetValue,
           isReference: true,
-        }
-    : { sourceId: currentPage.sourceId, path, navLabel };
+          referenceError: resolved.error,
+        },
+      ],
+    };
+  }
 
   return {
     ...state,
     documentValue: documents[rootSourceId],
     documents,
     rootSourceId,
-    pages: [...state.pages, nextPage],
+    pages: [...state.pages, { sourceId: currentPage.sourceId, path, navLabel }],
   };
 }
 

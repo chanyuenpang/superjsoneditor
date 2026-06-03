@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { setValueAtPath } from "../core/document";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
-import type { EditorHost } from "./host";
+import { getReferenceLabel, getReferenceUri, isReferenceValue, type EditorHost, type ReferenceErrorInfo } from "./host";
 import type { EditorSchema, EditorValidationError, EditorValidationResult } from "./schema";
 
 type ValueInspectorProps = {
@@ -14,6 +14,7 @@ type ValueInspectorProps = {
   host?: EditorHost;
   schema?: EditorSchema;
   validationResult?: EditorValidationResult | null;
+  referenceError?: ReferenceErrorInfo;
   isReference?: boolean;
   referenceScopeDepth?: number;
   referenceSourceLabel?: string;
@@ -27,6 +28,10 @@ type ValueInspectorProps = {
 };
 
 export function ValueInspector(props: ValueInspectorProps) {
+  if (props.referenceError) {
+    return <ReferenceErrorPage {...props} referenceError={props.referenceError} />;
+  }
+
   if (Array.isArray(props.value)) {
     return <ArrayPage {...props} value={props.value} />;
   }
@@ -609,7 +614,7 @@ function ArrayPage({
                               }}
                             >
                               <span className="entry-key">{summarizeRowIdentity(item, index, path, host)}</span>
-                              {host?.isReferenceNode?.(item) ? (
+                              {isReferenceValue(item) ? (
                                 null
                               ) : (
                                 <>
@@ -753,6 +758,44 @@ function PrimitivePage({
             </section>
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+function ReferenceErrorPage({
+  path,
+  title,
+  referenceError,
+  referenceScopeDepth,
+  referenceSourceLabel,
+  onNavigateUp,
+}: ValueInspectorProps & { referenceError: ReferenceErrorInfo }) {
+  return (
+    <section className="node-page node-page--primitive">
+      <PageHeader
+        path={path}
+        title={title ?? "Reference Error"}
+        isReference
+        referenceScopeDepth={referenceScopeDepth}
+        referenceSourceLabel={referenceSourceLabel}
+        onNavigateUp={onNavigateUp}
+      />
+      <div className="node-page__content">
+        <div className="object-page-body">
+          <div className="object-scroll">
+            <div className="property-list">
+              <section className="property-block object-field-row">
+                <div className="property-heading">
+                  <span>Reference Error</span>
+                  <small className="field-type tone-reference">reference</small>
+                </div>
+                <div className="form-hint form-hint--danger">{referenceError.message}</div>
+                <div className="form-hint">{referenceError.uri}</div>
+              </section>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -1022,7 +1065,7 @@ function hasObjectTableRows(items: unknown[], host?: EditorHost) {
 }
 
 function isObjectTableRow(item: unknown, host?: EditorHost) {
-  return isPlainObject(item) && !host?.isReferenceNode?.(item);
+  return isPlainObject(item) && !isReferenceValue(item);
 }
 
 function summarizeRowIdentity(value: unknown, index: number, path: JsonPath, host?: EditorHost) {
@@ -1045,16 +1088,11 @@ function inferValueTitle(value: unknown): string | null {
 }
 
 function inferReferenceSourceId(value: unknown, host?: EditorHost): string | null {
-  if (!host?.isReferenceNode?.(value) || !isPlainObject(value)) {
-    return null;
-  }
-
-  const sourceId = value.$ref;
-  return typeof sourceId === "string" && sourceId ? sourceId : null;
+  return getReferenceUri(value);
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
-  if (host?.isReferenceNode?.(value)) return "reference";
+  if (isReferenceValue(value)) return "reference";
   if (Array.isArray(value)) return "array";
   if (value === null) return "null";
   return typeof value;
@@ -1204,14 +1242,14 @@ function getTypeToneClassForType(type: string) {
 }
 
 function describeStructureIcon(value: unknown, host?: EditorHost) {
-  if (host?.isReferenceNode?.(value)) return "↗";
+  if (isReferenceValue(value)) return "↗";
   if (Array.isArray(value)) return "[]";
   if (isPlainObject(value)) return "{}";
   return "·";
 }
 
 function previewValue(value: unknown, host?: EditorHost): string {
-  if (host?.isReferenceNode?.(value)) return host.getReferenceLabel?.(value) ?? "reference";
+  if (isReferenceValue(value)) return getReferenceLabel(value);
   if (Array.isArray(value)) return `${value.length} items`;
   if (isPlainObject(value)) return `${Object.keys(value).length} fields`;
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -1220,14 +1258,14 @@ function previewValue(value: unknown, host?: EditorHost): string {
 }
 
 function getStructureIcon(value: unknown, host?: EditorHost) {
-  if (host?.isReferenceNode?.(value)) return "->";
+  if (isReferenceValue(value)) return "->";
   if (Array.isArray(value)) return "[]";
   if (isPlainObject(value)) return "{}";
   return ".";
 }
 
 function isNavigable(value: unknown): boolean {
-  return Array.isArray(value) || isPlainObject(value);
+  return isReferenceValue(value) || Array.isArray(value) || isPlainObject(value);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

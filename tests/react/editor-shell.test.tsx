@@ -168,23 +168,12 @@ test("references can navigate into a different source document", () => {
   render(
     <EditorShell
       documents={{
-        main: { profile: { companion: { $ref: "characters/hero" } } },
-        "characters/hero": { id: "hero", stats: { hp: 10 } },
+        main: { profile: { companion: "asset://characters/hero.json" } },
+        "asset://characters/hero.json": { id: "hero", stats: { hp: 10 } },
       }}
       host={{
-        isReferenceNode(value) {
-          return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
-        },
-        getReferenceLabel(value) {
-          return String((value as { $ref: string }).$ref);
-        },
-        resolveReferenceTarget(value, documents) {
-          const sourceId = String((value as { $ref: string }).$ref);
-          return {
-            sourceId,
-            path: [],
-            value: documents[sourceId],
-          };
+        loadReferenceSource(uri) {
+          return uri === "asset://characters/hero.json" ? { id: "hero", stats: { hp: 10 } } : undefined;
         },
       }}
       rootSourceId="main"
@@ -192,7 +181,7 @@ test("references can navigate into a different source document", () => {
   );
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
-  fireEvent.click(screen.getByRole("button", { name: "companion reference characters/hero" }));
+  fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
 
   expect(screen.getByDisplayValue("hero")).toBeInTheDocument();
   expect(screen.getAllByRole("button", { name: "Go up one level" }).length).toBeGreaterThan(0);
@@ -203,23 +192,12 @@ test("reference edits can be saved through the host contract", async () => {
   render(
     <EditorShell
       documents={{
-        main: { profile: { companion: { $ref: "characters/hero" } } },
-        "characters/hero": { id: "hero", stats: { hp: 10 } },
+        main: { profile: { companion: "asset://characters/hero.json" } },
+        "asset://characters/hero.json": { id: "hero", stats: { hp: 10 } },
       }}
       host={{
-        isReferenceNode(value) {
-          return Boolean(value && typeof value === "object" && "$ref" in (value as Record<string, unknown>));
-        },
-        getReferenceLabel(value) {
-          return String((value as { $ref: string }).$ref);
-        },
-        resolveReferenceTarget(value, documents) {
-          const sourceId = String((value as { $ref: string }).$ref);
-          return {
-            sourceId,
-            path: [],
-            value: documents[sourceId],
-          };
+        loadReferenceSource(uri) {
+          return uri === "asset://characters/hero.json" ? { id: "hero", stats: { hp: 10 } } : undefined;
         },
       }}
       onSave={handleSave}
@@ -228,16 +206,37 @@ test("reference edits can be saved through the host contract", async () => {
   );
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
-  fireEvent.click(screen.getByRole("button", { name: "companion reference characters/hero" }));
+  fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
   fireEvent.change(screen.getByLabelText("Field id"), { target: { value: "hero-updated" } });
   fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
   await waitFor(() =>
     expect(handleSave).toHaveBeenCalledWith({
-      main: { profile: { companion: { $ref: "characters/hero" } } },
-      "characters/hero": { id: "hero-updated", stats: { hp: 10 } },
+      main: { profile: { companion: "asset://characters/hero.json" } },
+      "asset://characters/hero.json": { id: "hero-updated", stats: { hp: 10 } },
     }),
   );
+});
+
+test("failed reference expansion opens a new error page", async () => {
+  render(
+    <EditorShell
+      documents={{ main: { profile: { broken: "asset://characters/missing.json" } } }}
+      host={{
+        loadReferenceSource() {
+          throw new Error("Document not found");
+        },
+      }}
+      rootSourceId="main"
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "broken reference asset://characters/missing.json" }));
+
+  await waitFor(() => expect(screen.getByText("Reference Error")).toBeInTheDocument());
+  expect(screen.getByText("Document not found")).toBeInTheDocument();
+  expect(screen.getAllByText("asset://characters/missing.json").length).toBeGreaterThan(0);
 });
 
 test("schema controls object field order and titles", () => {

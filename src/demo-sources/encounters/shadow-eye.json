@@ -8,8 +8,6 @@
     "darkness": 4
   },
   "researchNotes": {
-    "archivist": {
-      "$ref": "characters/guide"
-    }
+    "archivist": "asset://characters/guide.json"
   }
 }

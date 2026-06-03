@@ -3,7 +3,7 @@ import { getValueAtPath, setValueAtPath } from "../core/document";
 import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type NavigationPage } from "../core/navigation";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
-import type { EditorHost } from "./host";
+import { isReferenceValue, type EditorHost } from "./host";
 import type { EditorSchema, EditorSchemaHost, EditorValidationResult, EditorValidationHandler } from "./schema";
 import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, getVisiblePages, samePath, type StackAnimation } from "./stack-motion";
 import { ValueInspector } from "./ValueInspector";
@@ -390,6 +390,7 @@ export function EditorShell({
                   host={host}
                   schema={resolvePageSchema(compactPage)}
                   validationResult={validationResult}
+                    referenceError={currentPage.referenceError}
                     isReference={currentPage.isReference}
                     referenceScopeDepth={referenceScopeDepths[compactPageIndex]}
                     referenceSourceLabel={getReferenceSourceLabel(compactPage.sourceId, rootSourceId, referenceScopeDepths[compactPageIndex])}
@@ -478,6 +479,7 @@ export function EditorShell({
                     host={host}
                     schema={resolvePageSchema(renderedPage)}
                     validationResult={validationResult}
+                    referenceError={renderedPage.referenceError}
                     isReference={renderedPage.isReference}
                     referenceScopeDepth={referenceScopeDepths[fullPageIndex]}
                     referenceSourceLabel={getReferenceSourceLabel(renderedPage.sourceId, rootSourceId, referenceScopeDepths[fullPageIndex])}
@@ -567,6 +569,7 @@ export function EditorShell({
                   host={host}
                   schema={resolvePageSchema(stackAnimation.exitingPage)}
                   validationResult={validationResult}
+                  referenceError={stackAnimation.exitingPage.referenceError}
                   isReference={stackAnimation.exitingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
                   referenceSourceLabel={getReferenceSourceLabel(stackAnimation.exitingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage))}
@@ -596,6 +599,7 @@ export function EditorShell({
                   host={host}
                   schema={resolvePageSchema(stackAnimation.promotingPage)}
                   validationResult={validationResult}
+                  referenceError={stackAnimation.promotingPage.referenceError}
                   isReference={stackAnimation.promotingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage)}
                   referenceSourceLabel={getReferenceSourceLabel(stackAnimation.promotingPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage))}
@@ -650,7 +654,7 @@ function inferDocumentLabel(value: unknown, fallback = "JSON Document") {
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
-  if (host?.isReferenceNode?.(value)) return "reference";
+  if (isReferenceValue(value)) return "reference";
   if (Array.isArray(value)) return "array";
   if (value === null) return "null";
   return typeof value;
