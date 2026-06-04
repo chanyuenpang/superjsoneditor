@@ -1051,8 +1051,8 @@ test("schema table columns reorder reference projection columns", () => {
         "x-editor": {
           table: {
             columns: [
-              { key: "name", label: "Display Name", sortable: true },
-              { key: "icon" },
+              { field: ["name"], label: "Display Name", sortable: true },
+              { field: ["icon"] },
             ],
           },
         },
@@ -1139,8 +1139,8 @@ test("reference projection column headers derive type labels from projection sch
         "x-editor": {
           table: {
             columns: [
-              { key: "name" },
-              { key: "icon" },
+              { field: ["name"] },
+              { field: ["icon"] },
             ],
           },
         },
@@ -1822,8 +1822,8 @@ test("schema authoring can add hidden reference projection columns and rename th
       "x-editor": {
         table: {
           columns: [
-            { key: "name" },
-            { key: "icon" },
+            { field: ["name"] },
+            { field: ["icon"] },
           ],
         },
       },
@@ -1902,8 +1902,8 @@ test("schema authoring can add hidden reference projection columns and rename th
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Display Name", "Icon", "Identifier"]);
   expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
-    { key: "name", label: "Display Name" },
-    { key: "icon" },
+    { field: ["name"], label: "Display Name" },
+    { field: ["icon"] },
     { key: "id" },
   ]);
   expect(schemaHost.getNamedSchemaSnapshot("reward_item")?.["x-editor"]?.table?.columns).toBeUndefined();

@@ -39,7 +39,8 @@ export type EditorViewOptionsSource = {
 };
 
 export type EditorTableColumn = {
-  key: string;
+  key?: string;
+  field?: string | JsonPath;
   label?: string;
   sortable?: boolean;
   width?: number;

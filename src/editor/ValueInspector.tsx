@@ -742,7 +742,7 @@ function ArrayPage({
     updater: (column: EditorTableColumn) => EditorTableColumn,
   ) {
     updateTableSchemaColumns((currentColumns) =>
-      currentColumns.map((column) => (column.key === key ? updater(column) : column)),
+      currentColumns.map((column) => (getTableColumnId(column) === key ? updater(column) : column)),
     );
   }
 
@@ -811,8 +811,8 @@ function ArrayPage({
                     ) : null}
                     {orderedColumns.map((column, columnIndex) => (
                       (() => {
-                        const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
-                        const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
+                        const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns);
+                        const configuredColumn = findConfiguredTableColumn(configuredTableColumns, column);
                         const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, columnSourceSchema);
                         const isDescriptionColumn = referenceColumn?.key === "description";
                         const isSortable = Boolean(configuredColumn?.sortable);
@@ -864,7 +864,7 @@ function ArrayPage({
                               }
                               const slots = collectColumnSlots(scrollContainer, state.key);
                               const pointerXInScrollSpace = getPointerXInScrollSpace(scrollContainer, clientX);
-                              const nextPreview = buildPreviewOrderFromSlots(managedColumns.map((managedColumn) => managedColumn.key), state.key, slots, pointerXInScrollSpace);
+                              const nextPreview = buildPreviewOrderFromSlots(managedColumns.map((managedColumn) => getTableColumnId(managedColumn)), state.key, slots, pointerXInScrollSpace);
                               dragPreviewKeysRef.current = nextPreview;
                               setDragPreviewKeys(nextPreview);
                               setDragGhost({
@@ -891,7 +891,7 @@ function ArrayPage({
                                 y: rect.top,
                               });
                             }}
-                            onHide={() => updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column))}
+                            onHide={() => updateTableSchemaColumns((current) => current.filter((entry) => getTableColumnId(entry) !== column))}
                             onMove={(direction) => updateTableSchemaColumns((current) => moveTableColumn(current, column, direction))}
                             onPressChange={(_fieldName, pressed) => setPressedColumnKey(pressed ? column : null)}
                             onRenameLabel={(label) => {
@@ -1000,12 +1000,12 @@ function ArrayPage({
                                 </td>
                               );
                             }
-                            const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
+                            const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns);
                             if (!referenceColumn) {
                               return <td key={`${sourceIndex}:${column}`} />;
                             }
                             const imageColumn = isImageDisplaySchema(referenceColumn.columnSchema);
-                            const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
+                            const configuredColumn = findConfiguredTableColumn(configuredTableColumns, column);
                             return (
                               <td
                                 className={[
@@ -1149,8 +1149,13 @@ function ArrayPage({
                                 </td>
                               );
                             }
-                            const hasColumn = Object.prototype.hasOwnProperty.call(record, column);
-                            const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
+                            const configuredColumn = findConfiguredTableColumn(configuredTableColumns, column);
+                            const fieldPath = configuredColumn ? getTableColumnPath(configuredColumn) : [column];
+                            const isDirectProperty = fieldPath.length === 1 && typeof fieldPath[0] === "string";
+                            const cellValue = fieldPath.length > 0 ? getValueAtPath(record, fieldPath) : record[column];
+                            const hasColumn = isDirectProperty
+                              ? Object.prototype.hasOwnProperty.call(record, fieldPath[0] as string)
+                              : cellValue !== undefined;
                             return (
                             <td
                               className={
@@ -1170,7 +1175,7 @@ function ArrayPage({
                                   !hasColumn ? "array-cell-summary--missing" : "",
                                 ].filter(Boolean).join(" ")}
                               >
-                                {hasColumn ? previewValue(record[column], host) : "-"}
+                                {hasColumn ? previewValue(cellValue, host) : "-"}
                               </span>
                             </td>
                             );
@@ -1323,14 +1328,15 @@ function ArrayPage({
                     <strong>Visible columns</strong>
                     <div className="form-hint">Rename, reorder, resize, and wrap columns from the table headers.</div>
                     {managedColumns.map((column) => {
-                      const label = getConfiguredColumnLabel(column.key, column, referenceViewColumns.find((entry) => entry.key === column.key), columnSourceSchema);
+                      const columnId = getTableColumnId(column);
+                      const label = getConfiguredColumnLabel(columnId, column, findReferenceColumn(columnId, configuredTableColumns, referenceViewColumns), columnSourceSchema);
                       return (
-                        <div className="schema-column-manager__row" key={column.key}>
+                        <div className="schema-column-manager__row" key={columnId}>
                           <span>{label}</span>
                           <button
                             aria-label={`Hide column ${label}`}
                             type="button"
-                            onClick={() => updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column.key))}
+                            onClick={() => updateTableSchemaColumns((current) => current.filter((entry) => getTableColumnId(entry) !== columnId))}
                           >
                             Hide
                           </button>
@@ -1340,13 +1346,16 @@ function ArrayPage({
                   </div>
                   <div className="schema-column-manager__section">
                     <strong>Hidden columns</strong>
-                    {availableSchemaColumns.filter((column) => !managedColumns.some((entry) => entry.key === column.key)).map((column) => (
+                    {availableSchemaColumns.filter((column) => !managedColumns.some((entry) => getTableColumnId(entry) === column.key)).map((column) => (
                       <div className="schema-column-manager__row" key={column.key}>
                         <span>{column.label}</span>
                         <button
                           aria-label={`Show column ${column.label}`}
                           type="button"
-                          onClick={() => updateTableSchemaColumns((current) => [...current, { key: column.key }])}
+                          onClick={() => updateTableSchemaColumns((current) => [
+                            ...current,
+                            isSimpleKeyField(column.field, column.key) ? { key: column.key } : { field: column.field },
+                          ])}
                         >
                           Show
                         </button>
@@ -1957,6 +1966,12 @@ type ReferenceViewColumn = {
   columnSchema?: EditorSchema;
 };
 
+type AvailableSchemaColumn = {
+  key: string;
+  field: JsonPath;
+  label: string;
+};
+
 type ResolvedEditorOption = {
   value: string | number;
   label: string;
@@ -1976,7 +1991,7 @@ function getArrayColumns(
   configuredColumns: EditorTableColumn[] = [],
 ) {
   if (configuredColumns.length > 0) {
-    return ["#", ...configuredColumns.map((column) => column.key)];
+    return ["#", ...configuredColumns.map((column) => getTableColumnId(column))];
   }
   if (referenceViewColumns.length > 0) {
     return ["#", ...referenceViewColumns.map((column) => column.key)];
@@ -2019,8 +2034,8 @@ function getArrayColumnWidths(
   const sampleSize = Math.min(items.length, 40);
 
   for (const column of columns) {
-    const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
-    const configuredColumn = configuredColumns.find((entry) => entry.key === column);
+    const referenceColumn = findReferenceColumn(column, configuredColumns, referenceViewColumns);
+    const configuredColumn = findConfiguredTableColumn(configuredColumns, column);
     if (configuredColumn?.width) {
       widths[column] = configuredColumn.width;
       continue;
@@ -2047,7 +2062,9 @@ function getArrayColumnWidths(
       continue;
     }
 
-    const headerWidth = measureColumnText(configuredColumn?.label ?? itemSchema?.properties?.[column]?.title ?? column);
+    const configuredPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
+    const propertyKey = configuredPath.length === 1 && typeof configuredPath[0] === "string" ? configuredPath[0] : column;
+    const headerWidth = measureColumnText(configuredColumn?.label ?? itemSchema?.properties?.[propertyKey]?.title ?? column);
     let contentWidth = headerWidth;
 
     if (hasObjectTableRows(items, host)) {
@@ -2055,7 +2072,8 @@ function getArrayColumnWidths(
         const item = items[index];
         if (!isObjectTableRow(item, host)) continue;
         const record = item as Record<string, unknown>;
-        contentWidth = Math.max(contentWidth, measureColumnText(previewValue(record[column], host)));
+        const cellValue = configuredPath.length > 0 ? getValueAtPath(record, configuredPath) : record[column];
+        contentWidth = Math.max(contentWidth, measureColumnText(previewValue(cellValue, host)));
       }
       widths[column] = clampColumnWidth(contentWidth, column);
       continue;
@@ -2111,10 +2129,11 @@ function getArrayTableSchema(arraySchema: EditorSchema | undefined, itemSchema: 
   return arraySchema;
 }
 
-function getAvailableSchemaColumns(schema: EditorSchema | undefined): Array<{ key: string; label: string }> {
+function getAvailableSchemaColumns(schema: EditorSchema | undefined): AvailableSchemaColumn[] {
   if (!schema?.properties) return [];
   return Object.entries(schema.properties).map(([key, propertySchema]) => ({
     key,
+    field: propertySchema["x-editor"]?.projection?.path ?? [key],
     label: propertySchema.title ?? key,
   }));
 }
@@ -2122,7 +2141,7 @@ function getAvailableSchemaColumns(schema: EditorSchema | undefined): Array<{ ke
 function getManagedTableColumns(
   configuredColumns: EditorTableColumn[],
   renderedColumns: string[],
-  availableColumns: Array<{ key: string; label: string }>,
+  availableColumns: AvailableSchemaColumn[],
 ) {
   if (configuredColumns.length > 0) {
     return configuredColumns;
@@ -2130,7 +2149,12 @@ function getManagedTableColumns(
   return renderedColumns
     .filter((key) => key !== "#")
     .filter((key) => availableColumns.some((entry) => entry.key === key))
-    .map((key) => ({ key }));
+    .map((key) => {
+      const available = availableColumns.find((entry) => entry.key === key);
+      return available && !isSimpleKeyField(available.field, key)
+        ? { key, field: available.field }
+        : { key };
+    });
 }
 
 function setSchemaTableColumns(schema: EditorSchema, columns: EditorTableColumn[]): EditorSchema {
@@ -2146,7 +2170,7 @@ function setSchemaTableColumns(schema: EditorSchema, columns: EditorTableColumn[
 }
 
 function moveTableColumn(columns: EditorTableColumn[], key: string, direction: "left" | "right") {
-  const currentIndex = columns.findIndex((column) => column.key === key);
+  const currentIndex = columns.findIndex((column) => getTableColumnId(column) === key);
   if (currentIndex < 0) return columns;
   const targetIndex = direction === "left" ? currentIndex - 1 : currentIndex + 1;
   if (targetIndex < 0 || targetIndex >= columns.length) return columns;
@@ -2160,13 +2184,55 @@ function reorderColumnsByKeys(columns: EditorTableColumn[], orderedKeys: string[
   if (orderedKeys.length === 0) return columns;
   const rank = new Map(orderedKeys.map((key, index) => [key, index]));
   return [...columns].sort((left, right) => {
-    const leftRank = rank.get(left.key);
-    const rightRank = rank.get(right.key);
+    const leftRank = rank.get(getTableColumnId(left));
+    const rightRank = rank.get(getTableColumnId(right));
     if (leftRank == null && rightRank == null) return 0;
     if (leftRank == null) return 1;
     if (rightRank == null) return -1;
     return leftRank - rightRank;
   });
+}
+
+function getTableColumnId(column: EditorTableColumn) {
+  if (column.key?.trim()) return column.key;
+  return formatTableColumnPath(getTableColumnPath(column));
+}
+
+function getTableColumnPath(column: EditorTableColumn): JsonPath {
+  if (Array.isArray(column.field)) return column.field;
+  if (typeof column.field === "string" && column.field.trim()) return [column.field];
+  if (column.key?.trim()) return [column.key];
+  return [];
+}
+
+function formatTableColumnPath(path: JsonPath) {
+  return path.join(".");
+}
+
+function isSimpleKeyField(path: JsonPath, key: string) {
+  return path.length === 1 && path[0] === key;
+}
+
+function isSameJsonPath(left: JsonPath, right: JsonPath) {
+  return left.length === right.length && left.every((segment, index) => segment === right[index]);
+}
+
+function findConfiguredTableColumn(columns: EditorTableColumn[], columnId: string) {
+  return columns.find((entry) => getTableColumnId(entry) === columnId);
+}
+
+function findReferenceColumn(
+  columnId: string,
+  configuredColumns: EditorTableColumn[],
+  referenceColumns: ReferenceViewColumn[],
+) {
+  const configuredColumn = findConfiguredTableColumn(configuredColumns, columnId);
+  const configuredPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
+  if (configuredPath.length > 0) {
+    const matchedByPath = referenceColumns.find((entry) => isSameJsonPath(entry.path, configuredPath));
+    if (matchedByPath) return matchedByPath;
+  }
+  return referenceColumns.find((entry) => entry.key === columnId);
 }
 
 function getConfiguredColumnLabel(
@@ -2176,7 +2242,9 @@ function getConfiguredColumnLabel(
   itemSchema: EditorSchema | undefined,
 ) {
   if (column === "#") return "#";
-  return configuredColumn?.label ?? referenceColumn?.title ?? itemSchema?.properties?.[column]?.title ?? column;
+  const configuredPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
+  const propertyKey = configuredPath.length === 1 && typeof configuredPath[0] === "string" ? configuredPath[0] : column;
+  return configuredColumn?.label ?? referenceColumn?.title ?? itemSchema?.properties?.[propertyKey]?.title ?? column;
 }
 
 function buildArrayDisplayRows(
@@ -2188,12 +2256,12 @@ function buildArrayDisplayRows(
 ): ArrayDisplayRow[] {
   const rows = items.map((item, sourceIndex) => ({ item, sourceIndex }));
   if (!sortState) return rows;
-  const configuredColumn = configuredColumns.find((column) => column.key === sortState.key);
+  const configuredColumn = findConfiguredTableColumn(configuredColumns, sortState.key);
   if (!configuredColumn?.sortable) return rows;
-  const referenceColumn = referenceViewColumns.find((column) => column.key === sortState.key);
+  const referenceColumn = findReferenceColumn(sortState.key, configuredColumns, referenceViewColumns);
   return [...rows].sort((left, right) => {
-    const leftValue = normalizeSortValue(left.item, sortState.key, referenceColumn, host);
-    const rightValue = normalizeSortValue(right.item, sortState.key, referenceColumn, host);
+    const leftValue = normalizeSortValue(left.item, sortState.key, configuredColumn, referenceColumn, host);
+    const rightValue = normalizeSortValue(right.item, sortState.key, configuredColumn, referenceColumn, host);
     const result = leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: "base" });
     return sortState.direction === "asc" ? result : -result;
   });
@@ -2202,6 +2270,7 @@ function buildArrayDisplayRows(
 function normalizeSortValue(
   item: unknown,
   key: string,
+  configuredColumn: EditorTableColumn | undefined,
   referenceColumn: ReferenceViewColumn | undefined,
   host?: EditorHost,
 ) {
@@ -2209,7 +2278,9 @@ function normalizeSortValue(
     return getReferenceTableCellText(item, referenceColumn, undefined, host).trim();
   }
   if (isPlainObject(item)) {
-    return previewValue((item as Record<string, unknown>)[key], host).trim();
+    const fieldPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
+    const value = fieldPath.length > 0 ? getValueAtPath(item, fieldPath) : (item as Record<string, unknown>)[key];
+    return previewValue(value, host).trim();
   }
   return previewValue(item, host).trim();
 }

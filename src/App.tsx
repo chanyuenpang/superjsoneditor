@@ -193,8 +193,8 @@ const referenceProjectionSchemaHost = createMutableSchemaHost(
       "x-editor": {
         table: {
           columns: [
-            { key: "name", label: "Name" },
-            { key: "icon" },
+            { field: ["name"], label: "Name" },
+            { field: ["icon"] },
           ],
         },
       },
