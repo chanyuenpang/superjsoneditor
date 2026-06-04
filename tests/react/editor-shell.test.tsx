@@ -96,9 +96,72 @@ test("renders a generic root document with the root breadcrumb only", () => {
   render(<EditorShell value={{ hello: "world" }} />);
 
   expect(screen.queryByText("JSON Document")).toBeNull();
-  expect(screen.getAllByText("Root").length).toBeGreaterThanOrEqual(2);
+  expect(screen.getAllByText("main").length).toBeGreaterThanOrEqual(2);
   expect(screen.getByLabelText("Field hello")).toHaveValue("world");
   expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+});
+
+test("root pages use the source filename unless the schema defines a name field", () => {
+  const documentSourceId = "asset://items/moon-charm.json";
+
+  const { rerender } = render(
+    <EditorShell
+      documents={{ [documentSourceId]: { title: "Ignored Title", hello: "world" } }}
+      rootSourceId={documentSourceId}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              hello: { type: "string" },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getAllByText("moon-charm").length).toBeGreaterThanOrEqual(2);
+
+  rerender(
+    <EditorShell
+      documents={{ [documentSourceId]: { name: "Moon Charm", hello: "world" } }}
+      rootSourceId={documentSourceId}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              hello: { type: "string" },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getAllByText("Moon Charm").length).toBeGreaterThanOrEqual(2);
+});
+
+test("array pages use parent-based titles for nested indexes", () => {
+  render(
+    <EditorShell
+      value={{
+        matrix: [[[1]]],
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "matrix array 1 items" }));
+
+  const firstArrayRow = document.querySelector('.stack-page.is-current tr[data-row-index="0"]') as HTMLElement;
+  fireEvent.click(firstArrayRow);
+  expect(getCurrentPageQueries().getByText("matrix[0]")).toBeInTheDocument();
+
+  const secondArrayRow = document.querySelector('.stack-page.is-current tr[data-row-index="0"]') as HTMLElement;
+  fireEvent.click(secondArrayRow);
+  expect(getCurrentPageQueries().getByText("matrix[0][0]")).toBeInTheDocument();
 });
 
 test("compact mode follows the editor viewport width before falling back to window width", () => {
@@ -144,6 +207,35 @@ test("reference projection demo stays aligned with real item fields", () => {
   expect(screen.queryByRole("button", { name: /Description/ })).toBeNull();
 });
 
+test("value arrays hide column visibility controls and disallow hiding generated columns", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "string",
+    },
+  });
+
+  render(
+    <EditorShell
+      value={["alpha", "beta"]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  expect(screen.queryByRole("columnheader", { name: "Type" })).toBeNull();
+  expect(screen.getByRole("columnheader", { name: "#" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "Value" })).toBeInTheDocument();
+
+  expect(screen.queryByRole("button", { name: /Column visibility/ })).toBeNull();
+
+  const valueHeaderButton = screen.getByRole("button", { name: "Value" });
+  quickPressHeaderMenu(valueHeaderButton);
+
+  expect(screen.getByText("Type")).toBeInTheDocument();
+  expect(screen.getByText("string")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
+});
+
 test("reference projection demo can open nested encounter references from shared demo sources", () => {
   render(<App />);
 
@@ -183,13 +275,33 @@ test("demo settings can toggle auto fullscreen when only the left page is visibl
 
   fireEvent.click(screen.getByRole("button", { name: "Settings" }));
   const fullscreenToggle = screen.getByLabelText("Auto fullscreen single left page");
-  expect(fullscreenToggle).not.toBeChecked();
-  expect(container.querySelector(".stack-page--fullscreen-left")).toBeNull();
+  expect(fullscreenToggle).toBeChecked();
+  expect(container.querySelector(".stack-page--fullscreen-left")).not.toBeNull();
 
   fireEvent.click(fullscreenToggle);
 
-  expect(fullscreenToggle).toBeChecked();
-  expect(container.querySelector(".stack-page--fullscreen-left")).not.toBeNull();
+  expect(fullscreenToggle).not.toBeChecked();
+  expect(container.querySelector(".stack-page--fullscreen-left")).toBeNull();
+});
+
+test("demo settings button ignores long press release", () => {
+  vi.useFakeTimers();
+  render(<App />);
+
+  const settingsButton = screen.getByRole("button", { name: "Settings" });
+
+  try {
+    fireEvent.mouseDown(settingsButton, { button: 0, clientX: 60, clientY: 24 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+    fireEvent.mouseUp(settingsButton, { button: 0, clientX: 60, clientY: 24 });
+    fireEvent.click(settingsButton);
+
+    expect(screen.queryByText("Demo Settings")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("demo app uses wide-screen dual-page stack flow", () => {
@@ -321,6 +433,28 @@ test("array pages stay in browse mode until Edit is enabled", () => {
   expect(getCurrentActionButton("Edit")).toBeInTheDocument();
 });
 
+test("clickable array rows ignore long press release", () => {
+  vi.useFakeTimers();
+  render(<EditorShell value={{ party: [{ id: "hero", hp: 10 }, { id: "guide", hp: 6 }] }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "party array 2 items" }));
+  const row = screen.getByRole("row", { name: "hero 10" });
+
+  try {
+    fireEvent.mouseDown(row, { button: 0, clientX: 120, clientY: 80 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+    fireEvent.mouseUp(row, { button: 0, clientX: 120, clientY: 80 });
+    fireEvent.click(row);
+
+    expect(getCurrentPageQueries().queryByLabelText("Field id")).toBeNull();
+    expect(screen.getByRole("row", { name: "guide 6" })).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("array pages render missing object fields as gray dash placeholders", () => {
   const { container } = render(<EditorShell value={{ party: [{ id: "hero", hp: 10 }, { id: "guide" }] }} />);
 
@@ -403,7 +537,7 @@ test("pinned-root 模式导航后保留左侧 root 页", () => {
 
   expect(container.querySelector(".stack-page--background")).not.toBeNull();
   expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
-  expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Close right page" })).toBeInTheDocument();
 });
 
 test("pinned-root 妯″紡涓嬬偣鍑诲彸椤垫寜閽細娌跨敤宸﹂〉鐨?replace 鍔ㄧ敾璇箟", () => {
@@ -418,19 +552,77 @@ test("pinned-root 妯″紡涓嬬偣鍑诲彸椤垫寜閽細娌跨敤宸﹂�
 });
 
 test("stack-flow 在开启 leftPageFullscreen 时为右页显示关闭按钮并可关闭回单页", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell value={{ profile: { stats: { hp: 10 } } }} layoutMode="stack-flow" leftPageFullscreen />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+
+    const closeButton = screen.getByRole("button", { name: "Close right page" });
+    expect(closeButton).toBeInTheDocument();
+
+    fireEvent.click(closeButton);
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(screen.queryByRole("button", { name: "Close right page" })).toBeNull();
+    expect(screen.getByRole("button", { name: "profile object 1 fields" })).toBeInTheDocument();
+    expect(container.querySelector(".stack-page--fullscreen-left")).not.toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("fullscreen 不改变页面原本是否有返回按钮的规则", () => {
+  vi.useFakeTimers();
   render(
     <EditorShell value={{ profile: { stats: { hp: 10 } } }} layoutMode="stack-flow" leftPageFullscreen />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  try {
+    expect(screen.queryByRole("button", { name: "Go up one level" })).toBeNull();
 
-  const closeButton = screen.getByRole("button", { name: "Close" });
-  expect(closeButton).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close right page" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
 
-  fireEvent.click(closeButton);
+    expect(screen.getByRole("button", { name: "Go up one level" })).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
-  expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-  expect(screen.getByRole("button", { name: "profile object 1 fields" })).toBeInTheDocument();
+test("fullscreen A 返回时恢复 root 加 A 的双页上下文，而不是 fullscreen root", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell value={{ profile: { stats: { hp: 10 } } }} layoutMode="stack-flow" leftPageFullscreen />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close right page" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Go up one level" }));
+
+    expect(container.querySelector(".stack-page--pop-promote")).not.toBeNull();
+    expect(container.querySelector(".stack-page--fullscreen-left")).toBeNull();
+    expect(container.querySelector(".stack-page--background")).not.toBeNull();
+    expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "profile object 1 fields" })).toBeInTheDocument();
+    expect(getCurrentPageQueries().getByRole("button", { name: "stats object 1 fields" })).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("pinned-root 在开启 leftPageFullscreen 时为右页显示关闭按钮并可关闭回根页", () => {
@@ -440,12 +632,12 @@ test("pinned-root 在开启 leftPageFullscreen 时为右页显示关闭按钮并
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
 
-  const closeButton = screen.getByRole("button", { name: "Close" });
+  const closeButton = screen.getByRole("button", { name: "Close right page" });
   expect(closeButton).toBeInTheDocument();
 
   fireEvent.click(closeButton);
 
-  expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Close right page" })).toBeNull();
   expect(screen.getByRole("button", { name: "profile object 1 fields" })).toBeInTheDocument();
   expect(screen.queryByText("Select a field to inspect")).toBeNull();
 });
@@ -464,14 +656,82 @@ test("leftPageFullscreen 的 Close 会直接关闭整个右页上下文，而不
     fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
     fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close right page" }));
     act(() => {
       vi.advanceTimersByTime(600);
     });
 
-    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close right page" })).toBeNull();
     expect(screen.getByRole("button", { name: "profile object 1 fields" })).toBeInTheDocument();
     expect(screen.queryByDisplayValue("10")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("closing a right page uses fade-out instead of pop promotion", () => {
+  const { container } = render(
+    <EditorShell value={{ profile: { stats: { hp: 10 } } }} layoutMode="stack-flow" leftPageFullscreen />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "Close right page" }));
+
+  expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+  expect(container.querySelector(".stack-page--pop-promote")).toBeNull();
+  expect(container.querySelector(".stack-page--fullscreen-left")).not.toBeNull();
+});
+
+test("stack-flow 的 Close 会保留当前左页并结束右页上下文", () => {
+  vi.useFakeTimers();
+  render(
+    <EditorShell
+      value={{ profile: { stats: { hp: 10 } } }}
+      layoutMode="stack-flow"
+      leftPageFullscreen
+    />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close right page" }));
+
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    expect(getCurrentPageQueries().getByRole("button", { name: "stats object 1 fields" })).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("10")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close right page" })).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stack-flow 关闭右页后再次 push 会把 fullscreen 页视为唯一左页并直接 fade in 新右页", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell
+      value={{ profile: { stats: { hp: 10 } } }}
+      layoutMode="stack-flow"
+      leftPageFullscreen
+    />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close right page" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    fireEvent.click(getCurrentPageQueries().getByRole("button", { name: "stats object 1 fields" }));
+
+    expect(container.querySelector(".stack-page--push-promote-shell")).toBeNull();
+    expect(container.querySelector(".stack-page--push-enter")).not.toBeNull();
+    expect(container.querySelector(".stack-page--replace-enter")).toBeNull();
   } finally {
     vi.useRealTimers();
   }
@@ -717,7 +977,7 @@ test("stack-flow 深层返回时恢复 pop 动画", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
-    expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+    expect(container.querySelector(".stack-page--pop-exit")).toBeNull();
     expect(container.querySelector(".stack-page--pop-promote")).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Go up one level" })).toBeNull();
@@ -1472,7 +1732,11 @@ test("reference projection column headers derive type labels from projection sch
     />,
   );
 
-  expect(container.querySelector(".column-trigger small")?.textContent).toBe("string");
+  expect(container.querySelector(".column-trigger small")).toBeNull();
+  expect(screen.getByRole("button", { name: "Display Name" })).not.toHaveAttribute("title");
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Display Name" }));
+  const menu = document.body.querySelector(".schema-column-menu-popup") as HTMLElement;
+  expect(within(menu).getByText("string")).toBeInTheDocument();
   expect(screen.queryByText("undefined")).toBeNull();
 });
 
@@ -2160,7 +2424,30 @@ test("schema authoring can drag table headers to rewrite default column order", 
   }
 
   const dragHandle = screen.getByRole("button", { name: "Title" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 0,
+    width: 120,
+    height: 40,
+    top: 0,
+    right: 160,
+    bottom: 40,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
   fireEvent.mouseDown(dragHandle, { button: 0, clientX: 100, clientY: 20 });
+  fireEvent.mouseMove(window, { clientX: 181, clientY: 20 });
+  await waitFor(() => {
+    expect(screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim())).toEqual([
+      "#",
+      "Identifier",
+      "Title",
+      "Health",
+    ]);
+  });
   fireEvent.mouseMove(window, { clientX: 360, clientY: 20 });
   fireEvent.mouseUp(window, { clientX: 360, clientY: 20 });
 
@@ -2173,10 +2460,481 @@ test("schema authoring can drag table headers to rewrite default column order", 
     ]);
   });
   expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
-    { key: "id" },
-    { key: "hp" },
-    { key: "title" },
+    { key: "id", width: 120 },
+    { key: "hp", width: 120 },
+    { key: "title", width: 120 },
   ]);
+});
+
+test("reordering preserves the rendered width of an auto-expanded trailing column", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "status", width: 90 },
+          { key: "desc", width: 140 },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        status: { type: "string", title: "Status" },
+        desc: { type: "string", title: "Description" },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { status: "Open", desc: "A much longer description that fills the row." },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const tableScroll = container.querySelector(".table-scroll") as HTMLDivElement;
+  Object.defineProperty(tableScroll, "scrollWidth", { configurable: true, value: 900 });
+  Object.defineProperty(tableScroll, "clientWidth", { configurable: true, value: 480 });
+  tableScroll.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 480,
+    height: 200,
+    top: 0,
+    right: 480,
+    bottom: 200,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  const headerLayout = new Map<string, { left: number; right: number }>([
+    ["Status", { left: 40, right: 130 }],
+    ["Description", { left: 130, right: 479 }],
+  ]);
+  for (const header of screen.getAllByRole("columnheader")) {
+    const label = header.getAttribute("aria-label");
+    const slot = label ? headerLayout.get(label) : undefined;
+    if (!slot) continue;
+    (header as HTMLElement).getBoundingClientRect = () => ({
+      x: slot.left,
+      y: 0,
+      width: slot.right - slot.left,
+      height: 40,
+      top: 0,
+      right: slot.right,
+      bottom: 40,
+      left: slot.left,
+      toJSON() {
+        return {};
+      },
+    } as DOMRect);
+  }
+
+  const dragHandle = screen.getByRole("button", { name: "Status" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 0,
+    width: 90,
+    height: 40,
+    top: 0,
+    right: 130,
+    bottom: 40,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 80, clientY: 20 });
+  fireEvent.mouseMove(window, { clientX: 420, clientY: 20 });
+  fireEvent.mouseUp(window, { clientX: 420, clientY: 20 });
+
+  await waitFor(() => {
+    expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
+      { key: "desc", width: 349 },
+      { key: "status", width: 90 },
+    ]);
+  });
+});
+
+test("drag preview keeps the auto-expanded width attached to the original long column", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "status", width: 90 },
+          { key: "desc", width: 140 },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        status: { type: "string", title: "Status" },
+        desc: { type: "string", title: "Description" },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { status: "Open", desc: "A much longer description that fills the row." },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const tableScroll = container.querySelector(".table-scroll") as HTMLDivElement;
+  Object.defineProperty(tableScroll, "scrollWidth", { configurable: true, value: 900 });
+  Object.defineProperty(tableScroll, "clientWidth", { configurable: true, value: 480 });
+  tableScroll.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 480,
+    height: 200,
+    top: 0,
+    right: 480,
+    bottom: 200,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  const headerLayout = new Map<string, { left: number; right: number }>([
+    ["Status", { left: 40, right: 130 }],
+    ["Description", { left: 130, right: 479 }],
+  ]);
+  for (const header of screen.getAllByRole("columnheader")) {
+    const label = header.getAttribute("aria-label");
+    const slot = label ? headerLayout.get(label) : undefined;
+    if (!slot) continue;
+    (header as HTMLElement).getBoundingClientRect = () => ({
+      x: slot.left,
+      y: 0,
+      width: slot.right - slot.left,
+      height: 40,
+      top: 0,
+      right: slot.right,
+      bottom: 40,
+      left: slot.left,
+      toJSON() {
+        return {};
+      },
+    } as DOMRect);
+  }
+
+  const dragHandle = screen.getByRole("button", { name: "Status" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 0,
+    width: 90,
+    height: 40,
+    top: 0,
+    right: 130,
+    bottom: 40,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 80, clientY: 20 });
+  fireEvent.mouseMove(window, { clientX: 420, clientY: 20 });
+
+  const statusCol = container.querySelector('col[data-column-field="status"]') as HTMLTableColElement;
+  const descCol = container.querySelector('col[data-column-field="desc"]') as HTMLTableColElement;
+  expect(statusCol.style.width).toBe("90px");
+  expect(descCol.style.width).toBe("349px");
+});
+
+test("drag preview keeps the index column width stable", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "status", width: 90 },
+          { key: "desc", width: 140 },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        status: { type: "string", title: "Status" },
+        desc: { type: "string", title: "Description" },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { status: "Open", desc: "A much longer description that fills the row." },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const tableScroll = container.querySelector(".table-scroll") as HTMLDivElement;
+  Object.defineProperty(tableScroll, "scrollWidth", { configurable: true, value: 900 });
+  Object.defineProperty(tableScroll, "clientWidth", { configurable: true, value: 480 });
+  tableScroll.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 480,
+    height: 200,
+    top: 0,
+    right: 480,
+    bottom: 200,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  const dragHandle = screen.getByRole("button", { name: "Status" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 0,
+    width: 90,
+    height: 40,
+    top: 0,
+    right: 130,
+    bottom: 40,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 80, clientY: 20 });
+  fireEvent.mouseMove(window, { clientX: 420, clientY: 20 });
+
+  const indexCol = container.querySelector('col[data-column="#"]') as HTMLTableColElement | null;
+  expect(indexCol?.style.width).toBe("45px");
+});
+
+test("schema authoring starts reordering once the drag crosses the next column border plus hysteresis", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+          { key: "hp" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const tableScroll = container.querySelector(".table-scroll") as HTMLDivElement;
+  Object.defineProperty(tableScroll, "scrollWidth", { configurable: true, value: 900 });
+  Object.defineProperty(tableScroll, "clientWidth", { configurable: true, value: 480 });
+  tableScroll.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 480,
+    height: 200,
+    top: 0,
+    right: 480,
+    bottom: 200,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  const headers = screen.getAllByRole("columnheader");
+  const layout = new Map<string, { left: number; right: number }>([
+    ["Title", { left: 40, right: 160 }],
+    ["Identifier", { left: 160, right: 280 }],
+    ["Health", { left: 280, right: 400 }],
+  ]);
+  for (const header of headers) {
+    const label = header.getAttribute("aria-label");
+    const slot = label ? layout.get(label) : undefined;
+    if (!slot) continue;
+    (header as HTMLElement).getBoundingClientRect = () => ({
+      x: slot.left,
+      y: 0,
+      width: slot.right - slot.left,
+      height: 40,
+      top: 0,
+      right: slot.right,
+      bottom: 40,
+      left: slot.left,
+      toJSON() {
+        return {};
+      },
+    } as DOMRect);
+  }
+
+  const dragHandle = screen.getByRole("button", { name: "Title" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 0,
+    width: 120,
+    height: 40,
+    top: 0,
+    right: 160,
+    bottom: 40,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 100, clientY: 20 });
+  fireEvent.mouseMove(window, { clientX: 181, clientY: 20 });
+  fireEvent.mouseUp(window, { clientX: 181, clientY: 20 });
+
+  await waitFor(() => {
+    expect(screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim())).toEqual([
+      "#",
+      "Identifier",
+      "Title",
+      "Health",
+    ]);
+  });
+});
+
+test("schema authoring column drag ghost stays attached to the mouse hotspot", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest" },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const dragHandle = screen.getByRole("button", { name: "Title" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 12,
+    width: 120,
+    height: 40,
+    top: 12,
+    right: 160,
+    bottom: 52,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 96, clientY: 26 });
+  fireEvent.mouseMove(window, { clientX: 210, clientY: 78 });
+
+  const ghost = document.querySelector(".column-drag-ghost") as HTMLElement;
+  expect(ghost).not.toBeNull();
+  expect(ghost.style.left).toBe("154px");
+  expect(ghost.style.top).toBe("64px");
+});
+
+test("schema authoring column drag ghost clears on mouse release", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest" },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const dragHandle = screen.getByRole("button", { name: "Title" });
+  const dragHeader = dragHandle.parentElement as HTMLElement;
+  dragHeader.getBoundingClientRect = () => ({
+    x: 40,
+    y: 12,
+    width: 120,
+    height: 40,
+    top: 12,
+    right: 160,
+    bottom: 52,
+    left: 40,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 96, clientY: 26 });
+  fireEvent.mouseMove(window, { clientX: 210, clientY: 78 });
+  expect(document.querySelector(".column-drag-ghost")).not.toBeNull();
+
+  fireEvent.mouseUp(window, { button: 0, clientX: 210, clientY: 78 });
+
+  expect(document.querySelector(".column-drag-ghost")).toBeNull();
 });
 
 test("schema authoring can add hidden reference projection columns and rename them from the header menu", () => {

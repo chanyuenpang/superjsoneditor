@@ -611,13 +611,16 @@ function ArrayPage({
   const [hiddenFieldsOpen, setHiddenFieldsOpen] = useState(false);
   const [pressedColumnKey, setPressedColumnKey] = useState<string | null>(null);
   const [dragPreviewKeys, setDragPreviewKeys] = useState<string[] | null>(null);
+  const [dragPreviewWidths, setDragPreviewWidths] = useState<Record<string, number> | null>(null);
+  const [realColumnWidths, setRealColumnWidths] = useState<Record<string, number> | null>(null);
   const [dragGhost, setDragGhost] = useState<{ key: string; label: string; x: number; y: number } | null>(null);
   const dragPreviewKeysRef = useRef<string[] | null>(null);
   const dragStateRef = useRef<{
     key: string;
     label: string;
-    startX: number;
-    startY: number;
+    width: number;
+    pointerOffsetX: number;
+    pointerOffsetY: number;
     dragging: boolean;
   } | null>(null);
   const showStructuralRowActions = editMode && !pageReadOnly;
@@ -634,11 +637,24 @@ function ArrayPage({
     () => getArrayColumns(value, host, schema?.items, referenceViewColumns, configuredTableColumns),
     [value, host, schema?.items, referenceViewColumns, configuredTableColumns],
   );
+  const columnSetSignature = useMemo(
+    () => [...columns].sort().join("|"),
+    [columns],
+  );
   const managedColumns = useMemo(
     () => getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns),
     [availableSchemaColumns, columns, configuredTableColumns],
   );
+  const orderedColumns = useMemo(
+    () => dragPreviewKeys ? ["#", ...dragPreviewKeys] : columns,
+    [columns, dragPreviewKeys],
+  );
+  const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
+  const supportsColumnVisibility = canAuthorTableSchema && (objectRows || showReferenceProjectionTable);
   const visibilityColumns = useMemo(() => {
+    if (!supportsColumnVisibility) {
+      return [];
+    }
     const ordered = managedColumns.map((column) => {
       const columnId = getTableColumnId(column);
       const referenceColumn = findReferenceColumn(columnId, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
@@ -658,12 +674,7 @@ function ArrayPage({
         visible: false,
       }));
     return [...ordered, ...hidden];
-  }, [availableSchemaColumns, columnSourceSchema, configuredTableColumns, managedColumns, referenceTargetSchema, referenceViewColumns, showReferenceProjectionTable]);
-  const orderedColumns = useMemo(
-    () => dragPreviewKeys ? ["#", ...dragPreviewKeys] : columns,
-    [columns, dragPreviewKeys],
-  );
-  const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
+  }, [availableSchemaColumns, columnSourceSchema, configuredTableColumns, managedColumns, referenceTargetSchema, referenceViewColumns, showReferenceProjectionTable, supportsColumnVisibility]);
   const displayRows = useMemo(
     () => buildArrayDisplayRows(value, sortState, referenceViewColumns, configuredTableColumns, host, referenceTargetSchema),
     [value, sortState, referenceViewColumns, configuredTableColumns, host, referenceTargetSchema],
@@ -671,25 +682,28 @@ function ArrayPage({
   const columnWidths = useMemo(
     () => getArrayColumnWidths(
       value,
-      orderedColumns,
+      columns,
       host,
       showReferenceProjectionTable ? (referenceTargetSchema ?? columnSourceSchema) : columnSourceSchema,
       referenceViewColumns,
       configuredTableColumns,
     ),
-    [value, orderedColumns, host, columnSourceSchema, referenceTargetSchema, referenceViewColumns, configuredTableColumns, showReferenceProjectionTable],
+    [value, columns, host, columnSourceSchema, referenceTargetSchema, referenceViewColumns, configuredTableColumns, showReferenceProjectionTable],
+  );
+  const stableColumnWidths = useMemo(
+    () => realColumnWidths ?? columnWidths,
+    [columnWidths, realColumnWidths],
+  );
+  const renderedColumnWidths = useMemo(
+    () => dragPreviewWidths ? { ...stableColumnWidths, ...dragPreviewWidths } : stableColumnWidths,
+    [dragPreviewWidths, stableColumnWidths],
   );
   const tableMinWidth = useMemo(
-    () => orderedColumns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
-    [orderedColumns, columnWidths],
+    () => orderedColumns.reduce((total, column) => total + (renderedColumnWidths[column] ?? 140), 0),
+    [orderedColumns, renderedColumnWidths],
   );
   const tableWidth = tableMinWidth + (editMode ? 144 : 0);
-  const trailingColumnKey = orderedColumns.at(-1) ?? null;
-  const resolvedTableWidth = Math.max(tableWidth, tableViewportWidth);
-  const expandedTrailingWidth = Math.max(0, tableViewportWidth - tableWidth - 1);
-  // 预留 1px，避免 collapsed border / sticky 分隔线导致横向滚动条。
-
-  // Reserve 1px so collapsed borders and sticky dividers do not force horizontal overflow.
+  const resolvedTableWidth = tableWidth;
   useEffect(() => {
     setRawOpen(false);
     setEditMode(false);
@@ -700,6 +714,8 @@ function ArrayPage({
     setIsCreatingReferenceRow(false);
     setSortState(null);
     setDragPreviewKeys(null);
+    setDragPreviewWidths(null);
+    setRealColumnWidths(null);
     setDragGhost(null);
     setHiddenFieldsOpen(false);
   }, [pathKey, schemaItemsSignature]);
@@ -707,6 +723,16 @@ function ArrayPage({
   useEffect(() => {
     dragPreviewKeysRef.current = dragPreviewKeys;
   }, [dragPreviewKeys]);
+
+  useEffect(() => {
+    setRealColumnWidths((current) => {
+      const next = applyViewportFillToColumnWidths(columnWidths, columns, tableViewportWidth, editMode);
+      if (current && sameColumnWidthMap(current, next)) {
+        return current;
+      }
+      return next;
+    });
+  }, [columnSetSignature, columnWidths, columns, editMode, tableViewportWidth]);
 
   useEffect(() => {
     onEditModeChange?.(editMode);
@@ -794,6 +820,9 @@ function ArrayPage({
   }
 
   function toggleColumnVisibility(columnKey: string) {
+    if (!supportsColumnVisibility) {
+      return;
+    }
     const visibleEntry = managedColumns.find((column) => getTableColumnId(column) === columnKey);
     if (visibleEntry) {
       updateTableSchemaColumns((current) => current.filter((entry) => getTableColumnId(entry) !== columnKey));
@@ -854,7 +883,7 @@ function ArrayPage({
                       data-column={column}
                       data-column-field={column === "#" ? undefined : column}
                       key={column}
-                      style={{ width: `${(columnWidths[column] ?? 140) + (column === trailingColumnKey ? expandedTrailingWidth : 0)}px` }}
+                      style={{ width: `${renderedColumnWidths[column] ?? 140}px` }}
                     />
                   ))}
                 </colgroup>
@@ -879,8 +908,8 @@ function ArrayPage({
                         const typeLabel = column === "#"
                           ? undefined
                           : referenceColumn
-                            ? describeSchemaType(referenceColumn.columnSchema) ?? describeArrayColumnType(value, column, host)
-                            : describeArrayColumnType(value, column, host);
+                            ? describeSchemaType(referenceColumn.columnSchema) ?? describeArrayColumnType(value, column, host, schema?.items)
+                            : describeArrayColumnType(value, column, host, schema?.items);
                         return (
                       <th
                         aria-label={columnLabel}
@@ -897,7 +926,7 @@ function ArrayPage({
                         key={column}
                       >
                         {column === "#" ? (
-                          canAuthorTableSchema ? (
+                          supportsColumnVisibility ? (
                             <HiddenFieldsToolbarAction
                               columns={visibilityColumns}
                               isOpen={hiddenFieldsOpen}
@@ -919,16 +948,18 @@ function ArrayPage({
                             onDragEnd={() => {
                               document.body.classList.remove("is-dragging-column");
                               const previewKeys = dragPreviewKeysRef.current;
+                              const measuredWidths = getRenderedTableColumnWidths(tableScrollRef.current);
                               dragStateRef.current = null;
                               if (previewKeys) {
-                                updateTableSchemaColumns((current) => reorderColumnsByKeys(current, previewKeys));
+                                updateTableSchemaColumns((current) => reorderColumnsByKeys(applyMeasuredColumnWidths(current, measuredWidths), previewKeys));
                               }
                               dragPreviewKeysRef.current = null;
                               setDragPreviewKeys(null);
+                              setDragPreviewWidths(null);
                               setDragGhost(null);
                               setPressedColumnKey(null);
                             }}
-                            onDragMove={(_fieldName, clientX) => {
+                            onDragMove={(_fieldName, clientX, clientY) => {
                               const state = dragStateRef.current;
                               if (!state) return;
                               const scrollContainer = tableScrollRef.current;
@@ -938,33 +969,43 @@ function ArrayPage({
                               }
                               const slots = collectColumnSlots(scrollContainer, state.key);
                               const pointerXInScrollSpace = getPointerXInScrollSpace(scrollContainer, clientX);
-                              const nextPreview = buildPreviewOrderFromSlots(managedColumns.map((managedColumn) => getTableColumnId(managedColumn)), state.key, slots, pointerXInScrollSpace);
+                              const currentOrder = dragPreviewKeysRef.current ?? managedColumns.map((managedColumn) => getTableColumnId(managedColumn));
+                              const nextPreview = buildPreviewOrderFromSlots(
+                                currentOrder,
+                                state.key,
+                                state.width,
+                                slots,
+                                pointerXInScrollSpace,
+                              );
                               dragPreviewKeysRef.current = nextPreview;
                               setDragPreviewKeys(nextPreview);
                               setDragGhost({
                                 key: state.key,
                                 label: state.label,
-                                x: clientX + 14,
-                                y: state.startY + 14,
+                                x: clientX - state.pointerOffsetX,
+                                y: clientY - state.pointerOffsetY,
                               });
                             }}
-                            onDragStart={(_fieldName, rect, pointerOffsetX) => {
+                            onDragStart={(_fieldName, rect, pointerOffsetX, pointerOffsetY) => {
+                              setDragPreviewWidths(Object.fromEntries(getRenderedTableColumnWidths(tableScrollRef.current)));
                               dragStateRef.current = {
                                 key: column,
                                 label: columnLabel,
-                                startX: rect.left + pointerOffsetX,
-                                startY: rect.top,
+                                width: rect.width,
+                                pointerOffsetX,
+                                pointerOffsetY,
                                 dragging: true,
                               };
                               document.body.classList.add("is-dragging-column");
                               setDragGhost({
                                 key: column,
                                 label: columnLabel,
-                                x: rect.left + pointerOffsetX,
+                                x: rect.left,
                                 y: rect.top,
                               });
                             }}
                             onHide={() => updateTableSchemaColumns((current) => current.filter((entry) => getTableColumnId(entry) !== column))}
+                            canHide={supportsColumnVisibility}
                             onMove={(direction) => updateTableSchemaColumns((current) => moveTableColumn(current, column, direction))}
                             onPressChange={(_fieldName, pressed) => setPressedColumnKey(pressed ? column : null)}
                             onRenameLabel={(label) => {
@@ -989,7 +1030,7 @@ function ArrayPage({
                             sortDirection={sortState?.key === column ? sortState.direction : null}
                             typeLabel={typeLabel}
                             wrapped={isWrapped}
-                            width={columnWidths[column] ?? 140}
+                            width={renderedColumnWidths[column] ?? 140}
                           />
                         ) : (
                           <div className="array-column-header">
@@ -1303,7 +1344,6 @@ function ArrayPage({
                         <td className={["array-column--sticky", "array-column--index", showStructuralRowActions ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>
                           <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
                         </td>
-                        <td>{describeType(item, host)}</td>
                         <td>
                           {isNavigable(item) ? (
                             <button
@@ -1385,13 +1425,14 @@ function ArrayPage({
                 ) : null}
               </div>
             </section>
-            {dragGhost ? (
+            {dragGhost && typeof document !== "undefined" ? createPortal(
               <div
                 className="column-drag-ghost"
                 style={{ left: dragGhost.x, top: dragGhost.y }}
               >
                 <div className="column-drag-ghost-name">{dragGhost.label}</div>
-              </div>
+              </div>,
+              document.body,
             ) : null}
           </div>
         )}
@@ -1655,8 +1696,8 @@ function PageHeader(props: {
       <div className="page-header__actions">
         {props.referenceSourceLabel ? <div className="detail-source-label">{props.referenceSourceLabel}</div> : null}
         {props.onClosePage ? (
-          <button className="ghost-button compact-button" type="button" onClick={props.onClosePage}>
-            Close
+          <button aria-label="Close right page" className="ghost-button compact-button" type="button" onClick={props.onClosePage}>
+            <icons.closeRightPage size={16} />
           </button>
         ) : null}
       </div>
@@ -2108,7 +2149,7 @@ function getArrayColumns(
     return prioritizeArrayColumns([...columns]);
   }
 
-  return ["#", "Type", "Value"];
+  return ["#", "Value"];
 }
 
 function describeObjectFields(value: Record<string, unknown>) {
@@ -2179,11 +2220,6 @@ function getArrayColumnWidths(
       continue;
     }
 
-    if (column === "Type") {
-      widths[column] = 110;
-      continue;
-    }
-
     for (let index = 0; index < sampleSize; index += 1) {
       contentWidth = Math.max(contentWidth, measureColumnText(previewValue(items[index], host)));
     }
@@ -2193,9 +2229,39 @@ function getArrayColumnWidths(
   return widths;
 }
 
-function describeArrayColumnType(items: unknown[], column: string, host?: EditorHost) {
+function applyViewportFillToColumnWidths(
+  widths: Record<string, number>,
+  columns: string[],
+  tableViewportWidth: number,
+  editMode: boolean,
+) {
+  const next = { ...widths };
+  const trailingColumn = columns.at(-1);
+  if (!trailingColumn) {
+    return next;
+  }
+  const total = columns.reduce((sum, column) => sum + (next[column] ?? 140), 0);
+  const extra = Math.max(0, tableViewportWidth - (total + (editMode ? 144 : 0)) - 1);
+  if (extra > 0) {
+    next[trailingColumn] = (next[trailingColumn] ?? 140) + extra;
+  }
+  return next;
+}
+
+function sameColumnWidthMap(left: Record<string, number>, right: Record<string, number>) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  return leftKeys.every((key) => left[key] === right[key]);
+}
+
+function describeArrayColumnType(items: unknown[], column: string, host?: EditorHost, itemSchema?: EditorSchema) {
   if (column === "#") return "index";
-  if (column === "Type") return "type";
+  if (column === "Value" && !hasObjectTableRows(items, host)) {
+    return describeSchemaType(itemSchema?.items ? itemSchema.items : itemSchema) ?? describeType(items[0], host);
+  }
   if (column === "Value") return "value";
 
   const sample = items.find((item) => isPlainObject(item) && (item as Record<string, unknown>)[column] !== undefined) as
@@ -2291,6 +2357,30 @@ function reorderColumnsByKeys(columns: EditorTableColumn[], orderedKeys: string[
     if (rightRank == null) return -1;
     return leftRank - rightRank;
   });
+}
+
+function applyMeasuredColumnWidths(columns: EditorTableColumn[], measuredWidths: Map<string, number>) {
+  if (measuredWidths.size === 0) return columns;
+  return columns.map((column) => {
+    const key = getTableColumnId(column);
+    const measuredWidth = measuredWidths.get(key);
+    if (!measuredWidth) return column;
+    return { ...column, width: measuredWidth };
+  });
+}
+
+function getRenderedTableColumnWidths(scrollContainer: HTMLElement | null) {
+  const widths = new Map<string, number>();
+  if (!scrollContainer) return widths;
+  for (const cell of scrollContainer.querySelectorAll<HTMLElement>("th[data-column-field]")) {
+    const key = cell.dataset.columnField;
+    if (!key) continue;
+    const measuredWidth = Math.round(cell.getBoundingClientRect().width);
+    if (measuredWidth > 0) {
+      widths.set(key, measuredWidth);
+    }
+  }
+  return widths;
 }
 
 function getTableColumnId(column: EditorTableColumn) {
@@ -2582,7 +2672,6 @@ function renderPendingArrayRow(props: {
     );
   }
 
-  const pendingType = describeType(props.pendingRow, props.host);
   return (
     <tr className="array-row--pending" data-row-index="pending">
       <td className="array-column--sticky array-column--actions">
@@ -2599,7 +2688,6 @@ function renderPendingArrayRow(props: {
         </div>
       </td>
       <td className="array-column--sticky array-column--after-actions">new</td>
-      <td>{pendingType}</td>
       <td>
         {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow)}
       </td>

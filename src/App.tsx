@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { EditorShell, type EditorDocuments } from "./editor/EditorShell";
 import type { EditorHost } from "./editor/host";
 import type { EditorSchema, EditorSchemaHost } from "./editor/schema";
+import { usePressSlopGuard } from "./editor/usePressSlopGuard";
 import heroDocument from "./demo-sources/characters/hero.json";
 import guideDocument from "./demo-sources/characters/guide.json";
 import shadowEyeDocument from "./demo-sources/encounters/shadow-eye.json";
@@ -425,21 +426,23 @@ const demoScenarios: DemoScenario[] = [
 
 export function App() {
   const canPersistDemoSources = isLocalDemoSaveHost();
+  const appRootRef = useRef<HTMLDivElement | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState("schema-authoring");
   const [layoutMode, setLayoutMode] = useState<"stack-flow" | "pinned-root">("stack-flow");
   const [editingEnabled, setEditingEnabled] = useState(true);
   const [rawJsonEnabled, setRawJsonEnabled] = useState(true);
-  const [leftPageFullscreen, setLeftPageFullscreen] = useState(false);
+  const [leftPageFullscreen, setLeftPageFullscreen] = useState(true);
   const activeScenario = useMemo(
     () => demoScenarios.find((scenario) => scenario.id === activeScenarioId) ?? demoScenarios[0],
     [activeScenarioId],
   );
+  usePressSlopGuard(appRootRef);
 
   const saveHandler = activeScenario.id === "free-json" && canPersistDemoSources ? handleDemoSave : undefined;
   const unavailableSaveHandler = activeScenario.id === "free-json" && !canPersistDemoSources ? handleUnavailableDemoSave : undefined;
 
   return (
-    <div className="demo-site">
+    <div className="demo-site" ref={appRootRef}>
       <aside className="demo-site__sidebar">
         <div className="demo-hero">
           <div className="demo-kicker">Super JSON Editor</div>

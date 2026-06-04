@@ -1,6 +1,16 @@
 const dragThreshold = 4;
 const autoScrollEdgeThreshold = 56;
 const autoScrollStep = 18;
+const columnSwapHysteresis = 8;
+
+type ColumnSlot = {
+  fieldName: string;
+  index: number;
+  left: number;
+  right: number;
+  center: number;
+  width: number;
+};
 
 export function shouldStartColumnDrag(deltaX: number, deltaY: number) {
   return Math.abs(deltaX) > dragThreshold || Math.abs(deltaY) > dragThreshold;
@@ -34,23 +44,55 @@ export function collectColumnSlots(scrollContainer: HTMLElement | null, dragging
       left: cell.getBoundingClientRect().left - containerRect.left + scrollLeft,
       right: cell.getBoundingClientRect().right - containerRect.left + scrollLeft,
       center: (cell.getBoundingClientRect().left + cell.getBoundingClientRect().right) / 2 - containerRect.left + scrollLeft,
+      width: cell.getBoundingClientRect().width,
     }))
     .filter((slot) => slot.fieldName && slot.fieldName !== draggingField);
 }
 
+function getSwapOffset(draggingWidth: number, neighborWidth: number) {
+  return Math.max(0, neighborWidth - draggingWidth) + columnSwapHysteresis;
+}
+
+function resolveAdjacentSwap(
+  order: string[],
+  draggingField: string,
+  draggingWidth: number,
+  slotMap: Map<string, ColumnSlot>,
+  pointerXInScrollSpace: number,
+) {
+  const draggingIndex = order.indexOf(draggingField);
+  if (draggingIndex < 0) return null;
+
+  const leftNeighbor = draggingIndex > 0 ? slotMap.get(order[draggingIndex - 1]) : null;
+  const rightNeighbor = draggingIndex < order.length - 1 ? slotMap.get(order[draggingIndex + 1]) : null;
+
+  if (rightNeighbor) {
+    const swapThreshold = rightNeighbor.left + getSwapOffset(draggingWidth, rightNeighbor.width);
+    if (pointerXInScrollSpace >= swapThreshold) {
+      return { targetField: rightNeighbor.fieldName, placement: "after" as const };
+    }
+  }
+
+  if (leftNeighbor) {
+    const swapThreshold = leftNeighbor.right - getSwapOffset(draggingWidth, leftNeighbor.width);
+    if (pointerXInScrollSpace <= swapThreshold) {
+      return { targetField: leftNeighbor.fieldName, placement: "before" as const };
+    }
+  }
+
+  return null;
+}
+
 export function resolveDropTarget(
-  slots: Array<{ fieldName: string; index: number; left: number; right: number; center: number }>,
+  order: string[],
+  draggingField: string,
+  draggingWidth: number,
+  slots: ColumnSlot[],
   pointerXInScrollSpace: number,
 ) {
   const orderedSlots = [...slots].sort((left, right) => left.left - right.left || left.index - right.index);
-  for (const slot of orderedSlots) {
-    if (pointerXInScrollSpace <= slot.center) {
-      return { targetField: slot.fieldName, placement: "before" as const };
-    }
-  }
-  const lastSlot = orderedSlots.at(-1);
-  if (!lastSlot) return null;
-  return { targetField: lastSlot.fieldName, placement: "after" as const };
+  const slotMap = new Map(orderedSlots.map((slot) => [slot.fieldName, slot]));
+  return resolveAdjacentSwap(order, draggingField, draggingWidth, slotMap, pointerXInScrollSpace);
 }
 
 export function buildPreviewOrderFromTarget(
@@ -71,10 +113,11 @@ export function buildPreviewOrderFromTarget(
 export function buildPreviewOrderFromSlots(
   order: string[],
   draggingField: string,
-  slots: Array<{ fieldName: string; index: number; left: number; right: number; center: number }>,
+  draggingWidth: number,
+  slots: ColumnSlot[],
   pointerXInScrollSpace: number,
 ) {
-  const target = resolveDropTarget(slots, pointerXInScrollSpace);
+  const target = resolveDropTarget(order, draggingField, draggingWidth, slots, pointerXInScrollSpace);
   if (!target) return order;
   return buildPreviewOrderFromTarget(order, draggingField, target.targetField, target.placement);
 }

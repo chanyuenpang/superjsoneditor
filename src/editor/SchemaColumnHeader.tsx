@@ -12,12 +12,13 @@ type SchemaColumnHeaderProps = {
   width: number;
   pressed: boolean;
   isDragging: boolean;
+  canHide?: boolean;
   onSort: (direction: "asc" | "desc" | null) => void;
   onHide: () => void;
   onResize: (width: number) => void;
   onMove: (direction: "left" | "right") => void;
-  onDragStart: (fieldName: string, rect: DOMRect, pointerOffsetX: number) => void;
-  onDragMove: (fieldName: string, clientX: number) => void;
+  onDragStart: (fieldName: string, rect: DOMRect, pointerOffsetX: number, pointerOffsetY: number) => void;
+  onDragMove: (fieldName: string, clientX: number, clientY: number) => void;
   onDragEnd: (fieldName: string) => void;
   onPressChange: (fieldName: string, pressed: boolean) => void;
   onToggleSortable: () => void;
@@ -46,6 +47,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
     dragging: boolean;
     startRect: DOMRect;
     pointerOffsetX: number;
+    pointerOffsetY: number;
   } | null>(null);
   const suppressNextClickRef = useRef(false);
   const dragState = useRef<{
@@ -159,6 +161,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
       dragging: false,
       startRect,
       pointerOffsetX: event.clientX - startRect.left,
+      pointerOffsetY: event.clientY - startRect.top,
     };
 
     const onPointerMove = (moveEvent: { clientX: number; clientY: number; pointerId?: number }) => {
@@ -172,9 +175,9 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
         state.dragging = true;
         props.onPressChange(props.fieldName, true);
         document.body.classList.add("is-dragging-column");
-        props.onDragStart(props.fieldName, state.startRect, state.pointerOffsetX);
+        props.onDragStart(props.fieldName, state.startRect, state.pointerOffsetX, state.pointerOffsetY);
       }
-      if (state.dragging) props.onDragMove(props.fieldName, moveEvent.clientX);
+      if (state.dragging) props.onDragMove(props.fieldName, moveEvent.clientX, moveEvent.clientY);
     };
 
     const finish = (openMenu: boolean) => {
@@ -255,11 +258,9 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
         }}
         onMouseDown={(event) => beginDrag(event as unknown as ReactPointerEvent<HTMLButtonElement>)}
         onPointerDown={beginDrag}
-        title={props.label}
         type="button"
       >
         <span>{props.label}</span>
-        {props.typeLabel ? <small>{props.typeLabel}</small> : null}
       </button>
       {menuOpen && menuPosition && typeof document !== "undefined" ? createPortal(
         <div
@@ -281,6 +282,12 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
               }}
             />
           </label>
+          {props.typeLabel ? (
+            <div className="menu-item schema-column-menu__meta" role="presentation">
+              <span className="schema-column-menu__meta-label">Type</span>
+              <strong className="schema-column-menu__meta-value">{props.typeLabel}</strong>
+            </div>
+          ) : null}
           <div className="menu-separator" />
           {props.sortable ? (
             <>
@@ -312,9 +319,11 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
           <button className="menu-item" onClick={() => runAfterMenuClose(props.onResetWidth)} type="button">
             <icons.reset size={15} /> Reset width
           </button>
-          <button className="menu-item danger" onClick={() => runAfterMenuClose(props.onHide)} type="button">
-            <icons.hidden size={15} /> Hide
-          </button>
+          {props.canHide === false ? null : (
+            <button className="menu-item danger" onClick={() => runAfterMenuClose(props.onHide)} type="button">
+              <icons.hidden size={15} /> Hide
+            </button>
+          )}
         </div>,
         document.body,
       ) : null}
