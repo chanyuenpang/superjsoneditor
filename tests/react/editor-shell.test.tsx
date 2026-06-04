@@ -41,6 +41,52 @@ function getCurrentActionButton(name: string) {
   return screen.getAllByRole("button", { name }).at(-1) as HTMLElement;
 }
 
+function getCurrentPageElement() {
+  return document.querySelector(".stack-page.is-current:not(.stack-page--overlay)") as HTMLElement;
+}
+
+function getCurrentPageQueries() {
+  return within(getCurrentPageElement());
+}
+
+function getBackgroundPageElement() {
+  return document.querySelector(".stack-page--background:not(.stack-page--overlay)") as HTMLElement;
+}
+
+function createNavigationSemanticsSchemaHost(): EditorSchemaHost {
+  return {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          rootA: {
+            type: "object",
+            properties: {
+              detailA: {
+                type: "object",
+                properties: {
+                  hp: { type: "integer" },
+                },
+              },
+            },
+          },
+          rootB: {
+            type: "object",
+            properties: {
+              detailB: {
+                type: "object",
+                properties: {
+                  mp: { type: "integer" },
+                },
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+}
+
 test("renders a generic root document with the root breadcrumb only", () => {
   render(<EditorShell value={{ hello: "world" }} />);
 
@@ -220,7 +266,7 @@ test("read only mode keeps navigation but disables mutation controls", () => {
 
   fireEvent.click(screen.getByRole("button", { name: "nested object 1 fields" }));
 
-  expect(screen.getByDisplayValue("10")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByDisplayValue("10")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 });
 
@@ -229,9 +275,9 @@ test("array pages render a table workspace", () => {
 
   fireEvent.click(screen.getByRole("button", { name: "party array 2 items" }));
 
-  expect(screen.getByRole("columnheader", { name: "id" })).toBeInTheDocument();
-  expect(screen.getByRole("columnheader", { name: "hp" })).toBeInTheDocument();
-  expect(screen.getByText("hero")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByRole("columnheader", { name: "id" })).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByRole("columnheader", { name: "hp" })).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByText("hero")).toBeInTheDocument();
 });
 
 test("array pages stay in browse mode until Edit is enabled", () => {
@@ -411,6 +457,206 @@ test("默认 stack-flow 模式在宽屏导航后显示双页上下文", () => {
   expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
 });
 
+test.each([
+  { layoutMode: "stack-flow" as const, label: "stack-flow" },
+  { layoutMode: "pinned-root" as const, label: "pinned-root" },
+])("$label 的基础导航语义矩阵保持稳定", ({ layoutMode }) => {
+  render(
+    <EditorShell
+      value={{
+        rootA: { detailA: { hp: 10 } },
+        rootB: { detailB: { mp: 20 } },
+      }}
+      layoutMode={layoutMode}
+      schemaHost={createNavigationSemanticsSchemaHost()}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "rootA object 1 fields" }));
+  expect(screen.getByRole("button", { name: "detailA object 1 fields" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "rootB object 1 fields" }));
+  expect(screen.getByRole("button", { name: "detailB object 1 fields" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "detailA object 1 fields" })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: "detailB object 1 fields" }));
+  expect(getCurrentPageQueries().getByLabelText("Field mp")).toHaveValue(20);
+
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByRole("button", { name: "detailB object 1 fields" })).toBeInTheDocument();
+  expect(getCurrentPageQueries().queryByLabelText("Field mp")).toBeNull();
+});
+
+test("stack-flow 在左页是 reference 时点击左页兄弟项仍然 replace 右页", () => {
+  vi.useFakeTimers();
+  render(
+    <EditorShell
+      documents={{
+        main: { encounter: "asset://encounters/shadow-eye.json" },
+        "asset://encounters/shadow-eye.json": {
+          boundEncounter: { hp: 12 },
+          bonus: { manaRegen: 2 },
+        },
+      }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://encounters/shadow-eye.json"
+            ? {
+                boundEncounter: { hp: 12 },
+                bonus: { manaRegen: 2 },
+              }
+            : undefined;
+        },
+      }}
+      rootSourceId="main"
+    />,
+  );
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "encounter reference asset://encounters/shadow-eye.json" }));
+    fireEvent.click(screen.getByRole("button", { name: "boundEncounter object 1 fields" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue(12);
+
+    fireEvent.click(screen.getByRole("button", { name: "bonus object 1 fields" }));
+
+    expect(getCurrentPageQueries().getByLabelText("Field manaRegen")).toHaveValue(2);
+    expect(getCurrentPageQueries().queryByLabelText("Field hp")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stack-flow 在 reference 对象左页从 boundEncounter 切到 bonus 时不推动左页", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell
+      value={{ item: "asset://items/moon-charm.json" }}
+      host={{
+        loadReferenceSource(uri) {
+          if (uri === "asset://items/moon-charm.json") {
+            return {
+              id: "moon-charm",
+              kind: "item",
+              name: "Moon Charm",
+              bonus: { manaRegen: 2 },
+              boundEncounter: "asset://encounters/shadow-eye.json",
+            };
+          }
+          if (uri === "asset://encounters/shadow-eye.json") {
+            return { darkness: 4 };
+          }
+          return undefined;
+        },
+      }}
+    />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "item reference asset://items/moon-charm.json" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "boundEncounter reference asset://encounters/shadow-eye.json" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "bonus object 1 fields" }));
+
+    expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+    expect(container.querySelector(".stack-page--replace-promote")).toBeNull();
+    expect(getCurrentPageQueries().getByLabelText("Field manaRegen")).toHaveValue(2);
+    expect(getCurrentPageQueries().queryByLabelText("Field darkness")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stack-flow 在普通 object 左页中从 reference 切到 array 时仍然 replace 右页", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell
+      value={[
+        { id: "row-0" },
+        {
+          id: "row-1",
+          boundEncounter: "asset://encounters/shadow-eye.json",
+          bonus: ["mana", "speed"],
+        },
+      ]}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://encounters/shadow-eye.json"
+            ? { hp: 12, kind: "encounter" }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("row", { name: "row-1 asset://encounters/shadow-eye.json 2 items" }));
+    fireEvent.click(screen.getByRole("button", { name: "boundEncounter reference asset://encounters/shadow-eye.json" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue(12);
+
+    fireEvent.click(screen.getByRole("button", { name: "bonus array 2 items" }));
+
+    expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+    expect(container.querySelector(".stack-page--replace-promote")).toBeNull();
+    expect(container.querySelector(".stack-page--push-promote-shell")).toBeNull();
+    expect(getCurrentPageQueries().getByLabelText("Array item 0")).toHaveValue("mana");
+    expect(getCurrentPageQueries().queryByLabelText("Field hp")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stack-flow 在左页普通 object 且右页为 reference error 时点击左页 array 仍然 replace 右页", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell
+      value={[
+        { id: "row-0" },
+        {
+          id: "row-1",
+          boundEncounter: "asset://encounters/shadow-eye.json",
+          bonus: ["mana", "speed"],
+        },
+      ]}
+      host={{
+        loadReferenceSource() {
+          return undefined;
+        },
+      }}
+    />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("row", { name: "row-1 asset://encounters/shadow-eye.json 2 items" }));
+    fireEvent.click(screen.getByRole("button", { name: "boundEncounter reference asset://encounters/shadow-eye.json" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    expect(getCurrentPageQueries().getByText("Reference content not found")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "bonus array 2 items" }));
+
+    expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+    expect(container.querySelector(".stack-page--replace-promote")).toBeNull();
+    expect(container.querySelector(".stack-page--push-promote-shell")).toBeNull();
+    expect(container.querySelector(".stack-page--pop-promote")).toBeNull();
+    expect(getCurrentPageQueries().getByLabelText("Array item 0")).toHaveValue("mana");
+    expect(getCurrentPageQueries().queryByText("Reference content not found")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("stack-flow 双页模式下左右页都保留相同的 footer 动作", () => {
   render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
 
@@ -451,12 +697,12 @@ test("stack-flow 深层返回时恢复 pop 动画", () => {
 });
 
 test("stack-flow 的左页在可回退时显示页头返回按钮", () => {
-  render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
+  const { container } = render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
   fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
 
-  expect(screen.getAllByRole("button", { name: "Go up one level" }).length).toBeGreaterThan(0);
+  expect(container.querySelectorAll(".page-back-button").length).toBeGreaterThan(0);
 });
 
 test("stack-flow 在双页且左页不是 root 时保留左页返回按钮", () => {
@@ -502,7 +748,7 @@ test("pinned-root 从 reference 子页返回到 reference 首页时保留右页�
 
   expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
   expect(container.querySelector(".stack-page--pop-exit")).toBeNull();
-  expect(screen.getByDisplayValue("hero")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByDisplayValue("hero")).toBeInTheDocument();
 });
 
 test("references can navigate into a different source document", () => {
@@ -524,7 +770,7 @@ test("references can navigate into a different source document", () => {
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
   fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
 
-  expect(screen.getByDisplayValue("hero")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByDisplayValue("hero")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
 });
 
@@ -842,7 +1088,7 @@ test("reference edits can be saved through the host contract", async () => {
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
   fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
-  fireEvent.change(screen.getByLabelText("Field id"), { target: { value: "hero-updated" } });
+  fireEvent.change(getCurrentPageQueries().getByLabelText("Field id"), { target: { value: "hero-updated" } });
   fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
   await waitFor(() =>
@@ -1350,11 +1596,11 @@ test("nested object and array pages inside a reference keep their data", async (
   fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
 
   fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
-  expect(screen.getByLabelText("Field hp")).toHaveValue(10);
+  expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue(10);
 
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   fireEvent.click(screen.getByRole("button", { name: "tags array 1 items" }));
-  expect(screen.getByLabelText("Array item 0")).toHaveValue("vanguard");
+  expect(getCurrentPageQueries().getByLabelText("Array item 0")).toHaveValue("vanguard");
   expect(screen.queryByLabelText("Field tags")).toBeNull();
 });
 
@@ -1382,6 +1628,29 @@ test("schema object mode only allows adding declared properties", () => {
   fireEvent.click(screen.getByRole("button", { name: "Add property" }));
 
   expect(screen.getByDisplayValue("New Quest")).toBeInTheDocument();
+});
+
+test("schema object mode keeps add property controls hidden until Edit is enabled", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema({ path }) {
+      if (path.length === 0) {
+        return {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            id: { type: "string" },
+            title: { type: "string", default: "New Quest" },
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+
+  render(<EditorShell value={{ id: "quest_001" }} schemaHost={schemaHost} />);
+
+  expect(screen.queryByRole("button", { name: "Add property" })).toBeNull();
+  expect(screen.queryByPlaceholderText("newKey")).toBeNull();
 });
 
 test("schema object mode allows dynamic keys from additionalProperties schema", () => {
@@ -1436,7 +1705,7 @@ test("const object pages become read only in schema mode", () => {
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
 
-  expect(screen.getByLabelText("Field hp")).toBeDisabled();
+  expect(getCurrentPageQueries().getByLabelText("Field hp")).toBeDisabled();
 });
 
 test("schema array mode creates items from items schema defaults", async () => {
@@ -1470,8 +1739,8 @@ test("schema array mode creates items from items schema defaults", async () => {
   await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "Create row" }));
 
-  expect(screen.getByDisplayValue("unit_001")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("10")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByDisplayValue("unit_001")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByDisplayValue("10")).toBeInTheDocument();
 });
 
 test("schema array mode disables delete when minItems is reached", async () => {
@@ -1560,7 +1829,7 @@ test("schema array mode shows uniqueItems validation errors", () => {
 
   fireEvent.click(screen.getByRole("button", { name: "party array 2 items" }));
 
-  expect(screen.getByText("Array items must be unique")).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByText("Array items must be unique")).toBeInTheDocument();
 });
 
 test("schema union branches can switch from oneOf options", () => {
@@ -1599,10 +1868,10 @@ test("schema union branches can switch from oneOf options", () => {
   render(<EditorShell value={{ action: { kind: "attack", power: 10 } }} schemaHost={schemaHost} />);
 
   fireEvent.click(screen.getByRole("button", { name: "action object 2 fields" }));
-  fireEvent.change(screen.getByLabelText("Schema branch"), { target: { value: "1" } });
+  fireEvent.change(getCurrentPageQueries().getByLabelText("Schema branch"), { target: { value: "1" } });
 
-  expect(screen.getByLabelText("Field amount")).toHaveValue(5);
-  expect(screen.queryByLabelText("Field power")).toBeNull();
+  expect(getCurrentPageQueries().getByLabelText("Field amount")).toHaveValue(5);
+  expect(getCurrentPageQueries().queryByLabelText("Field power")).toBeNull();
 });
 
 test("raw mode keeps schema validation active", () => {

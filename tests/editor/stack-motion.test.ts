@@ -1,6 +1,13 @@
 import { test } from "vitest";
 import type { NavigationPage } from "../../src/core/navigation";
-import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, determinePinnedRootBackAnimation } from "../../src/editor/stack-motion";
+import {
+  determineBackAnimation,
+  determineJumpAnimation,
+  determineNavigateAnimation,
+  determinePinnedRootBackAnimation,
+  resolvePinnedRootMotionPlan,
+  resolveStackFlowMotionPlan,
+} from "../../src/editor/stack-motion";
 
 function page(path: Array<string | number>): NavigationPage {
   return { path };
@@ -98,5 +105,73 @@ test("pinned-root back from the first right page to root uses pop animation", ()
     key: 8,
     exitingPage: page(["profile"]),
     promotingPage: page([]),
+  });
+});
+
+test("stack-flow root push resolves to fade-in only", () => {
+  const animation = determineNavigateAnimation([page([])], [page([]), page(["profile"])], 0, 9);
+  expect(resolveStackFlowMotionPlan(animation, [page([])], [page([]), page(["profile"])])).toEqual({
+    leftMotion: null,
+    rightMotion: "fade-in",
+    rightSlotState: "occupied",
+  });
+});
+
+test("stack-flow dual-page push resolves to push-in plus fade-in", () => {
+  const currentVisible = [page(["profile"]), page(["profile", "stats"])];
+  const nextVisible = [page(["profile", "stats"]), page(["profile", "stats", "details"])];
+  const animation = determineNavigateAnimation(currentVisible, nextVisible, 1, 10);
+  expect(resolveStackFlowMotionPlan(animation, currentVisible, nextVisible)).toEqual({
+    leftMotion: "push-in",
+    rightMotion: "fade-in",
+    rightSlotState: "occupied",
+  });
+});
+
+test("stack-flow root-like pop resolves to fade-out only", () => {
+  const currentVisible = [page([]), page(["profile"])];
+  const nextVisible = [page([])];
+  const animation = determineBackAnimation(currentVisible, nextVisible, 11);
+  expect(resolveStackFlowMotionPlan(animation, currentVisible, nextVisible)).toEqual({
+    leftMotion: null,
+    rightMotion: "fade-out",
+    rightSlotState: "empty",
+  });
+});
+
+test("stack-flow dual-page pop resolves to pop-out plus fade-in", () => {
+  const currentVisible = [page(["profile"]), page(["profile", "stats"])];
+  const nextVisible = [page(["profile"])];
+  const animation = determineBackAnimation(
+    [page(["root"]), ...currentVisible],
+    [page(["root"]), ...nextVisible],
+    12,
+  );
+  expect(resolveStackFlowMotionPlan(animation, currentVisible, nextVisible)).toEqual({
+    leftMotion: null,
+    rightMotion: "fade-out",
+    rightSlotState: "empty",
+  });
+
+  const deeperCurrentVisible = [page(["profile", "stats"]), page(["profile", "stats", "details"])];
+  const deeperNextVisible = [page(["profile"]), page(["profile", "stats"])];
+  const deeperAnimation = determineBackAnimation(
+    [page(["profile"]), ...deeperCurrentVisible],
+    [page(["profile"]), ...deeperNextVisible],
+    13,
+  );
+  expect(resolveStackFlowMotionPlan(deeperAnimation, deeperCurrentVisible, deeperNextVisible)).toEqual({
+    leftMotion: "pop-out",
+    rightMotion: "fade-in",
+    rightSlotState: "occupied",
+  });
+});
+
+test("pinned-root motion plan never uses left motion", () => {
+  const animation = determinePinnedRootBackAnimation([page([]), page(["profile"])], [page([])], 14);
+  expect(resolvePinnedRootMotionPlan(animation, [page([])])).toEqual({
+    leftMotion: null,
+    rightMotion: "fade-out",
+    rightSlotState: "empty",
   });
 });

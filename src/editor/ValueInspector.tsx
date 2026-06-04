@@ -439,7 +439,7 @@ function ObjectPage({
                   </div>
                 ) : null}
                 {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
-                {(editMode || usesSchemaPropertyCreation) && !pageReadOnly ? (
+                {editMode && !pageReadOnly ? (
                   <div className="add-object-form">
                     {usesSchemaPropertyCreation ? (
                       <div className="add-object-form__fields">
@@ -689,7 +689,7 @@ function ArrayPage({
   const expandedTrailingWidth = Math.max(0, tableViewportWidth - tableWidth - 1);
   // 预留 1px，避免 collapsed border / sticky 分隔线导致横向滚动条。
 
-  // 棰勭暀 1px锛岄伩鍏?collapsed border / sticky 鍒嗛殧绾挎妸 filler 琛ㄦ牸鎾戝嚭妯悜婊氬姩鏉°€?
+  // Reserve 1px so collapsed borders and sticky dividers do not force horizontal overflow.
   useEffect(() => {
     setRawOpen(false);
     setEditMode(false);
@@ -746,7 +746,7 @@ function ArrayPage({
       return;
     }
     if (!host?.createReferenceRow) {
-      setHostActionError("褰撳墠瀹夸富鏈帴鍏ュ紩鐢ㄨ鍒涘缓鑳藉姏");
+      setHostActionError("当前宿主未接入引用行创建能力");
       return;
     }
     try {
@@ -1681,7 +1681,7 @@ function SchemaControlBar(props: {
     <div className="property-list" style={{ paddingTop: 10, paddingBottom: 0 }}>
       <section className="property-block object-field-row">
         <div className="property-heading">
-          <span>Schema 鍒嗘敮</span>
+          <span>Schema branch</span>
           <small className="field-type">{unionCapabilities.kind}</small>
         </div>
         <select
@@ -2629,7 +2629,7 @@ function renderReferenceCreateRow(props: {
         </div>
       </td>
       <td className="array-cell--pending-merged" colSpan={span}>
-        <span className="array-cell-summary array-cell-summary--pending">鏂板缓寮曠敤椤瑰皢鐢卞涓诲垱寤哄苟鍥炲～</span>
+        <span className="array-cell-summary array-cell-summary--pending">新建引用项将由宿主创建并回填</span>
       </td>
     </tr>
   );

@@ -1,185 +1,432 @@
-# Super JSON Editor 导航与动效规则
+# Super JSON Editor Navigation Motion Rules
 
-## 目标
+## Goal
 
-本文档定义 `super-json-editor` 的导航与动效语义。
+This document defines the motion semantics for `super-json-editor`.
 
-它要解决的问题不是“让所有切页都动起来”，而是：
+The purpose of the animation system is not "to animate every navigation". Its job is to make page-role changes readable:
 
-- 动效要表达用户意图
-- 只有真正发生角色变化的页面才应该运动
-- 不相关的页面应尽量保持静止
+- which page stays
+- which page disappears
+- which page becomes the new context page
+- which page appears on the right
 
-## 先区分两种布局模式
+The motion system must serve those meanings, not override them.
 
-### `stack-flow`
+---
 
-这是默认模式。
+## Core Model
 
-特点：
+We use three distinct concepts during animation:
 
-- 当前可见区域只强调当前工作页
-- 虽然内部仍有完整导航栈，但视觉上更接近“整页随导航流动”
-- 不要求始终保留左侧上下文页
+### `real-left-page`
 
-### `pinned-root`
+The page that would occupy the left slot if there were **no animation**.
 
-这是固定 root 模式。
+Rules:
 
-特点：
+- It is part of the final layout.
+- It should be rendered in its final place as early as possible.
+- It must not be moved just because an animation is playing.
+- Its header/footer shape should already match the final state.
 
-- 左侧 root 页固定
-- 右侧为当前工作页
-- 动效规则主要围绕“右侧页如何进入、替换、返回”展开
+### `real-right-page`
 
-下面的详细动效规则，主要针对 **`pinned-root`** 模式。
-`stack-flow` 更强调简洁和直接，不强求复杂上下文动效。
+The page that would occupy the right slot if there were **no animation**.
 
-## `pinned-root` 的心智模型
+Rules:
 
-编辑器内部维护完整导航栈，但视觉上最多强调最近两页：
+- It is also part of the final layout.
+- It should not be used as a temporary moving prop.
+- It may be hidden during animation if the motion semantics require the right slot to appear empty or be replaced by an animation page.
 
-- 左页：上下文页
-- 右页：当前工作页
+### `animation-page`
 
-不是每次导航都会改变这两个角色，因此不能只用一种通用动画。
+A temporary visual page used only to express movement.
 
-## 动效类型
+Rules:
 
-### 1. `push`
+- It is not the final page state.
+- It may move, fade, or be clipped.
+- Its **first frame must already use the final intended chrome** for the role it is animating into.
+- We do not animate the real page when an animation page can carry the motion.
 
-当当前右页继续打开更深的子页时使用。
+---
 
-视觉含义：
+## Four Atomic Motion Semantics
 
-- 老左页离场
-- 老右页左移，成为新的上下文页
-- 新右页从右侧进入
+All editor motion should be described using these four atomic semantics.
 
-### 2. `replace`
+### 1. `push-in`
 
-当左页保持不变，但右页被另一页替换时使用。
+Meaning:
 
-视觉含义：
+- the old right page moves left
+- it becomes the new left-side context page
 
-- 左页保持完全静止
-- 老右页离场
-- 新右页进入
+Visual reading:
 
-### 3. `cut`
+- a right page is sliding into the left slot
+- the previous left page stays in place and reads as being "behind"
 
-当动效会误导用户时，直接切换，不强行动画。
+Important:
 
-这通常出现在返回、跨层跳转、或上下文收缩时。
+- the moving thing is an `animation-page`
+- while that movement is visible, the `real-right-page` that it came from must already disappear, otherwise the motion breaks
 
-## `pinned-root` 导航规则
+### 2. `pop-out`
 
-### 规则 A：单页进入双页
+Meaning:
 
-当当前只有 root 可见，且从 root 打开一个子页：
+- the old left page moves right
+- it becomes the new right-side page
+- the new left page is revealed underneath it
 
-- 使用 `push`
+Visual reading:
 
-原因：
+- a left-looking page slides to the right
+- it exposes the page that was already prepared beneath it
 
-- root 成为上下文页
-- 新子页成为工作页
+Important:
 
-### 规则 B：右页继续深入
+- before the animation starts, the `real-left-page` for the target state must already be prepared underneath
+- the moving thing is an `animation-page`, not the real left page itself
 
-当左右两页都可见，且当前右页继续打开更深层子页：
+### 3. `fade-in`
 
-- 使用 `push`
+Meaning:
 
-原因：
+- the right slot is replaced by a new page
 
-- 当前右页被提升为新的左侧上下文
-- 新右页被创建
+Visual reading:
 
-### 规则 C：左页切换右页
+- a page appears on the right
 
-当用户从左页点击另一个子项，只替换右页：
+### 4. `fade-out`
 
-- 使用 `replace`
+Meaning:
 
-原因：
+- the right slot is replaced by empty space
 
-- 左页上下文不变
-- 只有右页变化
+Visual reading:
 
-### 规则 D：root 保持，右侧切换另一个顶层入口
+- the current right page disappears
 
-当左页仍然是 root，右侧切到另一个顶层项：
+---
 
-- 使用 `replace`
+## Layout Mapping
 
-原因：
+The same navigation stack can be shown with two layout modes:
 
-- root 仍是稳定上下文
-- 右侧工作页变化
+- `stack-flow`
+- `pinned-root`
 
-### 规则 E：从双页退回单页
+The navigation semantics and the motion semantics are related, but not identical.
 
-当从“左页 + 右页”退回到只剩 root：
+---
 
-- 使用 `cut`
+## Pinned Root
 
-原因：
+### Mental Model
 
-- 这是上下文收缩，不应该误导成“右页滑出”
+In `pinned-root`, the left page is structurally pinned. Therefore:
 
-### 规则 F：从双页退回另一组双页
+- there is no visual "right page becomes left page" transition
+- there is no visual "left page becomes right page" transition
 
-当返回后，旧左页变成新右页：
+So `pinned-root` only needs:
 
-- 优先 `cut`
+- `fade-in`
+- `fade-out`
 
-原因：
+It must never use:
 
-- 这本质上仍然是可见历史收缩
-- 直接切比误导性位移动画更可信
+- `push-in`
+- `pop-out`
 
-### 规则 G：跳转且左页不变
+### Rules
 
-如果 breadcrumb 或其他 jump 保持左页不变，但更换右页：
+#### Open first right page
 
-- 使用 `replace`
+Use:
 
-### 规则 H：大跨度跳转
+- `fade-in`
 
-如果 jump 不保留清晰的 `push / replace` 关系：
+#### Replace current right page
 
-- 直接 `cut`
+Use:
 
-例如：
+- `fade-in`
 
-- 从深层状态直接跳回 root
-- 跳到一个与当前可见角色关系不明确的远处页面
+#### Close current right page
 
-## `stack-flow` 的约束
+Use:
 
-`stack-flow` 不追求把所有内部历史都可视化出来。
+- `fade-out`
 
-它的规则更简单：
+---
 
-- 默认展示当前工作页
-- 返回优先使用直接的 `Back`
-- 如无明显收益，不额外制造“上下文页必须出现”的动画
+## Stack Flow
 
-换句话说：
+### Mental Model
 
-- `stack-flow` 优先保证清晰和轻量
-- `pinned-root` 才强调左/右角色分化
+`stack-flow` supports both:
 
-## 产品约束
+- root-like states where the right side is empty
+- dual-page states where both left and right roles are active
 
-动效系统应始终优先：
+Because of that, `stack-flow` sometimes behaves like `pinned-root`, and sometimes needs full left/right role transitions.
 
-- **不用误导性动画**
+### Non-Negotiable Constraint
 
-而不是：
+The `real-left-page` is fixed.
 
-- **为了动画覆盖率而强行运动**
+That means:
 
-在 `super-json-editor` 里，可信的交互语义比“动画很多”更重要。
+- if the left side appears to move, that must be an `animation-page`
+- not the real left page
 
+---
+
+## Stack Flow: Push
+
+### Case A: Root state
+
+State shape:
+
+- left exists
+- right is empty
+
+A push from this state does **not** mean "right page pushes into left", because there is no existing right page.
+
+Use:
+
+- `fade-in`
+
+Do not use:
+
+- `push-in`
+
+Why:
+
+- the semantic work here is only "a new right page appears"
+
+### Case B: Dual-page state
+
+State shape:
+
+- left exists
+- right exists
+
+A push from this state means:
+
+1. old right page becomes the new left context page
+2. a new right page appears
+
+Use:
+
+- `push-in`
+- `fade-in`
+
+Execution requirements:
+
+1. `real-left-page` stays fixed
+2. `real-right-page` must disappear immediately once the moving right-page animation begins
+3. the moving `animation-page` should use the **final left-page chrome on frame one**
+4. the new right page should arrive as `fade-in`, typically delayed slightly after the `push-in` starts
+
+---
+
+## Stack Flow: Pop
+
+### Case A: Root-like pop
+
+State shape:
+
+- left is root
+- right exists
+
+Even though the navigation semantic is still "pop", visually root behaves like a pinned page.
+
+Use:
+
+- `fade-out`
+
+Do not use:
+
+- `pop-out`
+
+Why:
+
+- root should not visually move to the right
+
+### Case B: Non-root dual-page pop
+
+State shape:
+
+- left exists and is not root-like pinned behavior
+- right exists
+
+This pop means:
+
+1. the left page visually moves to the right
+2. the new left page is revealed underneath
+
+Use:
+
+- `pop-out`
+- `fade-in`
+
+Execution requirements:
+
+1. before animation starts, the target state's `real-left-page` must already be prepared underneath
+2. the right slot should visually read as empty while the old left page is moving right
+3. the moving `animation-page` should use the **final right-page chrome on frame one**
+4. once the animation completes, the right slot is replaced by the final page state
+
+---
+
+## Navigation-to-Motion Mapping
+
+This section defines how navigation semantics map into motion semantics.
+
+### Shared navigation semantics
+
+The editor still has these navigation meanings:
+
+- `push`
+- `pop`
+- `replace`
+
+But they do not directly map 1:1 to CSS classes. We first convert them into atomic motion semantics.
+
+### `replace`
+
+For both layout modes:
+
+- right page replaced by another right page -> `fade-in`
+- right page replaced by empty -> `fade-out`
+
+### `push`
+
+#### `pinned-root`
+
+- always `fade-in`
+
+#### `stack-flow`
+
+- root state -> `fade-in`
+- dual-page state -> `push-in + fade-in`
+
+### `pop`
+
+#### `pinned-root`
+
+- right remains after pop -> `fade-in`
+- right disappears after pop -> `fade-out`
+
+#### `stack-flow`
+
+- root-like state -> `fade-out`
+- non-root dual-page state -> `pop-out + fade-in`
+
+---
+
+## Rendering Constraints
+
+These are implementation constraints, not optional polish.
+
+### Constraint 1
+
+Do not let real pages and animation pages express the same role at the same time.
+
+Example:
+
+- if a right-looking page is currently moving left as `push-in`
+- the old `real-right-page` must already be gone
+
+### Constraint 2
+
+The first frame of an animation page must already use the target role's chrome.
+
+Examples:
+
+- `push-in`: the moving page must already look like the final left page
+- `pop-out`: the moving page must already look like the final right page
+
+### Constraint 3
+
+If a motion depends on revealing a page underneath, that page must already exist in the final structure before the animation begins.
+
+Example:
+
+- `pop-out` requires the new left page to already be rendered underneath
+
+### Constraint 4
+
+The motion layer must not rewrite navigation semantics.
+
+Its job is:
+
+- read current visible roles
+- read target visible roles
+- choose atomic motion semantics
+- render animation pages accordingly
+
+Its job is **not**:
+
+- invent a different target structure just to make animation easier
+
+---
+
+## Recommended Refactor Direction
+
+When reworking the motion system, use a two-stage pipeline:
+
+### Stage 1: Resolve target layout roles
+
+Given current state and next state, decide:
+
+- target `real-left-page`
+- target `real-right-page`
+- whether the right slot ends occupied or empty
+- whether current state is root-like or dual-page
+
+### Stage 2: Resolve atomic motion semantics
+
+Based on stage 1, produce only:
+
+- `push-in?`
+- `pop-out?`
+- `fade-in?`
+- `fade-out?`
+
+Then render:
+
+- stable real pages
+- temporary animation pages
+
+This keeps:
+
+- navigation semantics clean
+- layout semantics explicit
+- animation semantics composable
+
+---
+
+## Final Principle
+
+The animation system should optimize for:
+
+- correct page-role meaning
+- correct first frame
+- correct final frame
+- no visual leaks between real pages and animation pages
+
+The goal is not "more animation coverage".
+
+The goal is:
+
+- no semantic confusion
+- no premature real-page replacement
+- no duplicated page-role exposure during motion
