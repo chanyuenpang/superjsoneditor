@@ -707,7 +707,11 @@ export function EditorShell({
                     }
                     onNavigate={(nextPath) => handleNavigate(index, nextPath)}
                     readOnly={readOnly}
-                    onEditModeChange={index === visiblePages.length - 1 ? setIsEditingCurrentPage : undefined}
+                    onEditModeChange={
+                      index === visiblePages.length - 1
+                        ? setIsEditingCurrentPage
+                        : (visiblePages.length === 2 ? (() => undefined) : undefined)
+                    }
                     onApplyValue={(nextValue) => {
                       if (readOnly) return;
                       setValidationResult(null);

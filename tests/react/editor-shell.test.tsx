@@ -383,6 +383,16 @@ test("默认 stack-flow 模式在宽屏导航后显示双页上下文", () => {
   expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
 });
 
+test("stack-flow 双页模式下左右页都保留相同的 footer 动作", () => {
+  render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+
+  expect(screen.getAllByRole("button", { name: "Raw" })).toHaveLength(2);
+  expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
+});
+
 test("默认 stack-flow 模式在 root 时显示和 pinned-root 一样的右侧空态", () => {
   const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} />);
 
