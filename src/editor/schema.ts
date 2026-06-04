@@ -42,6 +42,8 @@ export type EditorTableColumn = {
   key: string;
   label?: string;
   sortable?: boolean;
+  width?: number;
+  wrap?: boolean;
 };
 
 export type EditorSchemaUi = {

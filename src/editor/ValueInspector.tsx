@@ -9,7 +9,6 @@ import {
   getPointerXInScrollSpace,
   resolveAutoScrollDirection,
   scrollColumnContainer,
-  shouldStartColumnDrag,
 } from "./column-dnd";
 import {
   createDefaultArrayItem,
@@ -26,6 +25,9 @@ import {
   type EditorViewOption,
   type EditorViewOptionColor,
 } from "./schema";
+import { SchemaColumnHeader } from "./SchemaColumnHeader";
+import { SchemaOptionFieldEditor } from "./SchemaOptionFieldEditor";
+import { icons } from "./icons";
 
 type ValueInspectorProps = {
   value: unknown;
@@ -124,6 +126,18 @@ function ObjectPage({
   const canEditCurrentPage = Boolean(onEditModeChange);
   const canAuthorObjectSchema = Boolean(schema?.properties && onUpdateDocumentSchema && sourceId);
   const [fieldOrder, setFieldOrder] = useState(() => getOrderedKeys(value, schema));
+  const propertyItemRefs = useRef<Record<string, HTMLElement | null>>({});
+  const [pressedField, setPressedField] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<{
+    field: string;
+    order: string[];
+    targetIndex: number;
+    restOrder: string[];
+    ghostTop: number;
+    ghostLeft: number;
+    ghostWidth: number;
+    ghostHeight: number;
+  } | null>(null);
   const fields = useMemo(
     () => fieldOrder
       .filter((key) => Object.prototype.hasOwnProperty.call(value, key))
@@ -178,18 +192,74 @@ function ObjectPage({
     onUpdateDocumentSchema?.(sourceId, path, "self", updater);
   }
 
-  function moveObjectField(key: string, direction: "up" | "down") {
-    setFieldOrder((current) => {
-      const currentIndex = current.indexOf(key);
-      if (currentIndex < 0) return current;
-      const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-      if (targetIndex < 0 || targetIndex >= current.length) return current;
-      const next = [...current];
-      const [entry] = next.splice(currentIndex, 1);
-      next.splice(targetIndex, 0, entry);
-      return next;
-    });
-    updateObjectSchema((currentSchema) => reorderSchemaProperties(currentSchema, key, direction));
+  function commitObjectFieldOrder(nextOrder: string[]) {
+    setFieldOrder(nextOrder);
+    updateObjectSchema((currentSchema) => reorderSchemaPropertiesToMatch(currentSchema, nextOrder));
+  }
+
+  function handlePropertyHandlePointerDown(
+    key: string,
+    event: { button: number; clientY: number; preventDefault: () => void },
+  ) {
+    if (!editMode || !canAuthorObjectSchema || event.button !== 0) return;
+    event.preventDefault();
+    const startOrder = fields.map(([fieldKey]) => fieldKey);
+    const startRect = propertyItemRefs.current[key]?.getBoundingClientRect();
+    if (!startRect) return;
+    const startY = event.clientY;
+    let dragging = false;
+    let currentTargetIndex = startOrder.indexOf(key);
+    setPressedField(key);
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      if (!dragging && Math.abs(deltaY) <= 4) return;
+      if (!dragging) {
+        dragging = true;
+        document.body.classList.add("is-dragging-detail-property");
+      }
+      const restOrder = startOrder.filter((field) => field !== key);
+      const slots = restOrder.map((field) => {
+        const element = propertyItemRefs.current[field];
+        const rect = element?.getBoundingClientRect();
+        return rect ? { field, top: rect.top, center: rect.top + rect.height / 2 } : null;
+      }).filter((entry): entry is { field: string; top: number; center: number } => Boolean(entry));
+      currentTargetIndex = slots.length;
+      for (let index = 0; index < slots.length; index += 1) {
+        if (moveEvent.clientY <= slots[index].center) {
+          currentTargetIndex = index;
+          break;
+        }
+      }
+      setDragState({
+        field: key,
+        order: startOrder,
+        targetIndex: currentTargetIndex,
+        restOrder,
+        ghostTop: moveEvent.clientY - (startY - startRect.top),
+        ghostLeft: startRect.left,
+        ghostWidth: startRect.width,
+        ghostHeight: startRect.height,
+      });
+    };
+
+    const finish = (nextOrder: string[] | null) => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onPointerUp);
+      document.body.classList.remove("is-dragging-detail-property");
+      setPressedField(null);
+      setDragState(null);
+      if (nextOrder && !nextOrder.every((field, index) => field === fieldOrder[index])) {
+        commitObjectFieldOrder(nextOrder);
+      }
+    };
+
+    const onPointerUp = () => {
+      finish(dragging ? insertDraggedField(startOrder, key, currentTargetIndex) : null);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onPointerUp);
   }
 
   return (
@@ -225,109 +295,146 @@ function ObjectPage({
           <div className="object-page-body">
             <div className="object-scroll">
               <div className="property-list">
-                {fields.map(([key, fieldValue]) => (
-                  <section
-                    className={[
-                      "property-block",
-                      "object-field-row",
-                      isFieldDirty(fieldValue, isPlainObject(savedValue) ? savedValue[key] : undefined) ? "object-field-row--dirty" : "",
-                    ].filter(Boolean).join(" ")}
-                    key={key}
-                  >
-                    <div className="property-heading">
-                      <span>{schema?.properties?.[key]?.title ?? host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key}</span>
-                      <div className="property-heading__actions">
-                        {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
-                        <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
+                {fields.map(([key, fieldValue], index) => {
+                  const isDragged = dragState?.field === key;
+                  const visibleIndex = dragState ? dragState.restOrder.indexOf(key) : index;
+                  const fieldLabel = schema?.properties?.[key]?.title ?? host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key;
+                  return (
+                    <div className="detail-property-stack" key={key}>
+                      {!isDragged && dragState && dragState.targetIndex === visibleIndex ? (
+                        <div className="detail-drop-indicator" />
+                      ) : null}
+                      <div
+                        className={[
+                          "detail-property-item",
+                          "object-field-row",
+                          pressedField === key ? "is-pressed" : "",
+                          isDragged ? "is-dragging" : "",
+                          isFieldDirty(fieldValue, isPlainObject(savedValue) ? savedValue[key] : undefined) ? "object-field-row--dirty" : "",
+                        ].filter(Boolean).join(" ")}
+                        ref={(element) => {
+                          propertyItemRefs.current[key] = element;
+                        }}
+                      >
                         {editMode && canAuthorObjectSchema && schema?.properties?.[key] ? (
-                          <>
-                            <button
-                              aria-label={`Move field ${schema?.properties?.[key]?.title ?? key} up`}
-                              className="ghost-icon-button"
-                              type="button"
-                              onClick={() => moveObjectField(key, "up")}
-                            >
-                              Up
-                            </button>
-                            <button
-                              aria-label={`Move field ${schema?.properties?.[key]?.title ?? key} down`}
-                              className="ghost-icon-button"
-                              type="button"
-                              onClick={() => moveObjectField(key, "down")}
-                            >
-                              Down
-                            </button>
-                          </>
-                        ) : null}
-                        {editMode && !pageReadOnly ? (
                           <button
-                            className="danger-icon-button"
+                            aria-label={`Reorder ${fieldLabel}`}
+                            className="detail-property-handle"
                             type="button"
-                            disabled={isRequiredField(schema, key)}
-                            onClick={() => {
-                              if (isRequiredField(schema, key)) return;
-                              const nextValue = { ...value };
-                              delete nextValue[key];
-                              onApplyValue(nextValue);
-                            }}
+                            onMouseDown={(event) => handlePropertyHandlePointerDown(key, event)}
                           >
-                            Delete
+                            <icons.dragHandle size={16} />
                           </button>
-                        ) : null}
+                        ) : (
+                          <div className="detail-property-spacer" aria-hidden="true" />
+                        )}
+                        {isDragged ? (
+                          <div
+                            className="detail-property-placeholder"
+                            style={{ minHeight: dragState?.ghostHeight ?? 72 }}
+                          />
+                        ) : (
+                          <section className="property-block">
+                            <div className="property-heading">
+                              <span>{fieldLabel}</span>
+                              <div className="property-heading__actions">
+                                {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
+                                <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
+                                {editMode && !pageReadOnly ? (
+                                  <button
+                                    className="danger-icon-button"
+                                    type="button"
+                                    disabled={isRequiredField(schema, key)}
+                                    onClick={() => {
+                                      if (isRequiredField(schema, key)) return;
+                                      const nextValue = { ...value };
+                                      delete nextValue[key];
+                                      onApplyValue(nextValue);
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                            {schema?.properties?.[key]?.description ? <div className="form-hint">{schema.properties[key]?.description}</div> : null}
+                            {editMode && isRequiredField(schema, key) ? (
+                              <div className="form-hint">必填字段不能删除。</div>
+                            ) : null}
+                            {isInlineSchemaEditor(fieldValue, schema?.properties?.[key]) ? (
+                              renderPrimitiveEditor({
+                                value: fieldValue,
+                                ariaLabel: `Field ${fieldLabel}`,
+                                schema: schema?.properties?.[key],
+                                path: [...path, key],
+                                host,
+                                readOnly: pageReadOnly,
+                                onUpdateSchema: canAuthorObjectSchema
+                                  ? (updater) => updateObjectSchema((currentSchema) => updatePropertySchema(currentSchema, key, updater))
+                                  : undefined,
+                                onChange(nextValue) {
+                                  onApplyValue({
+                                    ...value,
+                                    [key]: nextValue,
+                                  });
+                                },
+                              })
+                            ) : isNavigable(fieldValue) ? (
+                              <button
+                                aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
+                                className={["nested-entry-button", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}
+                                type="button"
+                                onClick={() => onNavigate([...path, key])}
+                              >
+                                <span className="nested-entry-icon" aria-hidden="true">
+                                  {getStructureIcon(fieldValue, host)}
+                                </span>
+                                {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
+                              </button>
+                            ) : (
+                              renderPrimitiveEditor({
+                                value: fieldValue,
+                                ariaLabel: `Field ${fieldLabel}`,
+                                schema: schema?.properties?.[key],
+                                path: [...path, key],
+                                host,
+                                readOnly: pageReadOnly,
+                                onUpdateSchema: canAuthorObjectSchema
+                                  ? (updater) => updateObjectSchema((currentSchema) => updatePropertySchema(currentSchema, key, updater))
+                                  : undefined,
+                                onChange(nextValue) {
+                                  onApplyValue({
+                                    ...value,
+                                    [key]: nextValue,
+                                  });
+                                },
+                              })
+                            )}
+                            {getFieldError(validationResult, sourceId, [...path, key]) ? (
+                              <div className="form-hint form-hint--danger">{getFieldError(validationResult, sourceId, [...path, key])?.message}</div>
+                            ) : null}
+                          </section>
+                        )}
                       </div>
                     </div>
-                    {schema?.properties?.[key]?.description ? <div className="form-hint">{schema.properties[key]?.description}</div> : null}
-                    {editMode && isRequiredField(schema, key) ? (
-                      <div className="form-hint">必填字段不能删除。</div>
-                    ) : null}
-                    {isInlineSchemaEditor(fieldValue, schema?.properties?.[key]) ? (
-                      renderPrimitiveEditor({
-                        value: fieldValue,
-                        ariaLabel: `Field ${key}`,
-                        schema: schema?.properties?.[key],
-                        path: [...path, key],
-                        host,
-                        readOnly: pageReadOnly,
-                        onChange(nextValue) {
-                          onApplyValue({
-                            ...value,
-                            [key]: nextValue,
-                          });
-                        },
-                      })
-                    ) : isNavigable(fieldValue) ? (
-                      <button
-                        aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
-                        className={["nested-entry-button", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}
-                        type="button"
-                        onClick={() => onNavigate([...path, key])}
-                      >
-                        <span className="nested-entry-icon" aria-hidden="true">
-                          {getStructureIcon(fieldValue, host)}
-                        </span>
-                        {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
-                      </button>
-                    ) : (
-                      renderPrimitiveEditor({
-                        value: fieldValue,
-                        ariaLabel: `Field ${key}`,
-                        schema: schema?.properties?.[key],
-                        path: [...path, key],
-                        host,
-                        readOnly: pageReadOnly,
-                        onChange(nextValue) {
-                          onApplyValue({
-                            ...value,
-                            [key]: nextValue,
-                          });
-                        },
-                      })
-                    )}
-                    {getFieldError(validationResult, sourceId, [...path, key]) ? (
-                      <div className="form-hint form-hint--danger">{getFieldError(validationResult, sourceId, [...path, key])?.message}</div>
-                    ) : null}
-                  </section>
-                ))}
+                  );
+                })}
+                {dragState && dragState.targetIndex === dragState.restOrder.length ? <div className="detail-drop-indicator" /> : null}
+                {dragState ? (
+                  <div
+                    className="detail-property-ghost"
+                    style={{
+                      top: dragState.ghostTop,
+                      left: dragState.ghostLeft,
+                      width: dragState.ghostWidth,
+                    }}
+                  >
+                    <icons.dragHandle size={16} />
+                    <span className="detail-property-ghost-label">
+                      {schema?.properties?.[dragState.field]?.title ?? dragState.field}
+                    </span>
+                  </div>
+                ) : null}
                 {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
                 {(editMode || usesSchemaPropertyCreation) && !pageReadOnly ? (
                   <div className="add-object-form">
@@ -493,11 +600,10 @@ function ArrayPage({
   );
   const [sortState, setSortState] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false);
-  const [activeColumnMenuKey, setActiveColumnMenuKey] = useState<string | null>(null);
+  const [pressedColumnKey, setPressedColumnKey] = useState<string | null>(null);
   const [dragPreviewKeys, setDragPreviewKeys] = useState<string[] | null>(null);
   const [dragGhost, setDragGhost] = useState<{ key: string; label: string; x: number; y: number } | null>(null);
   const dragPreviewKeysRef = useRef<string[] | null>(null);
-  const suppressColumnMenuOpenRef = useRef(false);
   const dragStateRef = useRef<{
     key: string;
     label: string;
@@ -652,104 +758,6 @@ function ArrayPage({
     );
   }
 
-  function beginColumnDrag(
-    event: {
-      button: number;
-      clientX: number;
-      clientY: number;
-      preventDefault: () => void;
-      stopPropagation: () => void;
-    },
-    key: string,
-    label: string,
-  ) {
-    if (!canAuthorTableSchema || event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setIsColumnManagerOpen(false);
-    setActiveColumnMenuKey(null);
-    dragStateRef.current = {
-      key,
-      label,
-      startX: event.clientX,
-      startY: event.clientY,
-      dragging: false,
-    };
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
-      const state = dragStateRef.current;
-      if (!state) return;
-      if (!state.dragging && !shouldStartColumnDrag(moveEvent.clientX - state.startX, moveEvent.clientY - state.startY)) {
-        return;
-      }
-      if (!state.dragging) {
-        state.dragging = true;
-        document.body.classList.add("is-dragging-column");
-      }
-      const scrollContainer = tableScrollRef.current;
-      const direction = resolveAutoScrollDirection(scrollContainer, moveEvent.clientX);
-      if (direction !== 0) {
-        scrollColumnContainer(scrollContainer, direction);
-      }
-      const slots = collectColumnSlots(scrollContainer, state.key);
-      const pointerXInScrollSpace = getPointerXInScrollSpace(scrollContainer, moveEvent.clientX);
-      const nextPreview = buildPreviewOrderFromSlots(managedColumns.map((column) => column.key), state.key, slots, pointerXInScrollSpace);
-      dragPreviewKeysRef.current = nextPreview;
-      setDragPreviewKeys(nextPreview);
-      setDragGhost({
-        key: state.key,
-        label: state.label,
-        x: moveEvent.clientX + 14,
-        y: moveEvent.clientY + 14,
-      });
-    };
-
-    const finish = () => {
-      const state = dragStateRef.current;
-      if (!state) return;
-      const wasDragging = state.dragging;
-      document.body.classList.remove("is-dragging-column");
-      dragStateRef.current = null;
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerCancel);
-      document.removeEventListener("pointermove", onPointerMove);
-      document.removeEventListener("pointerup", onPointerUp);
-      document.removeEventListener("pointercancel", onPointerCancel);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      if (wasDragging && dragPreviewKeysRef.current) {
-        suppressColumnMenuOpenRef.current = true;
-        window.setTimeout(() => {
-          suppressColumnMenuOpenRef.current = false;
-        }, 0);
-        updateTableSchemaColumns((current) => reorderColumnsByKeys(current, dragPreviewKeysRef.current ?? []));
-      }
-      setDragGhost(null);
-      setDragPreviewKeys(null);
-    };
-
-    const onPointerUp = () => finish();
-    const onPointerCancel = () => finish();
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      onPointerMove(moveEvent as unknown as PointerEvent);
-    };
-    const onMouseUp = () => finish();
-
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerCancel);
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
-    document.addEventListener("pointercancel", onPointerCancel);
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }
-
   return (
     <section className="node-page node-page--array">
       <PageHeader
@@ -820,10 +828,12 @@ function ArrayPage({
                         const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, schema?.items);
                         const isDescriptionColumn = referenceColumn?.key === "description";
                         const isSortable = Boolean(configuredColumn?.sortable);
-                        const sortButtonLabel =
-                          sortState?.key === column && sortState.direction === "asc"
-                            ? `Sort by ${columnLabel} descending`
-                            : `Sort by ${columnLabel}`;
+                        const isWrapped = Boolean(configuredColumn?.wrap);
+                        const typeLabel = column === "#"
+                          ? undefined
+                          : (showReferenceProjectionTable || configuredColumn
+                            ? describeArrayColumnType(value, column, host)
+                            : describeArrayColumnType(value, column, host));
                         return (
                       <th
                         aria-label={columnLabel}
@@ -839,89 +849,93 @@ function ArrayPage({
                         }
                         key={column}
                       >
-                        <div className="array-column-header">
-                              {isSortable ? (
-                                <button
-                                  aria-label={sortButtonLabel}
-                                  className="array-column-sort-button"
-                                  data-sort-direction={sortState?.key === column ? sortState.direction : "none"}
-                                  type="button"
-                                  onClick={() => {
-                                    setSortState((current) => {
-                                      if (current?.key !== column) return { key: column, direction: "asc" };
-                                      if (current.direction === "asc") return { key: column, direction: "desc" };
-                                      return { key: column, direction: "asc" };
-                                    });
-                                  }}
-                                >
-                                  <span>{columnLabel}</span>
-                                </button>
-                              ) : (
-                                <span>{columnLabel}</span>
-                              )}
-                          {canAuthorTableSchema && column !== "#" ? (
-                            <div className="array-column-authoring">
-                              <button
-                                aria-label={`Column settings for ${columnLabel}`}
-                                className="array-column-menu-button"
-                                type="button"
-                                onPointerDown={(event) => beginColumnDrag(event, column, columnLabel)}
-                                onMouseDown={(event) => beginColumnDrag(event, column, columnLabel)}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (suppressColumnMenuOpenRef.current) return;
-                                  setIsColumnManagerOpen(false);
-                                  setActiveColumnMenuKey((current) => (current === column ? null : column));
-                                }}
-                              />
-                              {activeColumnMenuKey === column ? (
-                                <div className="schema-column-menu" onClick={(event) => event.stopPropagation()}>
-                                  <label className="schema-column-menu__field">
-                                    <span>Label</span>
-                                    <input
-                                      aria-label={`Column label for ${columnLabel}`}
-                                      className="detail-input"
-                                      type="text"
-                                      value={configuredColumn?.label ?? columnLabel}
-                                      onChange={(event) => {
-                                        updateSingleColumn(column, (current) => ({
-                                          ...current,
-                                          label: event.target.value.trim().length ? event.target.value : undefined,
-                                        }));
-                                      }}
-                                    />
-                                  </label>
-                                  <div className="schema-column-menu__actions">
-                                    <button
-                                      type="button"
-                                      onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column, "left"))}
-                                    >
-                                      Move left
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column, "right"))}
-                                    >
-                                      Move right
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column));
-                                        setActiveColumnMenuKey(null);
-                                      }}
-                                    >
-                                      Hide
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          ) : null}
-                          {column === "#" ? null : !showReferenceProjectionTable && !configuredColumn ? (
-                            <small className={getTypeToneClassForType(describeArrayColumnType(value, column, host))}>{describeArrayColumnType(value, column, host)}</small>
-                          ) : null}
-                        </div>
+                        {canAuthorTableSchema && column !== "#" ? (
+                          <SchemaColumnHeader
+                            fieldName={column}
+                            isDragging={dragStateRef.current?.key === column && dragStateRef.current.dragging}
+                            label={columnLabel}
+                            onDragEnd={() => {
+                              document.body.classList.remove("is-dragging-column");
+                              const previewKeys = dragPreviewKeysRef.current;
+                              dragStateRef.current = null;
+                              if (previewKeys) {
+                                updateTableSchemaColumns((current) => reorderColumnsByKeys(current, previewKeys));
+                              }
+                              dragPreviewKeysRef.current = null;
+                              setDragPreviewKeys(null);
+                              setDragGhost(null);
+                              setPressedColumnKey(null);
+                            }}
+                            onDragMove={(_fieldName, clientX) => {
+                              const state = dragStateRef.current;
+                              if (!state) return;
+                              const scrollContainer = tableScrollRef.current;
+                              const direction = resolveAutoScrollDirection(scrollContainer, clientX);
+                              if (direction !== 0) {
+                                scrollColumnContainer(scrollContainer, direction);
+                              }
+                              const slots = collectColumnSlots(scrollContainer, state.key);
+                              const pointerXInScrollSpace = getPointerXInScrollSpace(scrollContainer, clientX);
+                              const nextPreview = buildPreviewOrderFromSlots(managedColumns.map((managedColumn) => managedColumn.key), state.key, slots, pointerXInScrollSpace);
+                              dragPreviewKeysRef.current = nextPreview;
+                              setDragPreviewKeys(nextPreview);
+                              setDragGhost({
+                                key: state.key,
+                                label: state.label,
+                                x: clientX + 14,
+                                y: state.startY + 14,
+                              });
+                            }}
+                            onDragStart={(_fieldName, rect, pointerOffsetX) => {
+                              dragStateRef.current = {
+                                key: column,
+                                label: columnLabel,
+                                startX: rect.left + pointerOffsetX,
+                                startY: rect.top,
+                                dragging: true,
+                              };
+                              document.body.classList.add("is-dragging-column");
+                              setIsColumnManagerOpen(false);
+                              setDragGhost({
+                                key: column,
+                                label: columnLabel,
+                                x: rect.left + pointerOffsetX,
+                                y: rect.top,
+                              });
+                            }}
+                            onHide={() => updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column))}
+                            onMove={(direction) => updateTableSchemaColumns((current) => moveTableColumn(current, column, direction))}
+                            onPressChange={(_fieldName, pressed) => setPressedColumnKey(pressed ? column : null)}
+                            onRenameLabel={(label) => {
+                              updateSingleColumn(column, (current) => ({
+                                ...current,
+                                label: label.trim().length ? label : undefined,
+                              }));
+                            }}
+                            onResetWidth={() => updateSingleColumn(column, (current) => {
+                              const next = { ...current };
+                              delete next.width;
+                              return next;
+                            })}
+                            onResize={(width) => updateSingleColumn(column, (current) => ({ ...current, width }))}
+                            onSort={(direction) => {
+                              setSortState(direction ? { key: column, direction } : null);
+                            }}
+                            onToggleSortable={() => updateSingleColumn(column, (current) => ({ ...current, sortable: !current.sortable || undefined }))}
+                            onToggleWrap={() => updateSingleColumn(column, (current) => ({ ...current, wrap: !current.wrap || undefined }))}
+                            pressed={pressedColumnKey === column}
+                            sortable={isSortable}
+                            sortDirection={sortState?.key === column ? sortState.direction : null}
+                            typeLabel={typeLabel}
+                            wrapped={isWrapped}
+                            width={columnWidths[column] ?? 140}
+                          />
+                        ) : (
+                          <div className="array-column-header">
+                            <span>{columnLabel}</span>
+                            {typeLabel ? <small className={getTypeToneClassForType(typeLabel)}>{typeLabel}</small> : null}
+                          </div>
+                        )}
                       </th>
                         );
                       })()
@@ -1003,12 +1017,14 @@ function ArrayPage({
                               return <td key={`${sourceIndex}:${column}`} />;
                             }
                             const imageColumn = isImageDisplaySchema(referenceColumn.columnSchema);
+                            const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
                             return (
                               <td
                                 className={[
                                   columnIndex === 0 ? "array-column--sticky" : "",
                                   imageColumn ? "array-column--image" : "",
                                   referenceColumn.key === "description" ? "array-column--description" : "",
+                                  configuredColumn?.wrap ? "wrapped-cell" : "",
                                 ].filter(Boolean).join(" ") || undefined}
                                 key={`${sourceIndex}:${column}`}
                               >
@@ -1146,6 +1162,7 @@ function ArrayPage({
                               );
                             }
                             const hasColumn = Object.prototype.hasOwnProperty.call(record, column);
+                            const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
                             return (
                             <td
                               className={
@@ -1153,6 +1170,7 @@ function ArrayPage({
                                   columnIndex === 0 ? "array-column--sticky" : "",
                                   showStructuralRowActions && columnIndex === 0 ? "array-column--after-actions" : "",
                                   !hasColumn ? "array-cell--missing" : "",
+                                  configuredColumn?.wrap ? "wrapped-cell" : "",
                                 ].filter(Boolean).join(" ") || undefined
                               }
                               key={`${sourceIndex}:${column}`}
@@ -1289,7 +1307,6 @@ function ArrayPage({
                     className="ghost-button compact-button"
                     type="button"
                     onClick={() => {
-                      setActiveColumnMenuKey(null);
                       setIsColumnManagerOpen((current) => !current);
                     }}
                   >
@@ -1316,30 +1333,19 @@ function ArrayPage({
                 <div className="schema-column-manager">
                   <div className="schema-column-manager__section">
                     <strong>Visible columns</strong>
+                    <div className="form-hint">Rename, reorder, resize, and wrap columns from the table headers.</div>
                     {managedColumns.map((column) => {
                       const label = getConfiguredColumnLabel(column.key, column, referenceViewColumns.find((entry) => entry.key === column.key), schema?.items);
                       return (
                         <div className="schema-column-manager__row" key={column.key}>
-                          <label className="schema-column-manager__label">
-                            <span>{label}</span>
-                            <input
-                              aria-label={`Column label for ${label}`}
-                              className="detail-input"
-                              type="text"
-                              value={label}
-                              onChange={(event) => {
-                                updateSingleColumn(column.key, (current) => ({
-                                  ...current,
-                                  label: event.target.value.trim().length ? event.target.value : undefined,
-                                }));
-                              }}
-                            />
-                          </label>
-                          <div className="schema-column-manager__actions">
-                            <button type="button" onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column.key, "left"))}>Left</button>
-                            <button type="button" onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column.key, "right"))}>Right</button>
-                            <button type="button" onClick={() => updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column.key))}>Hide</button>
-                          </div>
+                          <span>{label}</span>
+                          <button
+                            aria-label={`Hide column ${label}`}
+                            type="button"
+                            onClick={() => updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column.key))}
+                          >
+                            Hide
+                          </button>
                         </div>
                       );
                     })}
@@ -1666,6 +1672,7 @@ function renderPrimitiveEditor(props: {
   path: JsonPath;
   host?: EditorHost;
   readOnly?: boolean;
+  onUpdateSchema?: (updater: (schema: EditorSchema) => EditorSchema) => void;
   onChange: (nextValue: unknown) => void;
 }) {
   const readOnly = props.readOnly || props.schema?.const !== undefined;
@@ -1698,12 +1705,30 @@ function renderPrimitiveEditor(props: {
 
   if (props.schema?.["x-editor"]?.fieldType === "multi-select" && Array.isArray(props.value)) {
     return withNullableControls(
-      <SchemaMultiSelectEditor
+      <SchemaOptionFieldEditor
+        allowAuthoring={Boolean(props.onUpdateSchema && props.schema?.["x-editor"]?.options)}
         ariaLabel={props.ariaLabel}
+        mode="multi"
         options={editorOptionsState.options}
         readOnly={readOnly}
         value={props.value as Array<string | number>}
-        onChange={props.onChange}
+        onEdit={(nextValue) => props.onChange(nextValue)}
+        onCreateOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
+          : undefined}
+        onDeleteOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (optionValue) => props.onUpdateSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
+          : undefined}
+        onMoveOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (optionValue, direction) => props.onUpdateSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
+          : undefined}
+        onRenameOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
+          : undefined}
+        onSetOptionColor={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
+          : undefined}
+        placeholder="Select or create options"
       />,
       nullableBranch,
       readOnly,
@@ -1713,19 +1738,31 @@ function renderPrimitiveEditor(props: {
 
   if (editorOptionsState.options.length > 0 && props.schema?.["x-editor"]?.fieldType === "select") {
     return withNullableControls(
-      <select
-        aria-label={props.ariaLabel}
-        className="detail-input"
-        disabled={readOnly}
-        value={String(props.value ?? "")}
-        onChange={(event) => props.onChange(coerceEditorOptionValue(event.target.value, editorOptionsState.options))}
-      >
-        {editorOptionsState.options.map((option) => (
-          <option key={String(option.value)} value={String(option.value)}>
-            {option.label}
-          </option>
-        ))}
-      </select>,
+      <SchemaOptionFieldEditor
+        allowAuthoring={Boolean(props.onUpdateSchema && props.schema?.["x-editor"]?.options)}
+        ariaLabel={props.ariaLabel}
+        mode="single"
+        options={editorOptionsState.options}
+        readOnly={readOnly}
+        value={props.value == null || props.value === "" ? [] : [props.value as string | number]}
+        onEdit={(nextValue) => props.onChange(nextValue[0] ?? "")}
+        onCreateOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
+          : undefined}
+        onDeleteOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (optionValue) => props.onUpdateSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
+          : undefined}
+        onMoveOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (optionValue, direction) => props.onUpdateSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
+          : undefined}
+        onRenameOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
+          : undefined}
+        onSetOptionColor={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
+          : undefined}
+        placeholder="Select an option"
+      />,
       nullableBranch,
       readOnly,
       () => props.onChange(null),
@@ -1875,52 +1912,6 @@ function renderPrimitiveEditor(props: {
   );
 }
 
-function SchemaMultiSelectEditor(props: {
-  value: Array<string | number>;
-  options: ResolvedEditorOption[];
-  readOnly: boolean;
-  ariaLabel: string;
-  onChange: (nextValue: Array<string | number>) => void;
-}) {
-  const selectedValues = new Set(props.value.map((item) => String(item)));
-  return (
-    <div className="schema-multi-select-editor">
-      <div className="schema-multi-select-chips" aria-label={`${props.ariaLabel} selected values`}>
-        {props.value.map((item) => {
-          const option = props.options.find((candidate) => String(candidate.value) === String(item));
-          return (
-            <span className={`schema-chip ${option?.color ? `schema-chip--${option.color}` : ""}`.trim()} key={String(item)}>
-              {option?.label ?? String(item)}
-            </span>
-          );
-        })}
-      </div>
-      <div className="schema-multi-select-options">
-        {props.options.map((option) => {
-          const checked = selectedValues.has(String(option.value));
-          return (
-            <label className="schema-multi-select-option" key={String(option.value)}>
-              <input
-                checked={checked}
-                disabled={props.readOnly}
-                type="checkbox"
-                onChange={() => {
-                  if (checked) {
-                    props.onChange(props.value.filter((item) => String(item) !== String(option.value)));
-                    return;
-                  }
-                  props.onChange([...props.value, option.value]);
-                }}
-              />
-              <span>{option.label}</span>
-            </label>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function withNullableControls(
   control: ReactNode,
   nullableBranch: EditorSchema | undefined,
@@ -2042,6 +2033,10 @@ function getArrayColumnWidths(
   for (const column of columns) {
     const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
     const configuredColumn = configuredColumns.find((entry) => entry.key === column);
+    if (configuredColumn?.width) {
+      widths[column] = configuredColumn.width;
+      continue;
+    }
     if (referenceColumn) {
       if (isImageDisplaySchema(referenceColumn.columnSchema)) {
         const preview = referenceColumn.columnSchema?.["x-editor"]?.display?.preview;
@@ -2768,11 +2763,6 @@ function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) 
   return false;
 }
 
-function coerceEditorOptionValue(rawValue: string, options: ResolvedEditorOption[]) {
-  const match = options.find((option) => String(option.value) === rawValue);
-  return match?.value ?? rawValue;
-}
-
 function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefined, host?: EditorHost): ReactNode {
   const display = schema?.["x-editor"]?.display;
   if (typeof value === "string" && display?.kind === "image") {
@@ -2920,31 +2910,108 @@ function getOrderedKeys(value: Record<string, unknown>, schema?: EditorSchema) {
   return [...prioritized, ...remaining];
 }
 
-function reorderSchemaProperties(schema: EditorSchema, key: string, direction: "up" | "down"): EditorSchema {
-  if (!schema.properties?.[key]) return schema;
-  const entries = Object.entries(schema.properties);
-  const currentIndex = entries.findIndex(([entryKey]) => entryKey === key);
-  if (currentIndex < 0) return schema;
-  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-  if (targetIndex < 0 || targetIndex >= entries.length) return schema;
-  const nextEntries = [...entries];
-  const [entry] = nextEntries.splice(currentIndex, 1);
-  nextEntries.splice(targetIndex, 0, entry);
+function reorderSchemaPropertiesToMatch(schema: EditorSchema, orderedKeys: string[]) {
+  if (!schema.properties) return schema;
+  const rank = new Map(orderedKeys.map((key, index) => [key, index]));
+  const entries = Object.entries(schema.properties).sort((left, right) => {
+    const leftRank = rank.get(left[0]);
+    const rightRank = rank.get(right[0]);
+    if (leftRank == null && rightRank == null) return 0;
+    if (leftRank == null) return 1;
+    if (rightRank == null) return -1;
+    return leftRank - rightRank;
+  });
   return {
     ...schema,
-    properties: Object.fromEntries(nextEntries),
+    properties: Object.fromEntries(entries),
   };
 }
 
-function moveKey(keys: string[], key: string, direction: "up" | "down") {
-  const currentIndex = keys.indexOf(key);
-  if (currentIndex < 0) return keys;
-  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
-  if (targetIndex < 0 || targetIndex >= keys.length) return keys;
-  const next = [...keys];
-  const [entry] = next.splice(currentIndex, 1);
-  next.splice(targetIndex, 0, entry);
+function insertDraggedField(order: string[], field: string, targetIndex: number) {
+  const restOrder = order.filter((entry) => entry !== field);
+  const next = [...restOrder];
+  const clampedIndex = Math.max(0, Math.min(targetIndex, next.length));
+  next.splice(clampedIndex, 0, field);
   return next;
+}
+
+function updatePropertySchema(schema: EditorSchema, key: string, updater: (propertySchema: EditorSchema) => EditorSchema) {
+  if (!schema.properties?.[key]) return schema;
+  return {
+    ...schema,
+    properties: {
+      ...schema.properties,
+      [key]: updater(schema.properties[key]),
+    },
+  };
+}
+
+function appendEditorOption(schema: EditorSchema, nextValue: string) {
+  const currentOptions = schema["x-editor"]?.options ?? [];
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      options: [...currentOptions, { value: nextValue, label: nextValue }],
+    },
+  };
+}
+
+function renameEditorOption(schema: EditorSchema, previousValue: string | number, nextValue: string) {
+  const currentOptions = schema["x-editor"]?.options ?? [];
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      options: currentOptions.map((option) => String(option.value) === String(previousValue)
+        ? { ...option, value: castLikeOptionValue(option.value, nextValue), label: nextValue }
+        : option),
+    },
+  };
+}
+
+function deleteEditorOption(schema: EditorSchema, optionValue: string | number) {
+  const currentOptions = schema["x-editor"]?.options ?? [];
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      options: currentOptions.filter((option) => String(option.value) !== String(optionValue)),
+    },
+  };
+}
+
+function moveEditorOption(schema: EditorSchema, optionValue: string | number, direction: "up" | "down") {
+  const currentOptions = [...(schema["x-editor"]?.options ?? [])];
+  const currentIndex = currentOptions.findIndex((option) => String(option.value) === String(optionValue));
+  if (currentIndex < 0) return schema;
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= currentOptions.length) return schema;
+  const [moved] = currentOptions.splice(currentIndex, 1);
+  currentOptions.splice(targetIndex, 0, moved);
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      options: currentOptions,
+    },
+  };
+}
+
+function recolorEditorOption(schema: EditorSchema, optionValue: string | number, color: EditorViewOptionColor | null) {
+  const currentOptions = schema["x-editor"]?.options ?? [];
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      options: currentOptions.map((option) => String(option.value) === String(optionValue) ? { ...option, color: color ?? undefined } : option),
+    },
+  };
+}
+
+function castLikeOptionValue(previousValue: string | number, nextValue: string) {
+  if (typeof previousValue === "number" && /^-?\d+(\.\d+)?$/.test(nextValue)) return Number(nextValue);
+  return nextValue;
 }
 
 

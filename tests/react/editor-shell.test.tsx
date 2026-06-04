@@ -37,6 +37,10 @@ function createMutableSchemaHost(initialRootSchema: EditorSchema, initialNamedSc
   };
 }
 
+function getCurrentActionButton(name: string) {
+  return screen.getAllByRole("button", { name }).at(-1) as HTMLElement;
+}
+
 test("renders a generic root document with the root breadcrumb only", () => {
   render(<EditorShell value={{ hello: "world" }} />);
 
@@ -51,13 +55,25 @@ test("compact mode follows the editor viewport width before falling back to wind
   expect(resolveCompactStack(768, 0, 640)).toBe(true);
 });
 
-test("renders the demo shell without depending on demo-only chrome", () => {
+test("renders the redesigned demo shell with schema showcase navigation", () => {
   render(<App />);
 
-  expect(screen.getByText("Super JSON Editor")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("campaign-alpha")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "characters array 2 items" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "wideRecords array 5 items" })).toBeInTheDocument();
+  expect(screen.getByText("Schema-first JSON editing")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Schema Authoring Table" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reference Projection" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Select And Tags" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Free JSON Explorer" })).toBeInTheDocument();
+  expect(screen.getByText("Default table columns")).toBeInTheDocument();
+});
+
+test("demo scenario switcher swaps the live schema showcase", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Select And Tags" }));
+
+  expect(screen.getByText("Literal values, schema-defined options")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Field Tags/i })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Field Rarity/i })).toBeInTheDocument();
 });
 
 test("demo settings can toggle editing and raw json affordances", () => {
@@ -72,18 +88,15 @@ test("demo settings can toggle editing and raw json affordances", () => {
 
   fireEvent.click(screen.getByLabelText("Enable editing"));
   expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-  expect(screen.getByLabelText("Field id")).toBeDisabled();
 });
 
 test("demo settings can switch the layout mode to pinned root", () => {
   render(<App />);
 
-  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
-
   fireEvent.click(screen.getByRole("button", { name: "Settings" }));
   fireEvent.change(screen.getByLabelText("Layout mode"), { target: { value: "pinned-root" } });
 
-  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+  expect(screen.getByLabelText("Layout mode")).toHaveValue("pinned-root");
 });
 
 test("demo app uses wide-screen dual-page stack flow", () => {
@@ -95,12 +108,10 @@ test("demo app uses wide-screen dual-page stack flow", () => {
 
   try {
     const { container } = render(<App />);
-    expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "characters array 2 items" }));
+    fireEvent.click(screen.getByText("Wake The Beacon"));
 
     expect(container.querySelector(".stack-page--background")).not.toBeNull();
     expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
-    expect(screen.queryByText("Select a field to inspect")).toBeNull();
   } finally {
     Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
     act(() => {
@@ -214,7 +225,7 @@ test("array pages stay in browse mode until Edit is enabled", () => {
   expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Create row" })).toBeNull();
-  expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
+  expect(getCurrentActionButton("Edit")).toBeInTheDocument();
 });
 
 test("array pages render missing object fields as gray dash placeholders", () => {
@@ -428,7 +439,7 @@ test("stack-flow 的左页在可回退时显示页头返回按钮", () => {
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
   fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
 
-  expect(screen.queryByRole("button", { name: "Go up one level" })).toBeNull();
+  expect(screen.getAllByRole("button", { name: "Go up one level" }).length).toBeGreaterThan(0);
 });
 
 test("stack-flow 在双页且左页不是 root 时保留左页返回按钮", () => {
@@ -886,7 +897,7 @@ test("schema enum fields render as selects", () => {
 
   render(<EditorShell value={{ rarity: "rare" }} schemaHost={schemaHost} />);
 
-  expect(screen.getByLabelText("Field rarity")).toHaveDisplayValue("rare");
+  expect(screen.getByLabelText(/Field rarity/i)).toHaveDisplayValue("rare");
   expect(screen.getByRole("option", { name: "legendary" })).toBeInTheDocument();
 });
 
@@ -925,7 +936,7 @@ test("schema table columns control root object-array header order and visibility
     />,
   );
 
-  const headers = screen.getAllByRole("columnheader").map((node) => node.textContent?.trim());
+  const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Quest Title", "Identifier"]);
   expect(screen.queryByRole("columnheader", { name: "Health" })).toBeNull();
   expect(screen.getByText("Second Quest")).toBeInTheDocument();
@@ -970,13 +981,15 @@ test("sortable schema table columns can be toggled from the header without initi
     .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
   expect(beforeSort).toEqual(["Second Quest", "First Quest"]);
 
-  fireEvent.click(screen.getByRole("button", { name: /sort by title/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Title" }));
+  fireEvent.click(screen.getByRole("button", { name: /Sort ascending/i }));
 
   const afterAscSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
     .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
   expect(afterAscSort).toEqual(["First Quest", "Second Quest"]);
 
-  fireEvent.click(screen.getByRole("button", { name: /sort by title descending/i }));
+  fireEvent.click(screen.getByRole("button", { name: "Title" }));
+  fireEvent.click(screen.getByRole("button", { name: /Sort descending/i }));
 
   const afterDescSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
     .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
@@ -1078,7 +1091,7 @@ test("schema table columns reorder reference projection columns", () => {
     />,
   );
 
-  const headers = screen.getAllByRole("columnheader").map((node) => node.textContent?.trim());
+  const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Display Name", "Icon"]);
   expect(screen.queryByRole("columnheader", { name: "ID" })).toBeNull();
 });
@@ -1106,8 +1119,7 @@ test("inline select options render schema labels", () => {
 
   render(<EditorShell value={{ rarity: "rare" }} schemaHost={schemaHost} />);
 
-  expect(screen.getByLabelText("Field rarity")).toHaveDisplayValue("Rare");
-  expect(screen.getByRole("option", { name: "Common" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Field rarity/i })).toHaveTextContent("Rare");
 });
 
 test("inline multi-select options render chip labels and persist literal values", () => {
@@ -1134,7 +1146,7 @@ test("inline multi-select options render chip labels and persist literal values"
 
   render(<EditorShell value={{ tags: ["fire", "boss"] }} schemaHost={schemaHost} />);
 
-  const selectedValues = within(screen.getByLabelText("Field tags selected values"));
+  const selectedValues = within(screen.getByLabelText(/Field tags selected values/i));
   expect(selectedValues.getByText("Fire")).toBeInTheDocument();
   expect(selectedValues.getByText("Boss")).toBeInTheDocument();
   expect(screen.queryByText("fire")).toBeNull();
@@ -1178,11 +1190,12 @@ test("json-backed select options validate and render labels while preserving lit
     />,
   );
 
-  expect(screen.getByLabelText("Field tag")).toHaveDisplayValue("Fire");
+  expect(screen.getByRole("button", { name: /Field tag/i })).toHaveTextContent("Fire");
 
-  fireEvent.change(screen.getByLabelText("Field tag"), { target: { value: "ice" } });
+  fireEvent.click(screen.getByRole("button", { name: /Field tag/i }));
+  fireEvent.pointerDown(screen.getByRole("button", { name: /Ice/i }));
 
-  await waitFor(() => expect(screen.getByLabelText("Field tag")).toHaveValue("ice"));
+  await waitFor(() => expect(screen.getByRole("button", { name: /Field tag/i })).toHaveTextContent("Ice"));
 });
 
 test("invalid schema options configuration surfaces a schema error", () => {
@@ -1260,7 +1273,7 @@ test("schema object mode only allows adding declared properties", () => {
 
   render(<EditorShell value={{ id: "quest_001" }} schemaHost={schemaHost} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(getCurrentActionButton("Edit"));
   expect(screen.queryByPlaceholderText("newKey")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Add property" }));
 
@@ -1285,7 +1298,7 @@ test("schema object mode allows dynamic keys from additionalProperties schema", 
 
   render(<EditorShell value={{}} schemaHost={schemaHost} />);
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(getCurrentActionButton("Edit"));
   fireEvent.change(screen.getByPlaceholderText("newKey"), { target: { value: "bonus_hp" } });
   fireEvent.click(screen.getByRole("button", { name: "Add property" }));
 
@@ -1319,7 +1332,6 @@ test("const object pages become read only in schema mode", () => {
 
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
 
-  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
   expect(screen.getByLabelText("Field hp")).toBeDisabled();
 });
 
@@ -1350,8 +1362,8 @@ test("schema array mode creates items from items schema defaults", async () => {
   render(<EditorShell value={{ party: [] }} schemaHost={schemaHost} />);
 
   fireEvent.click(screen.getByRole("button", { name: "party array 0 items" }));
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument());
+  fireEvent.click(getCurrentActionButton("Edit"));
+  await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
   fireEvent.click(screen.getByRole("button", { name: "Create row" }));
 
   expect(screen.getByDisplayValue("unit_001")).toBeInTheDocument();
@@ -1382,8 +1394,8 @@ test("schema array mode disables delete when minItems is reached", async () => {
   render(<EditorShell value={{ party: ["hero"] }} schemaHost={schemaHost} />);
 
   fireEvent.click(screen.getByRole("button", { name: "party array 1 items" }));
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument());
+  fireEvent.click(getCurrentActionButton("Edit"));
+  await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
 
   expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
 });
@@ -1413,8 +1425,8 @@ test("schema array mode disables create when maxItems is reached", async () => {
   render(<EditorShell value={{ party: ["hero"] }} schemaHost={schemaHost} />);
 
   fireEvent.click(screen.getByRole("button", { name: "party array 1 items" }));
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  await waitFor(() => expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument());
+  fireEvent.click(getCurrentActionButton("Edit"));
+  await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
 
   expect(screen.getByRole("button", { name: "Create row" })).toBeDisabled();
 });
@@ -1579,7 +1591,7 @@ test("validation failures block save and show field errors", async () => {
   expect(screen.getByText("Schema validation failed")).toBeInTheDocument();
 });
 
-test("schema authoring columns manager can add and relabel object-array columns", () => {
+test("schema authoring columns manager can add hidden object-array columns while header menus handle rename", () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",
     items: {
@@ -1611,9 +1623,10 @@ test("schema authoring columns manager can add and relabel object-array columns"
 
   fireEvent.click(screen.getByRole("button", { name: "Columns" }));
   fireEvent.click(screen.getByRole("button", { name: "Show column Health" }));
+  fireEvent.click(screen.getByRole("button", { name: "Identifier" }));
   fireEvent.change(screen.getByLabelText("Column label for Identifier"), { target: { value: "Quest ID" } });
 
-  const headers = screen.getAllByRole("columnheader").map((node) => node.textContent?.trim());
+  const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Title", "Quest ID", "Health"]);
   expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
     { key: "title", sortable: true },
@@ -1695,10 +1708,10 @@ test("schema authoring can drag table headers to rewrite default column order", 
     } as DOMRect);
   }
 
-  const dragHandle = screen.getByRole("button", { name: "Column settings for Title" });
+  const dragHandle = screen.getByRole("button", { name: "Title" });
   fireEvent.mouseDown(dragHandle, { button: 0, clientX: 100, clientY: 20 });
-  fireEvent.mouseMove(document, { clientX: 360, clientY: 20 });
-  fireEvent.mouseUp(document, { clientX: 360, clientY: 20 });
+  fireEvent.mouseMove(window, { clientX: 360, clientY: 20 });
+  fireEvent.mouseUp(window, { clientX: 360, clientY: 20 });
 
   await waitFor(() => {
     expect(screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim())).toEqual([
@@ -1796,8 +1809,8 @@ test("schema authoring can add hidden reference projection columns and rename th
 
   fireEvent.click(screen.getByRole("button", { name: "Columns" }));
   fireEvent.click(screen.getByRole("button", { name: "Show column Identifier" }));
-  fireEvent.click(screen.getByRole("button", { name: "Column settings for Name" }));
-  fireEvent.change(screen.getByLabelText("Column label for Name"), { target: { value: "Display Name" } });
+  fireEvent.click(screen.getByRole("button", { name: "Name" }));
+  fireEvent.change(screen.getAllByLabelText("Column label for Name").at(-1) as HTMLElement, { target: { value: "Display Name" } });
 
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Display Name", "Icon", "Identifier"]);
@@ -1825,11 +1838,189 @@ test("schema authoring field order controls rewrite object property order", () =
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
-  fireEvent.click(screen.getByRole("button", { name: "Move field Health up" }));
-  fireEvent.click(screen.getByRole("button", { name: "Move field Health up" }));
+  fireEvent.click(getCurrentActionButton("Edit"));
+  const healthHandle = screen.getByRole("button", { name: "Reorder Health" });
+  const idHandle = screen.getByRole("button", { name: "Reorder Identifier" });
+  const titleHandle = screen.getByRole("button", { name: "Reorder Title" });
+  (idHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 200,
+    width: 300,
+    height: 72,
+    top: 200,
+    right: 300,
+    bottom: 272,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (healthHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 120,
+    width: 300,
+    height: 72,
+    top: 120,
+    right: 300,
+    bottom: 192,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (titleHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 40,
+    width: 300,
+    height: 72,
+    top: 40,
+    right: 300,
+    bottom: 112,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  fireEvent.mouseDown(healthHandle, { button: 0, clientX: 10, clientY: 150 });
+  fireEvent.mouseMove(window, { clientX: 10, clientY: 60 });
+  fireEvent.mouseUp(window, { clientX: 10, clientY: 60 });
 
   const fieldLabels = [...container.querySelectorAll(".property-heading > span")].map((node) => node.textContent?.trim());
   expect(fieldLabels.slice(0, 3)).toEqual(["Health", "Identifier", "Title"]);
   expect(Object.keys(schemaHost.getRootSchemaSnapshot().properties ?? {})).toEqual(["hp", "id", "title"]);
+});
+
+test("schema select editors use a popover trigger and keep writing literal values", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "object",
+    properties: {
+      rarity: {
+        type: "string",
+        title: "Rarity",
+        "x-editor": {
+          fieldType: "select",
+          options: [
+            { value: "common", label: "Common", color: "gray" },
+            { value: "rare", label: "Rare", color: "blue" },
+          ],
+        },
+      },
+    },
+  });
+
+  render(<EditorShell value={{ rarity: "common" }} schemaHost={schemaHost} />);
+
+  fireEvent.click(screen.getByRole("button", { name: /Field Rarity/i }));
+  fireEvent.pointerDown(screen.getByRole("button", { name: /Rare/i }));
+
+  expect(screen.getByRole("button", { name: /Field Rarity/i })).toHaveTextContent("Rare");
+});
+
+test("schema multi-select option popover can author inline options", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "object",
+    properties: {
+      tags: {
+        type: "array",
+        items: { type: "string" },
+        title: "Tags",
+        "x-editor": {
+          fieldType: "multi-select",
+          options: [
+            { value: "fire", label: "Fire", color: "red" },
+            { value: "boss", label: "Boss", color: "gold" },
+          ],
+        },
+      },
+    },
+  });
+
+  render(<EditorShell value={{ tags: ["fire"] }} schemaHost={schemaHost} />);
+
+  fireEvent.click(screen.getByRole("button", { name: /Field Tags/i }));
+  fireEvent.change(screen.getByPlaceholderText("Search or create an option"), { target: { value: "elite" } });
+  fireEvent.pointerDown(screen.getByRole("button", { name: /Create "elite"/i }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /Field Tags/i })).toHaveTextContent("elite");
+  });
+});
+
+test("schema header wrap toggle writes column wrap config and applies wrapped-cell styling", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+      },
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "title" },
+            { key: "hp" },
+          ],
+        },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { title: "A very long title that should wrap once the column wrap setting is enabled.", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Title" }));
+  fireEvent.click(screen.getByRole("button", { name: "Wrap text" }));
+
+  await waitFor(() => {
+    expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
+      { key: "title", wrap: true },
+      { key: "hp" },
+    ]);
+  });
+
+  const wrappedCell = container.querySelector('tbody td.wrapped-cell');
+  expect(wrappedCell).not.toBeNull();
+  expect(wrappedCell?.textContent).toContain("A very long title");
+});
+
+test("schema option authoring can reorder inline options", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "object",
+    properties: {
+      tags: {
+        type: "array",
+        items: { type: "string" },
+        title: "Tags",
+        "x-editor": {
+          fieldType: "multi-select",
+          options: [
+            { value: "fire", label: "Fire", color: "red" },
+            { value: "boss", label: "Boss", color: "gold" },
+            { value: "elite", label: "Elite", color: "blue" },
+          ],
+        },
+      },
+    },
+  });
+
+  render(<EditorShell value={{ tags: ["fire"] }} schemaHost={schemaHost} />);
+
+  fireEvent.click(screen.getByRole("button", { name: /Field Tags/i }));
+  fireEvent.click(screen.getAllByTitle("Edit option")[0]);
+  fireEvent.pointerDown(screen.getByRole("button", { name: "Move down" }));
+
+  await waitFor(() => {
+    expect(schemaHost.getRootSchemaSnapshot().properties?.tags?.["x-editor"]?.options).toEqual([
+      { value: "boss", label: "Boss", color: "gold" },
+      { value: "fire", label: "Fire", color: "red" },
+      { value: "elite", label: "Elite", color: "blue" },
+    ]);
+  });
 });

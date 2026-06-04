@@ -1,0 +1,33 @@
+import {
+  IconCheck,
+  IconChevronLeft,
+  IconChevronRight,
+  IconDots,
+  IconEyeOff,
+  IconFilterFilled,
+  IconGripVertical,
+  IconInfoCircleFilled,
+  IconPlus,
+  IconRotateClockwise2,
+  IconSortAscending,
+  IconSortDescending,
+  IconTextWrap,
+  IconTrashFilled,
+} from "@tabler/icons-react";
+
+export const icons = {
+  sortAscending: IconSortAscending,
+  sortDescending: IconSortDescending,
+  filter: IconFilterFilled,
+  wrapText: IconTextWrap,
+  hidden: IconEyeOff,
+  previous: IconChevronLeft,
+  next: IconChevronRight,
+  reset: IconRotateClockwise2,
+  dragHandle: IconGripVertical,
+  more: IconDots,
+  info: IconInfoCircleFilled,
+  delete: IconTrashFilled,
+  addField: IconPlus,
+  check: IconCheck,
+} as const;
