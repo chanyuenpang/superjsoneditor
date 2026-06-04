@@ -99,6 +99,16 @@ const selectAndTagsHost: EditorHost = {
 const schemaAuthoringSchemaHost = createMutableSchemaHost({
   "schema-authoring": {
     type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title", label: "Quest", sortable: true },
+          { key: "id", label: "Quest ID" },
+          { key: "status", sortable: true },
+          { key: "description", wrap: true },
+        ],
+      },
+    },
     items: {
       type: "object",
       properties: {
@@ -118,16 +128,6 @@ const schemaAuthoringSchemaHost = createMutableSchemaHost({
         },
         owner: { type: "string", title: "Owner" },
         description: { type: "string", title: "Description" },
-      },
-      "x-editor": {
-        table: {
-          columns: [
-            { key: "title", label: "Quest", sortable: true },
-            { key: "id", label: "Quest ID" },
-            { key: "status", sortable: true },
-            { key: "description", wrap: true },
-          ],
-        },
       },
     },
   },
@@ -184,20 +184,20 @@ const rewardItemRowSchema: EditorSchema = {
       },
     },
   },
-  "x-editor": {
-    table: {
-      columns: [
-        { key: "name", label: "Name" },
-        { key: "icon" },
-      ],
-    },
-  },
 };
 
 const referenceProjectionSchemaHost = createMutableSchemaHost(
   {
     "reference-projection": {
       type: "array",
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "name", label: "Name" },
+            { key: "icon" },
+          ],
+        },
+      },
       items: {
         type: "string",
         "x-editor": {

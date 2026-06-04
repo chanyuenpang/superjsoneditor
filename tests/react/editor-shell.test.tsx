@@ -1043,19 +1043,19 @@ test("schema table columns reorder reference projection columns", () => {
         },
       },
     },
-    "x-editor": {
-      table: {
-        columns: [
-          { key: "name", label: "Display Name", sortable: true },
-          { key: "icon" },
-        ],
-      },
-    },
   };
   const schemaHost: EditorSchemaHost = {
     getSchema() {
       return {
         type: "array",
+        "x-editor": {
+          table: {
+            columns: [
+              { key: "name", label: "Display Name", sortable: true },
+              { key: "icon" },
+            ],
+          },
+        },
         items: {
           type: "string",
           "x-editor": {
@@ -1094,6 +1094,93 @@ test("schema table columns reorder reference projection columns", () => {
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Display Name", "Icon"]);
   expect(screen.queryByRole("columnheader", { name: "ID" })).toBeNull();
+});
+
+test("reference projection column headers derive type labels from projection schema instead of raw reference values", () => {
+  const itemSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      icon: {
+        type: "string",
+        title: "Icon",
+      },
+      name: {
+        type: "string",
+        title: "Name",
+      },
+    },
+  };
+  const itemRowSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      name: {
+        type: "string",
+        title: "Display Name",
+        "x-editor": {
+          projection: { path: ["name"] },
+        },
+      },
+      icon: {
+        type: "string",
+        title: "Icon",
+        "x-editor": {
+          projection: { path: ["icon"] },
+          display: {
+            kind: "image",
+          },
+        },
+      },
+    },
+  };
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        "x-editor": {
+          table: {
+            columns: [
+              { key: "name" },
+              { key: "icon" },
+            ],
+          },
+        },
+        items: {
+          type: "string",
+          "x-editor": {
+            reference: {
+              target: { schemaRef: "reward_item" },
+              view: {
+                layout: "inline",
+                schemaRef: "reward_item_row",
+              },
+            },
+          },
+        },
+      };
+    },
+    getNamedSchema(name) {
+      if (name === "reward_item") return itemSchema;
+      if (name === "reward_item_row") return itemRowSchema;
+      return undefined;
+    },
+  };
+
+  const { container } = render(
+    <EditorShell
+      value={["asset://items/reward.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://items/reward.json"
+            ? { icon: "res://icons/reward.png", name: "Reward" }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(container.querySelector(".column-trigger small")?.textContent).toBe("string");
+  expect(screen.queryByText("undefined")).toBeNull();
 });
 
 test("inline select options render schema labels", () => {
@@ -1594,20 +1681,20 @@ test("validation failures block save and show field errors", async () => {
 test("schema authoring columns manager can add hidden object-array columns while header menus handle rename", () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title", sortable: true },
+          { key: "id" },
+        ],
+      },
+    },
     items: {
       type: "object",
       properties: {
         id: { type: "string", title: "Identifier" },
         title: { type: "string", title: "Title" },
         hp: { type: "integer", title: "Health" },
-      },
-      "x-editor": {
-        table: {
-          columns: [
-            { key: "title", sortable: true },
-            { key: "id" },
-          ],
-        },
       },
     },
   });
@@ -1628,7 +1715,7 @@ test("schema authoring columns manager can add hidden object-array columns while
 
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Title", "Quest ID", "Health"]);
-  expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
     { key: "title", sortable: true },
     { key: "id", label: "Quest ID" },
     { key: "hp" },
@@ -1638,21 +1725,21 @@ test("schema authoring columns manager can add hidden object-array columns while
 test("schema authoring can drag table headers to rewrite default column order", async () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+          { key: "hp" },
+        ],
+      },
+    },
     items: {
       type: "object",
       properties: {
         id: { type: "string", title: "Identifier" },
         title: { type: "string", title: "Title" },
         hp: { type: "integer", title: "Health" },
-      },
-      "x-editor": {
-        table: {
-          columns: [
-            { key: "title" },
-            { key: "id" },
-            { key: "hp" },
-          ],
-        },
       },
     },
   });
@@ -1721,7 +1808,7 @@ test("schema authoring can drag table headers to rewrite default column order", 
       "Title",
     ]);
   });
-  expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
     { key: "id" },
     { key: "hp" },
     { key: "title" },
@@ -1732,6 +1819,14 @@ test("schema authoring can add hidden reference projection columns and rename th
   const schemaHost = createMutableSchemaHost(
     {
       type: "array",
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "name" },
+            { key: "icon" },
+          ],
+        },
+      },
       items: {
         type: "string",
         "x-editor": {
@@ -1750,9 +1845,9 @@ test("schema authoring can add hidden reference projection columns and rename th
       reward_item: {
         type: "object",
         properties: {
-          id: { type: "string" },
-          name: { type: "string" },
-          icon: { type: "string" },
+          id: { type: "string", title: "Identifier" },
+          name: { type: "string", title: "Name" },
+          icon: { type: "string", title: "Icon" },
         },
       },
       reward_item_row: {
@@ -1781,14 +1876,6 @@ test("schema authoring can add hidden reference projection columns and rename th
             },
           },
         },
-        "x-editor": {
-          table: {
-            columns: [
-              { key: "name" },
-              { key: "icon" },
-            ],
-          },
-        },
       },
     },
   );
@@ -1814,11 +1901,12 @@ test("schema authoring can add hidden reference projection columns and rename th
 
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
   expect(headers).toEqual(["#", "Display Name", "Icon", "Identifier"]);
-  expect(schemaHost.getNamedSchemaSnapshot("reward_item_row")?.["x-editor"]?.table?.columns).toEqual([
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
     { key: "name", label: "Display Name" },
     { key: "icon" },
     { key: "id" },
   ]);
+  expect(schemaHost.getNamedSchemaSnapshot("reward_item")?.["x-editor"]?.table?.columns).toBeUndefined();
 });
 
 test("schema authoring field order controls rewrite object property order", () => {
@@ -1949,19 +2037,19 @@ test("schema multi-select option popover can author inline options", async () =>
 test("schema header wrap toggle writes column wrap config and applies wrapped-cell styling", async () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "hp" },
+        ],
+      },
+    },
     items: {
       type: "object",
       properties: {
         title: { type: "string", title: "Title" },
         hp: { type: "integer", title: "Health" },
-      },
-      "x-editor": {
-        table: {
-          columns: [
-            { key: "title" },
-            { key: "hp" },
-          ],
-        },
       },
     },
   });
@@ -1979,7 +2067,7 @@ test("schema header wrap toggle writes column wrap config and applies wrapped-ce
   fireEvent.click(screen.getByRole("button", { name: "Wrap text" }));
 
   await waitFor(() => {
-    expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
+    expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
       { key: "title", wrap: true },
       { key: "hp" },
     ]);

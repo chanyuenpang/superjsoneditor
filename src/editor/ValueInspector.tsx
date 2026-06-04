@@ -541,7 +541,6 @@ function ArrayPage({
   schema,
   resolveNamedSchema,
   onUpdateDocumentSchema,
-  onUpdateNamedSchema,
   validationResult,
   isReference = false,
   referenceScopeDepth,
@@ -586,17 +585,18 @@ function ArrayPage({
     () => resolveReferenceViewSchema(schema?.items, resolveNamedSchema),
     [resolveNamedSchema, schema?.items],
   );
-  const referenceViewSchemaRef = schema?.items?.["x-editor"]?.reference?.view?.schemaRef;
+  const referenceItemSchema = schema?.items;
+  const referenceSchema = referenceItemSchema?.["x-editor"]?.reference;
   const referenceViewColumns = useMemo(
     () => getReferenceViewColumns(value, referenceViewSchema, host),
     [host, referenceViewSchema, value],
   );
   const showReferenceProjectionTable = referenceViewColumns.length > 0;
-  const referenceItemSchema = schema?.items;
-  const referenceSchema = referenceItemSchema?.["x-editor"]?.reference;
+  const columnSourceSchema = showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema;
+  const tableSchema = getArrayTableSchema(schema, referenceItemSchema);
   const configuredTableColumns = useMemo(
-    () => getConfiguredTableColumns(showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema),
-    [referenceItemSchema, referenceViewSchema, showReferenceProjectionTable],
+    () => getConfiguredTableColumns(tableSchema),
+    [tableSchema],
   );
   const [sortState, setSortState] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false);
@@ -613,14 +613,11 @@ function ArrayPage({
   } | null>(null);
   const showStructuralRowActions = editMode && !pageReadOnly;
   const availableSchemaColumns = useMemo(
-    () => getAvailableSchemaColumns(showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema),
-    [referenceItemSchema, referenceViewSchema, showReferenceProjectionTable],
+    () => getAvailableSchemaColumns(columnSourceSchema),
+    [columnSourceSchema],
   );
   const canAuthorTableSchema = Boolean(
-    !pageReadOnly && (
-      (showReferenceProjectionTable && referenceViewSchemaRef && onUpdateNamedSchema) ||
-      (!showReferenceProjectionTable && referenceItemSchema && onUpdateDocumentSchema && sourceId)
-    ),
+    !pageReadOnly && sourceId && onUpdateDocumentSchema,
   );
   const columns = useMemo(
     () => getArrayColumns(value, host, schema?.items, referenceViewColumns, configuredTableColumns),
@@ -640,8 +637,8 @@ function ArrayPage({
     [value, sortState, referenceViewColumns, configuredTableColumns, host],
   );
   const columnWidths = useMemo(
-    () => getArrayColumnWidths(value, orderedColumns, host, schema?.items, referenceViewColumns, configuredTableColumns),
-    [value, orderedColumns, host, schema?.items, referenceViewColumns, configuredTableColumns],
+    () => getArrayColumnWidths(value, orderedColumns, host, columnSourceSchema, referenceViewColumns, configuredTableColumns),
+    [value, orderedColumns, host, columnSourceSchema, referenceViewColumns, configuredTableColumns],
   );
   const tableMinWidth = useMemo(
     () => orderedColumns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
@@ -735,18 +732,9 @@ function ArrayPage({
 
   function updateTableSchemaColumns(updater: (columns: EditorTableColumn[]) => EditorTableColumn[]) {
     if (!canAuthorTableSchema) return;
-    const applyUpdate = (targetSchema: EditorSchema) => setSchemaTableColumns(targetSchema, updater(getManagedTableColumns(
-      getConfiguredTableColumns(targetSchema),
-      columns,
-      getAvailableSchemaColumns(targetSchema),
-    )));
-    if (showReferenceProjectionTable && referenceViewSchemaRef) {
-      void onUpdateNamedSchema?.(referenceViewSchemaRef, applyUpdate);
-      return;
-    }
-    if (sourceId) {
-      void onUpdateDocumentSchema?.(sourceId, path, "items", applyUpdate);
-    }
+    const currentColumns = getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns);
+    const applyUpdate = (targetSchema: EditorSchema) => setSchemaTableColumns(targetSchema, updater(currentColumns));
+    void onUpdateDocumentSchema?.(sourceId as string, path, "self", applyUpdate);
   }
 
   function updateSingleColumn(
@@ -825,15 +813,15 @@ function ArrayPage({
                       (() => {
                         const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
                         const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
-                        const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, schema?.items);
+                        const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, columnSourceSchema);
                         const isDescriptionColumn = referenceColumn?.key === "description";
                         const isSortable = Boolean(configuredColumn?.sortable);
                         const isWrapped = Boolean(configuredColumn?.wrap);
                         const typeLabel = column === "#"
                           ? undefined
-                          : (showReferenceProjectionTable || configuredColumn
-                            ? describeArrayColumnType(value, column, host)
-                            : describeArrayColumnType(value, column, host));
+                          : referenceColumn
+                            ? describeSchemaType(referenceColumn.columnSchema) ?? describeArrayColumnType(value, column, host)
+                            : describeArrayColumnType(value, column, host);
                         return (
                       <th
                         aria-label={columnLabel}
@@ -1335,7 +1323,7 @@ function ArrayPage({
                     <strong>Visible columns</strong>
                     <div className="form-hint">Rename, reorder, resize, and wrap columns from the table headers.</div>
                     {managedColumns.map((column) => {
-                      const label = getConfiguredColumnLabel(column.key, column, referenceViewColumns.find((entry) => entry.key === column.key), schema?.items);
+                      const label = getConfiguredColumnLabel(column.key, column, referenceViewColumns.find((entry) => entry.key === column.key), columnSourceSchema);
                       return (
                         <div className="schema-column-manager__row" key={column.key}>
                           <span>{label}</span>
@@ -2098,8 +2086,29 @@ function describeArrayColumnType(items: unknown[], column: string, host?: Editor
   return describeType(sample?.[column], host);
 }
 
+function describeSchemaType(schema: EditorSchema | undefined) {
+  if (!schema) return undefined;
+  if (Array.isArray(schema.type)) {
+    return schema.type.filter((type) => type !== "null")[0] ?? schema.type[0];
+  }
+  if (schema.type) return schema.type;
+  if (schema.properties || schema.additionalProperties || schema.patternProperties) return "object";
+  if (schema.items) return "array";
+  return undefined;
+}
+
 function getConfiguredTableColumns(schema: EditorSchema | undefined) {
   return schema?.["x-editor"]?.table?.columns ?? [];
+}
+
+function getArrayTableSchema(arraySchema: EditorSchema | undefined, itemSchema: EditorSchema | undefined) {
+  if (arraySchema?.["x-editor"]?.table) {
+    return arraySchema;
+  }
+  if (itemSchema?.["x-editor"]?.table) {
+    return itemSchema;
+  }
+  return arraySchema;
 }
 
 function getAvailableSchemaColumns(schema: EditorSchema | undefined): Array<{ key: string; label: string }> {
