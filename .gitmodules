@@ -1,0 +1,3 @@
+[submodule "vendor/data-editor"]
+	path = vendor/data-editor
+	url = https://github.com/VeewoGames/data-editor.git

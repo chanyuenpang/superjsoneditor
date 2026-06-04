@@ -1,3 +1,5 @@
+import { useState } from "react";
+import * as Popover from "@radix-ui/react-popover";
 import { EditorShell, type EditorDocuments } from "./editor/EditorShell";
 import type { EditorHost } from "./editor/host";
 import heroDocument from "./demo-sources/characters/hero.json";
@@ -32,13 +34,29 @@ const demoHost: EditorHost = {
 
 export function App() {
   const canPersistDemoSources = isLocalDemoSaveHost();
+  const [layoutMode, setLayoutMode] = useState<"stack-flow" | "pinned-root">("stack-flow");
+  const [editingEnabled, setEditingEnabled] = useState(true);
+  const [rawJsonEnabled, setRawJsonEnabled] = useState(true);
   return (
     <EditorShell
       documents={demoDocuments}
       host={demoHost}
+      layoutMode={layoutMode}
+      readOnly={!editingEnabled}
+      enableRawEditor={rawJsonEnabled}
       onSave={canPersistDemoSources ? handleDemoSave : undefined}
       onUnavailableSaveAttempt={canPersistDemoSources ? undefined : handleUnavailableDemoSave}
       rootSourceId={DEMO_ROOT_SOURCE_ID}
+      toolbarActions={(
+        <DemoSettingsPopover
+          editingEnabled={editingEnabled}
+          layoutMode={layoutMode}
+          rawJsonEnabled={rawJsonEnabled}
+          onEditingEnabledChange={setEditingEnabled}
+          onLayoutModeChange={setLayoutMode}
+          onRawJsonEnabledChange={setRawJsonEnabled}
+        />
+      )}
     />
   );
 }
@@ -55,4 +73,63 @@ function handleUnavailableDemoSave() {
 function isLocalDemoSaveHost() {
   if (typeof window === "undefined") return true;
   return window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+}
+
+function DemoSettingsPopover(props: {
+  editingEnabled: boolean;
+  layoutMode: "stack-flow" | "pinned-root";
+  rawJsonEnabled: boolean;
+  onEditingEnabledChange: (nextValue: boolean) => void;
+  onLayoutModeChange: (nextValue: "stack-flow" | "pinned-root") => void;
+  onRawJsonEnabledChange: (nextValue: boolean) => void;
+}) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <button className="ghost-button demo-settings-trigger" type="button">
+          Settings
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content align="end" className="demo-settings-popover" sideOffset={8}>
+          <div className="demo-settings-panel">
+            <div className="demo-settings-panel__header">
+              <strong>Demo Settings</strong>
+              <span>Preview editor modes without touching source code.</span>
+            </div>
+            <label className="demo-settings-field">
+              <span>Layout mode</span>
+              <select
+                aria-label="Layout mode"
+                className="detail-input"
+                value={props.layoutMode}
+                onChange={(event) => props.onLayoutModeChange(event.target.value as "stack-flow" | "pinned-root")}
+              >
+                <option value="stack-flow">stack-flow</option>
+                <option value="pinned-root">pinned-root</option>
+              </select>
+            </label>
+            <label className="demo-settings-checkbox">
+              <input
+                aria-label="Enable editing"
+                checked={props.editingEnabled}
+                type="checkbox"
+                onChange={(event) => props.onEditingEnabledChange(event.target.checked)}
+              />
+              <span>Enable editing</span>
+            </label>
+            <label className="demo-settings-checkbox">
+              <input
+                aria-label="Enable raw JSON"
+                checked={props.rawJsonEnabled}
+                type="checkbox"
+                onChange={(event) => props.onRawJsonEnabledChange(event.target.checked)}
+              />
+              <span>Enable raw JSON</span>
+            </label>
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
 }

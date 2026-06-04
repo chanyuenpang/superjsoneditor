@@ -1,8 +1,41 @@
 ﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { test, vi } from "vitest";
 import { App } from "../../src/App";
-import { EditorShell } from "../../src/editor/EditorShell";
+import { within } from "@testing-library/react";
+import { EditorShell, resolveCompactStack } from "../../src/editor/EditorShell";
 import type { EditorSchema, EditorSchemaHost, EditorValidationResult } from "../../src/editor/schema";
+
+function createMutableSchemaHost(initialRootSchema: EditorSchema, initialNamedSchemas?: Record<string, EditorSchema>): EditorSchemaHost & {
+  getRootSchemaSnapshot: () => EditorSchema;
+  getNamedSchemaSnapshot: (name: string) => EditorSchema | undefined;
+} {
+  let rootSchema = structuredClone(initialRootSchema);
+  let namedSchemas = structuredClone(initialNamedSchemas ?? {});
+  return {
+    getSchema() {
+      return rootSchema;
+    },
+    getNamedSchema(name) {
+      return namedSchemas[name];
+    },
+    setRootSchema(nextSchema) {
+      rootSchema = structuredClone(nextSchema);
+    },
+    setNamedSchema(name, nextSchema) {
+      namedSchemas = {
+        ...namedSchemas,
+        [name]: structuredClone(nextSchema),
+      };
+    },
+    getRootSchemaSnapshot() {
+      return structuredClone(rootSchema);
+    },
+    getNamedSchemaSnapshot(name) {
+      const schema = namedSchemas[name];
+      return schema ? structuredClone(schema) : undefined;
+    },
+  };
+}
 
 test("renders a generic root document with the root breadcrumb only", () => {
   render(<EditorShell value={{ hello: "world" }} />);
@@ -10,7 +43,12 @@ test("renders a generic root document with the root breadcrumb only", () => {
   expect(screen.queryByText("JSON Document")).toBeNull();
   expect(screen.getAllByText("Root").length).toBeGreaterThanOrEqual(2);
   expect(screen.getByLabelText("Field hello")).toHaveValue("world");
-  expect(screen.queryByText("Select a field to inspect")).toBeNull();
+  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+});
+
+test("compact mode follows the editor viewport width before falling back to window width", () => {
+  expect(resolveCompactStack(768, 960, 640)).toBe(false);
+  expect(resolveCompactStack(768, 0, 640)).toBe(true);
 });
 
 test("renders the demo shell without depending on demo-only chrome", () => {
@@ -20,6 +58,55 @@ test("renders the demo shell without depending on demo-only chrome", () => {
   expect(screen.getByDisplayValue("campaign-alpha")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "characters array 2 items" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "wideRecords array 5 items" })).toBeInTheDocument();
+});
+
+test("demo settings can toggle editing and raw json affordances", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  expect(screen.getByLabelText("Enable editing")).toBeChecked();
+  expect(screen.getByLabelText("Enable raw JSON")).toBeChecked();
+
+  fireEvent.click(screen.getByLabelText("Enable raw JSON"));
+  expect(screen.queryByRole("button", { name: "Raw" })).toBeNull();
+
+  fireEvent.click(screen.getByLabelText("Enable editing"));
+  expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+  expect(screen.getByLabelText("Field id")).toBeDisabled();
+});
+
+test("demo settings can switch the layout mode to pinned root", () => {
+  render(<App />);
+
+  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  fireEvent.change(screen.getByLabelText("Layout mode"), { target: { value: "pinned-root" } });
+
+  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+});
+
+test("demo app uses wide-screen dual-page stack flow", () => {
+  const originalInnerWidth = window.innerWidth;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+  act(() => {
+    window.dispatchEvent(new Event("resize"));
+  });
+
+  try {
+    const { container } = render(<App />);
+    expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "characters array 2 items" }));
+
+    expect(container.querySelector(".stack-page--background")).not.toBeNull();
+    expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
+    expect(screen.queryByText("Select a field to inspect")).toBeNull();
+  } finally {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+    act(() => {
+      window.dispatchEvent(new Event("resize"));
+    });
+  }
 });
 
 test("object pages edit primitive fields inline", () => {
@@ -212,6 +299,7 @@ test("pinned-root 模式导航后保留左侧 root 页", () => {
 
   expect(container.querySelector(".stack-page--background")).not.toBeNull();
   expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
 });
 
 test("pinned-root 妯″紡涓嬬偣鍑诲彸椤垫寜閽細娌跨敤宸﹂〉鐨?replace 鍔ㄧ敾璇箟", () => {
@@ -285,14 +373,63 @@ test("leftPageFullscreen 的 Close 会直接关闭整个右页上下文，而不
   }
 });
 
-test("默认 stack-flow 模式导航后不会保留左侧 root 页", () => {
+test("默认 stack-flow 模式在宽屏导航后显示双页上下文", () => {
   const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} />);
 
+  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
 
-  expect(container.querySelector(".stack-page--background")).toBeNull();
-  expect(container.querySelector(".stack-page--foreground")).toBeNull();
-  expect(container.querySelector(".stack-page--single")).not.toBeNull();
+  expect(container.querySelector(".stack-page--background")).not.toBeNull();
+  expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
+});
+
+test("默认 stack-flow 模式在 root 时显示和 pinned-root 一样的右侧空态", () => {
+  const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} />);
+
+  expect(screen.getByText("Select a field to inspect")).toBeInTheDocument();
+  expect(container.querySelector(".stack-page--background")).not.toBeNull();
+  expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
+});
+
+test("stack-flow 深层返回时恢复 pop 动画", () => {
+  vi.useFakeTimers();
+  const { container } = render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+    fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+    act(() => {
+      vi.advanceTimersByTime(600);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+    expect(container.querySelector(".stack-page--pop-promote")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Go up one level" })).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("stack-flow 的左页在可回退时显示页头返回按钮", () => {
+  render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+
+  expect(screen.queryByRole("button", { name: "Go up one level" })).toBeNull();
+});
+
+test("stack-flow 在双页且左页不是 root 时保留左页返回按钮", () => {
+  render(<EditorShell value={{ profile: { stats: { details: { hp: 10 } } } }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "details object 1 fields" }));
+
+  const backButtons = screen.getAllByRole("button", { name: "Go up one level" });
+  expect(backButtons).toHaveLength(1);
 });
 
 test("back from a right page with root pinned on the left uses pop animation", () => {
@@ -302,6 +439,32 @@ test("back from a right page with root pinned on the left uses pop animation", (
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
   expect(container.querySelector(".stack-page--pop-exit")).not.toBeNull();
+});
+
+test("pinned-root 从 reference 子页返回到 reference 首页时保留右页并使用 replace 语义", () => {
+  const { container } = render(
+    <EditorShell
+      documents={{ main: { profile: { companion: "asset://characters/hero.json" } } }}
+      layoutMode="pinned-root"
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://characters/hero.json"
+            ? { id: "hero", stats: { hp: 10 }, tags: ["vanguard"] }
+            : undefined;
+        },
+      }}
+      rootSourceId="main"
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
+  fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+  expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+  expect(container.querySelector(".stack-page--pop-exit")).toBeNull();
+  expect(screen.getByDisplayValue("hero")).toBeInTheDocument();
 });
 
 test("references can navigate into a different source document", () => {
@@ -717,6 +880,330 @@ test("schema enum fields render as selects", () => {
   expect(screen.getByRole("option", { name: "legendary" })).toBeInTheDocument();
 });
 
+test("schema table columns control root object-array header order and visibility", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", title: "Identifier" },
+            title: { type: "string", title: "Title" },
+            hp: { type: "integer", title: "Health" },
+          },
+          "x-editor": {
+            table: {
+              columns: [
+                { key: "title", label: "Quest Title", sortable: true },
+                { key: "id", sortable: true },
+              ],
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_002", title: "Second Quest", hp: 20 },
+        { id: "quest_001", title: "First Quest", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const headers = screen.getAllByRole("columnheader").map((node) => node.textContent?.trim());
+  expect(headers).toEqual(["#", "Quest Title", "Identifier"]);
+  expect(screen.queryByRole("columnheader", { name: "Health" })).toBeNull();
+  expect(screen.getByText("Second Quest")).toBeInTheDocument();
+  expect(screen.queryByText("20")).toBeNull();
+});
+
+test("sortable schema table columns can be toggled from the header without initial sorting", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+          },
+          "x-editor": {
+            table: {
+              columns: [
+                { key: "title", label: "Title", sortable: true },
+                { key: "id", label: "ID" },
+              ],
+            },
+          },
+        },
+      };
+    },
+  };
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { id: "quest_002", title: "Second Quest" },
+        { id: "quest_001", title: "First Quest" },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const beforeSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
+    .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
+  expect(beforeSort).toEqual(["Second Quest", "First Quest"]);
+
+  fireEvent.click(screen.getByRole("button", { name: /sort by title/i }));
+
+  const afterAscSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
+    .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
+  expect(afterAscSort).toEqual(["First Quest", "Second Quest"]);
+
+  fireEvent.click(screen.getByRole("button", { name: /sort by title descending/i }));
+
+  const afterDescSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
+    .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
+  expect(afterDescSort).toEqual(["Second Quest", "First Quest"]);
+});
+
+test("schema table columns reorder reference projection columns", () => {
+  const itemSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      icon: {
+        type: "string",
+        title: "Icon",
+        "x-editor": {
+          display: {
+            kind: "image",
+            preview: {
+              width: 32,
+              height: 24,
+              fit: "cover",
+            },
+          },
+        },
+      },
+      id: { type: "string", title: "ID" },
+      name: { type: "string", title: "Name" },
+    },
+  };
+  const itemRowSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      icon: {
+        type: "string",
+        title: "Icon",
+        "x-editor": {
+          projection: { path: ["icon"] },
+        },
+      },
+      id: {
+        type: "string",
+        title: "ID",
+        "x-editor": {
+          projection: { path: ["id"] },
+        },
+      },
+      name: {
+        type: "string",
+        title: "Name",
+        "x-editor": {
+          projection: { path: ["name"] },
+        },
+      },
+    },
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "name", label: "Display Name", sortable: true },
+          { key: "icon" },
+        ],
+      },
+    },
+  };
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        items: {
+          type: "string",
+          "x-editor": {
+            reference: {
+              target: { schemaRef: "reward_item" },
+              view: {
+                layout: "inline",
+                schemaRef: "reward_item_row",
+              },
+            },
+          },
+        },
+      };
+    },
+    getNamedSchema(name) {
+      if (name === "reward_item") return itemSchema;
+      if (name === "reward_item_row") return itemRowSchema;
+      return undefined;
+    },
+  };
+
+  render(
+    <EditorShell
+      value={["asset://items/reward.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://items/reward.json"
+            ? { icon: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='24'></svg>", id: "reward", name: "Reward" }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  const headers = screen.getAllByRole("columnheader").map((node) => node.textContent?.trim());
+  expect(headers).toEqual(["#", "Display Name", "Icon"]);
+  expect(screen.queryByRole("columnheader", { name: "ID" })).toBeNull();
+});
+
+test("inline select options render schema labels", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          rarity: {
+            type: "string",
+            "x-editor": {
+              fieldType: "select",
+              options: [
+                { value: "common", label: "Common" },
+                { value: "rare", label: "Rare" },
+              ],
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={{ rarity: "rare" }} schemaHost={schemaHost} />);
+
+  expect(screen.getByLabelText("Field rarity")).toHaveDisplayValue("Rare");
+  expect(screen.getByRole("option", { name: "Common" })).toBeInTheDocument();
+});
+
+test("inline multi-select options render chip labels and persist literal values", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            "x-editor": {
+              fieldType: "multi-select",
+              options: [
+                { value: "fire", label: "Fire", color: "red" },
+                { value: "boss", label: "Boss", color: "gold" },
+              ],
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={{ tags: ["fire", "boss"] }} schemaHost={schemaHost} />);
+
+  const selectedValues = within(screen.getByLabelText("Field tags selected values"));
+  expect(selectedValues.getByText("Fire")).toBeInTheDocument();
+  expect(selectedValues.getByText("Boss")).toBeInTheDocument();
+  expect(screen.queryByText("fire")).toBeNull();
+});
+
+test("json-backed select options validate and render labels while preserving literal values", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          tag: {
+            type: "string",
+            "x-editor": {
+              fieldType: "select",
+              optionsSource: {
+                kind: "json-file",
+                uri: "asset://schema-data/tags.json",
+                valueField: "id",
+                labelField: "name",
+                colorField: "color",
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(
+    <EditorShell
+      value={{ tag: "fire" }}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://schema-data/tags.json"
+            ? [{ id: "fire", name: "Fire", color: "red" }, { id: "ice", name: "Ice", color: "blue" }]
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("Field tag")).toHaveDisplayValue("Fire");
+
+  fireEvent.change(screen.getByLabelText("Field tag"), { target: { value: "ice" } });
+
+  await waitFor(() => expect(screen.getByLabelText("Field tag")).toHaveValue("ice"));
+});
+
+test("invalid schema options configuration surfaces a schema error", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          rarity: {
+            type: "string",
+            "x-editor": {
+              fieldType: "select",
+              options: [{ value: "common", label: "Common" }],
+              optionsSource: {
+                kind: "json-file",
+                uri: "asset://schema-data/tags.json",
+                valueField: "id",
+                labelField: "name",
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={{ rarity: "common" }} schemaHost={schemaHost} />);
+
+  expect(screen.getByText("Schema cannot declare both inline options and optionsSource")).toBeInTheDocument();
+});
+
 test("nested object and array pages inside a reference keep their data", async () => {
   render(
     <EditorShell
@@ -1080,4 +1567,259 @@ test("validation failures block save and show field errors", async () => {
   expect(handleSave).not.toHaveBeenCalled();
   expect(screen.getByText("Title is required")).toBeInTheDocument();
   expect(screen.getByText("Schema validation failed")).toBeInTheDocument();
+});
+
+test("schema authoring columns manager can add and relabel object-array columns", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+      },
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "title", sortable: true },
+            { key: "id" },
+          ],
+        },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Columns" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show column Health" }));
+  fireEvent.change(screen.getByLabelText("Column label for Identifier"), { target: { value: "Quest ID" } });
+
+  const headers = screen.getAllByRole("columnheader").map((node) => node.textContent?.trim());
+  expect(headers).toEqual(["#", "Title", "Quest ID", "Health"]);
+  expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
+    { key: "title", sortable: true },
+    { key: "id", label: "Quest ID" },
+    { key: "hp" },
+  ]);
+});
+
+test("schema authoring can drag table headers to rewrite default column order", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+      },
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "title" },
+            { key: "id" },
+            { key: "hp" },
+          ],
+        },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const tableScroll = container.querySelector(".table-scroll") as HTMLDivElement;
+  Object.defineProperty(tableScroll, "scrollWidth", { configurable: true, value: 900 });
+  Object.defineProperty(tableScroll, "clientWidth", { configurable: true, value: 480 });
+  tableScroll.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 480,
+    height: 200,
+    top: 0,
+    right: 480,
+    bottom: 200,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  const headers = screen.getAllByRole("columnheader");
+  const layout = new Map<string, { left: number; right: number }>([
+    ["Title", { left: 40, right: 160 }],
+    ["Identifier", { left: 160, right: 280 }],
+    ["Health", { left: 280, right: 400 }],
+  ]);
+  for (const header of headers) {
+    const label = header.getAttribute("aria-label");
+    const slot = label ? layout.get(label) : undefined;
+    if (!slot) continue;
+    (header as HTMLElement).getBoundingClientRect = () => ({
+      x: slot.left,
+      y: 0,
+      width: slot.right - slot.left,
+      height: 40,
+      top: 0,
+      right: slot.right,
+      bottom: 40,
+      left: slot.left,
+      toJSON() {
+        return {};
+      },
+    } as DOMRect);
+  }
+
+  const dragHandle = screen.getByRole("button", { name: "Column settings for Title" });
+  fireEvent.mouseDown(dragHandle, { button: 0, clientX: 100, clientY: 20 });
+  fireEvent.mouseMove(document, { clientX: 360, clientY: 20 });
+  fireEvent.mouseUp(document, { clientX: 360, clientY: 20 });
+
+  await waitFor(() => {
+    expect(screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim())).toEqual([
+      "#",
+      "Identifier",
+      "Health",
+      "Title",
+    ]);
+  });
+  expect(schemaHost.getRootSchemaSnapshot().items?.["x-editor"]?.table?.columns).toEqual([
+    { key: "id" },
+    { key: "hp" },
+    { key: "title" },
+  ]);
+});
+
+test("schema authoring can add hidden reference projection columns and rename them from the header menu", () => {
+  const schemaHost = createMutableSchemaHost(
+    {
+      type: "array",
+      items: {
+        type: "string",
+        "x-editor": {
+          reference: {
+            target: {
+              schemaRef: "reward_item",
+            },
+            view: {
+              schemaRef: "reward_item_row",
+            },
+          },
+        },
+      },
+    },
+    {
+      reward_item: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          icon: { type: "string" },
+        },
+      },
+      reward_item_row: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            title: "Name",
+            "x-editor": {
+              projection: { path: ["name"] },
+            },
+          },
+          icon: {
+            type: "string",
+            title: "Icon",
+            "x-editor": {
+              projection: { path: ["icon"] },
+              display: { kind: "image" },
+            },
+          },
+          id: {
+            type: "string",
+            title: "Identifier",
+            "x-editor": {
+              projection: { path: ["id"] },
+            },
+          },
+        },
+        "x-editor": {
+          table: {
+            columns: [
+              { key: "name" },
+              { key: "icon" },
+            ],
+          },
+        },
+      },
+    },
+  );
+
+  render(
+    <EditorShell
+      value={["asset://items/reward.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://items/reward.json"
+            ? { id: "reward", name: "Reward", icon: "res://icons/reward.png" }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Columns" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show column Identifier" }));
+  fireEvent.click(screen.getByRole("button", { name: "Column settings for Name" }));
+  fireEvent.change(screen.getByLabelText("Column label for Name"), { target: { value: "Display Name" } });
+
+  const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
+  expect(headers).toEqual(["#", "Display Name", "Icon", "Identifier"]);
+  expect(schemaHost.getNamedSchemaSnapshot("reward_item_row")?.["x-editor"]?.table?.columns).toEqual([
+    { key: "name", label: "Display Name" },
+    { key: "icon" },
+    { key: "id" },
+  ]);
+});
+
+test("schema authoring field order controls rewrite object property order", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "object",
+    properties: {
+      id: { type: "string", title: "Identifier" },
+      title: { type: "string", title: "Title" },
+      hp: { type: "integer", title: "Health" },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={{ id: "quest_001", title: "First Quest", hp: 10 }}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.click(screen.getByRole("button", { name: "Move field Health up" }));
+  fireEvent.click(screen.getByRole("button", { name: "Move field Health up" }));
+
+  const fieldLabels = [...container.querySelectorAll(".property-heading > span")].map((node) => node.textContent?.trim());
+  expect(fieldLabels.slice(0, 3)).toEqual(["Health", "Identifier", "Title"]);
+  expect(Object.keys(schemaHost.getRootSchemaSnapshot().properties ?? {})).toEqual(["hp", "id", "title"]);
 });

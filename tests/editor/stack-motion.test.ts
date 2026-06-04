@@ -1,9 +1,13 @@
 import { test } from "vitest";
 import type { NavigationPage } from "../../src/core/navigation";
-import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation } from "../../src/editor/stack-motion";
+import { determineBackAnimation, determineJumpAnimation, determineNavigateAnimation, determinePinnedRootBackAnimation } from "../../src/editor/stack-motion";
 
 function page(path: Array<string | number>): NavigationPage {
   return { path };
+}
+
+function sourcePage(sourceId: string, path: Array<string | number>): NavigationPage {
+  return { sourceId, path };
 }
 
 test("navigate from a single visible foreground page opens a push animation", () => {
@@ -65,5 +69,34 @@ test("back from a two-page state uses pop animation", () => {
     key: 6,
     exitingPage: page(["profile", "stats"]),
     promotingPage: page(["profile"]),
+  });
+});
+
+test("pinned-root back from a nested right page to the first right page uses replace animation", () => {
+  const animation = determinePinnedRootBackAnimation(
+    [page([]), sourcePage("asset://characters/hero.json", ["stats"])],
+    [page([]), sourcePage("asset://characters/hero.json", [])],
+    7,
+  );
+
+  expect(animation).toEqual({
+    direction: "replace",
+    key: 7,
+    exitingPage: sourcePage("asset://characters/hero.json", ["stats"]),
+  });
+});
+
+test("pinned-root back from the first right page to root uses pop animation", () => {
+  const animation = determinePinnedRootBackAnimation(
+    [page([]), page(["profile"])],
+    [page([])],
+    8,
+  );
+
+  expect(animation).toEqual({
+    direction: "pop",
+    key: 8,
+    exitingPage: page(["profile"]),
+    promotingPage: page([]),
   });
 });

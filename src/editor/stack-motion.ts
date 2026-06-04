@@ -121,6 +121,10 @@ export function determinePinnedRootBackAnimation(
   const currentRightPage = getPinnedRootRightPage(currentPages);
   const nextRightPage = getPinnedRootRightPage(nextPages);
 
+  if (currentRightPage && !nextRightPage) {
+    return { direction: "pop", key, exitingPage: currentRightPage, promotingPage: currentPages[0] ?? currentRightPage };
+  }
+
   if (currentRightPage && nextRightPage && !samePage(currentRightPage, nextRightPage)) {
     return { direction: "replace", key, exitingPage: currentRightPage };
   }

@@ -22,8 +22,33 @@ export type EditorReferenceSchema = {
   };
 };
 
+export type EditorViewOptionColor = "red" | "orange" | "yellow" | "green" | "blue" | "gray" | "gold";
+
+export type EditorViewOption = {
+  value: string | number;
+  label?: string;
+  color?: EditorViewOptionColor;
+};
+
+export type EditorViewOptionsSource = {
+  kind: "json-file";
+  uri: string;
+  valueField: string;
+  labelField?: string;
+  colorField?: string;
+};
+
+export type EditorTableColumn = {
+  key: string;
+  label?: string;
+  sortable?: boolean;
+};
+
 export type EditorSchemaUi = {
   group?: string;
+  fieldType?: "select" | "multi-select";
+  options?: EditorViewOption[];
+  optionsSource?: EditorViewOptionsSource;
   reference?: EditorReferenceSchema;
   projection?: {
     path: JsonPath;
@@ -41,6 +66,9 @@ export type EditorSchemaUi = {
   };
   column?: {
     sortable?: boolean;
+  };
+  table?: {
+    columns: EditorTableColumn[];
   };
 };
 
@@ -90,9 +118,16 @@ export type EditorSchemaContext = {
   documents: Record<string, unknown>;
 };
 
+export type EditorSchemaWriteContext = {
+  sourceId: string;
+  documents: Record<string, unknown>;
+};
+
 export type EditorSchemaHost = {
   getSchema: (context: EditorSchemaContext) => EditorSchema | undefined;
   getNamedSchema?: (name: string) => EditorSchema | undefined;
+  setRootSchema?: (schema: EditorSchema, context: EditorSchemaWriteContext) => void | Promise<void>;
+  setNamedSchema?: (name: string, schema: EditorSchema, context: EditorSchemaWriteContext) => void | Promise<void>;
 };
 
 export type EditorValidationError = {
@@ -376,6 +411,63 @@ export function resolveSchemaAtPath(rootSchema: EditorSchema | undefined, path: 
   }
 
   return currentSchema ? materializeSchema(currentSchema, currentValue, rootSchema ?? currentSchema) : undefined;
+}
+
+export function updateSchemaAtDocumentPath(
+  rootSchema: EditorSchema,
+  path: JsonPath,
+  target: "self" | "items",
+  updater: (schema: EditorSchema) => EditorSchema,
+): EditorSchema {
+  return visitSchemaPath(cloneSchema(rootSchema), path, target, updater);
+}
+
+function visitSchemaPath(
+  schema: EditorSchema,
+  path: JsonPath,
+  target: "self" | "items",
+  updater: (schema: EditorSchema) => EditorSchema,
+): EditorSchema {
+  if (path.length === 0) {
+    if (target === "self") {
+      return updater(cloneSchema(schema));
+    }
+    if (schema.items) {
+      return {
+        ...schema,
+        items: updater(cloneSchema(schema.items)),
+      };
+    }
+    return schema;
+  }
+
+  const [segment, ...rest] = path;
+  if (typeof segment === "number") {
+    if (!schema.items) return schema;
+    return {
+      ...schema,
+      items: visitSchemaPath(schema.items, rest, target, updater),
+    };
+  }
+
+  if (schema.properties?.[segment]) {
+    return {
+      ...schema,
+      properties: {
+        ...schema.properties,
+        [segment]: visitSchemaPath(schema.properties[segment], rest, target, updater),
+      },
+    };
+  }
+
+  if (isEditorSchema(schema.additionalProperties)) {
+    return {
+      ...schema,
+      additionalProperties: visitSchemaPath(schema.additionalProperties, rest, target, updater),
+    };
+  }
+
+  return schema;
 }
 
 function validateAgainstSchema(

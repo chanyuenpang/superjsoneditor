@@ -4,6 +4,14 @@ import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { getReferenceLabel, getReferenceUri, isReferenceValue, resolveReferenceDocument, type EditorHost, type ReferenceErrorInfo } from "./host";
 import {
+  buildPreviewOrderFromSlots,
+  collectColumnSlots,
+  getPointerXInScrollSpace,
+  resolveAutoScrollDirection,
+  scrollColumnContainer,
+  shouldStartColumnDrag,
+} from "./column-dnd";
+import {
   createDefaultArrayItem,
   createDefaultValue,
   createDefaultPropertyValue,
@@ -12,8 +20,11 @@ import {
   switchUnionBranch,
   validateDocument as validateNodeBySchema,
   type EditorSchema,
+  type EditorTableColumn,
   type EditorValidationError,
   type EditorValidationResult,
+  type EditorViewOption,
+  type EditorViewOptionColor,
 } from "./schema";
 
 type ValueInspectorProps = {
@@ -25,6 +36,16 @@ type ValueInspectorProps = {
   host?: EditorHost;
   schema?: EditorSchema;
   resolveNamedSchema?: (name: string) => EditorSchema | undefined;
+  onUpdateDocumentSchema?: (
+    sourceId: string,
+    path: JsonPath,
+    target: "self" | "items",
+    updater: (schema: EditorSchema) => EditorSchema,
+  ) => void | Promise<void>;
+  onUpdateNamedSchema?: (
+    name: string,
+    updater: (schema: EditorSchema) => EditorSchema,
+  ) => void | Promise<void>;
   validationResult?: EditorValidationResult | null;
   referenceError?: ReferenceErrorInfo;
   isReference?: boolean;
@@ -66,6 +87,7 @@ function ObjectPage({
   host,
   schema,
   resolveNamedSchema,
+  onUpdateDocumentSchema,
   validationResult,
   isReference = false,
   referenceScopeDepth,
@@ -100,7 +122,7 @@ function ObjectPage({
   const hasSchemaPropertyChoices = schemaAddablePropertyKeys.some((key) => key.trim().length > 0);
   const defaultSchemaPropertyKey = schemaAddablePropertyKeys[0] ?? "";
   const canEditCurrentPage = Boolean(onEditModeChange);
-  const schemaSignature = JSON.stringify(schema ?? null);
+  const canAuthorObjectSchema = Boolean(schema?.properties && onUpdateDocumentSchema && sourceId);
   const [fieldOrder, setFieldOrder] = useState(() => getOrderedKeys(value, schema));
   const fields = useMemo(
     () => fieldOrder
@@ -116,7 +138,7 @@ function ObjectPage({
     setNewKey(usesSchemaPropertyCreation ? defaultSchemaPropertyKey : "");
     setNewKeyType("string");
     setFieldOrder(getOrderedKeys(value, schema));
-  }, [defaultSchemaPropertyKey, pathKey, schemaSignature, usesSchemaPropertyCreation]);
+  }, [defaultSchemaPropertyKey, pathKey, usesSchemaPropertyCreation]);
 
   useEffect(() => {
     setFieldOrder((current) => {
@@ -149,6 +171,25 @@ function ObjectPage({
       setNewKey(defaultSchemaPropertyKey);
     }
     setEditMode(true);
+  }
+
+  function updateObjectSchema(updater: (currentSchema: EditorSchema) => EditorSchema) {
+    if (!canAuthorObjectSchema || !sourceId) return;
+    onUpdateDocumentSchema?.(sourceId, path, "self", updater);
+  }
+
+  function moveObjectField(key: string, direction: "up" | "down") {
+    setFieldOrder((current) => {
+      const currentIndex = current.indexOf(key);
+      if (currentIndex < 0) return current;
+      const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+      if (targetIndex < 0 || targetIndex >= current.length) return current;
+      const next = [...current];
+      const [entry] = next.splice(currentIndex, 1);
+      next.splice(targetIndex, 0, entry);
+      return next;
+    });
+    updateObjectSchema((currentSchema) => reorderSchemaProperties(currentSchema, key, direction));
   }
 
   return (
@@ -198,6 +239,26 @@ function ObjectPage({
                       <div className="property-heading__actions">
                         {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
                         <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
+                        {editMode && canAuthorObjectSchema && schema?.properties?.[key] ? (
+                          <>
+                            <button
+                              aria-label={`Move field ${schema?.properties?.[key]?.title ?? key} up`}
+                              className="ghost-icon-button"
+                              type="button"
+                              onClick={() => moveObjectField(key, "up")}
+                            >
+                              Up
+                            </button>
+                            <button
+                              aria-label={`Move field ${schema?.properties?.[key]?.title ?? key} down`}
+                              className="ghost-icon-button"
+                              type="button"
+                              onClick={() => moveObjectField(key, "down")}
+                            >
+                              Down
+                            </button>
+                          </>
+                        ) : null}
                         {editMode && !pageReadOnly ? (
                           <button
                             className="danger-icon-button"
@@ -219,7 +280,22 @@ function ObjectPage({
                     {editMode && isRequiredField(schema, key) ? (
                       <div className="form-hint">必填字段不能删除。</div>
                     ) : null}
-                    {isNavigable(fieldValue) ? (
+                    {isInlineSchemaEditor(fieldValue, schema?.properties?.[key]) ? (
+                      renderPrimitiveEditor({
+                        value: fieldValue,
+                        ariaLabel: `Field ${key}`,
+                        schema: schema?.properties?.[key],
+                        path: [...path, key],
+                        host,
+                        readOnly: pageReadOnly,
+                        onChange(nextValue) {
+                          onApplyValue({
+                            ...value,
+                            [key]: nextValue,
+                          });
+                        },
+                      })
+                    ) : isNavigable(fieldValue) ? (
                       <button
                         aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
                         className={["nested-entry-button", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}
@@ -357,6 +433,8 @@ function ArrayPage({
   host,
   schema,
   resolveNamedSchema,
+  onUpdateDocumentSchema,
+  onUpdateNamedSchema,
   validationResult,
   isReference = false,
   referenceScopeDepth,
@@ -401,6 +479,7 @@ function ArrayPage({
     () => resolveReferenceViewSchema(schema?.items, resolveNamedSchema),
     [resolveNamedSchema, schema?.items],
   );
+  const referenceViewSchemaRef = schema?.items?.["x-editor"]?.reference?.view?.schemaRef;
   const referenceViewColumns = useMemo(
     () => getReferenceViewColumns(value, referenceViewSchema, host),
     [host, referenceViewSchema, value],
@@ -408,22 +487,62 @@ function ArrayPage({
   const showReferenceProjectionTable = referenceViewColumns.length > 0;
   const referenceItemSchema = schema?.items;
   const referenceSchema = referenceItemSchema?.["x-editor"]?.reference;
+  const configuredTableColumns = useMemo(
+    () => getConfiguredTableColumns(showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema),
+    [referenceItemSchema, referenceViewSchema, showReferenceProjectionTable],
+  );
+  const [sortState, setSortState] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+  const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false);
+  const [activeColumnMenuKey, setActiveColumnMenuKey] = useState<string | null>(null);
+  const [dragPreviewKeys, setDragPreviewKeys] = useState<string[] | null>(null);
+  const [dragGhost, setDragGhost] = useState<{ key: string; label: string; x: number; y: number } | null>(null);
+  const dragPreviewKeysRef = useRef<string[] | null>(null);
+  const suppressColumnMenuOpenRef = useRef(false);
+  const dragStateRef = useRef<{
+    key: string;
+    label: string;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+  } | null>(null);
   const showStructuralRowActions = editMode && !pageReadOnly;
+  const availableSchemaColumns = useMemo(
+    () => getAvailableSchemaColumns(showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema),
+    [referenceItemSchema, referenceViewSchema, showReferenceProjectionTable],
+  );
+  const canAuthorTableSchema = Boolean(
+    !pageReadOnly && (
+      (showReferenceProjectionTable && referenceViewSchemaRef && onUpdateNamedSchema) ||
+      (!showReferenceProjectionTable && referenceItemSchema && onUpdateDocumentSchema && sourceId)
+    ),
+  );
   const columns = useMemo(
-    () => getArrayColumns(value, host, schema?.items, referenceViewColumns),
-    [value, host, schema?.items, referenceViewColumns],
+    () => getArrayColumns(value, host, schema?.items, referenceViewColumns, configuredTableColumns),
+    [value, host, schema?.items, referenceViewColumns, configuredTableColumns],
+  );
+  const managedColumns = useMemo(
+    () => getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns),
+    [availableSchemaColumns, columns, configuredTableColumns],
+  );
+  const orderedColumns = useMemo(
+    () => dragPreviewKeys ? ["#", ...dragPreviewKeys] : columns,
+    [columns, dragPreviewKeys],
   );
   const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
+  const displayRows = useMemo(
+    () => buildArrayDisplayRows(value, sortState, referenceViewColumns, configuredTableColumns, host),
+    [value, sortState, referenceViewColumns, configuredTableColumns, host],
+  );
   const columnWidths = useMemo(
-    () => getArrayColumnWidths(value, columns, host, schema?.items, referenceViewColumns),
-    [value, columns, host, schema?.items, referenceViewColumns],
+    () => getArrayColumnWidths(value, orderedColumns, host, schema?.items, referenceViewColumns, configuredTableColumns),
+    [value, orderedColumns, host, schema?.items, referenceViewColumns, configuredTableColumns],
   );
   const tableMinWidth = useMemo(
-    () => columns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
-    [columns, columnWidths],
+    () => orderedColumns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
+    [orderedColumns, columnWidths],
   );
   const tableWidth = tableMinWidth + (editMode ? 144 : 0);
-  const trailingColumnKey = columns.at(-1) ?? null;
+  const trailingColumnKey = orderedColumns.at(-1) ?? null;
   const resolvedTableWidth = Math.max(tableWidth, tableViewportWidth);
   const expandedTrailingWidth = Math.max(0, tableViewportWidth - tableWidth - 1);
   // 预留 1px，避免 collapsed border / sticky 分隔线导致横向滚动条。
@@ -437,7 +556,14 @@ function ArrayPage({
     setSuppressRowActionsUntil(0);
     setHostActionError(null);
     setIsCreatingReferenceRow(false);
+    setSortState(null);
+    setDragPreviewKeys(null);
+    setDragGhost(null);
   }, [pathKey, schemaItemsSignature]);
+
+  useEffect(() => {
+    dragPreviewKeysRef.current = dragPreviewKeys;
+  }, [dragPreviewKeys]);
 
   useEffect(() => {
     onEditModeChange?.(editMode);
@@ -501,6 +627,129 @@ function ArrayPage({
     }
   }
 
+  function updateTableSchemaColumns(updater: (columns: EditorTableColumn[]) => EditorTableColumn[]) {
+    if (!canAuthorTableSchema) return;
+    const applyUpdate = (targetSchema: EditorSchema) => setSchemaTableColumns(targetSchema, updater(getManagedTableColumns(
+      getConfiguredTableColumns(targetSchema),
+      columns,
+      getAvailableSchemaColumns(targetSchema),
+    )));
+    if (showReferenceProjectionTable && referenceViewSchemaRef) {
+      void onUpdateNamedSchema?.(referenceViewSchemaRef, applyUpdate);
+      return;
+    }
+    if (sourceId) {
+      void onUpdateDocumentSchema?.(sourceId, path, "items", applyUpdate);
+    }
+  }
+
+  function updateSingleColumn(
+    key: string,
+    updater: (column: EditorTableColumn) => EditorTableColumn,
+  ) {
+    updateTableSchemaColumns((currentColumns) =>
+      currentColumns.map((column) => (column.key === key ? updater(column) : column)),
+    );
+  }
+
+  function beginColumnDrag(
+    event: {
+      button: number;
+      clientX: number;
+      clientY: number;
+      preventDefault: () => void;
+      stopPropagation: () => void;
+    },
+    key: string,
+    label: string,
+  ) {
+    if (!canAuthorTableSchema || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsColumnManagerOpen(false);
+    setActiveColumnMenuKey(null);
+    dragStateRef.current = {
+      key,
+      label,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+    };
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const state = dragStateRef.current;
+      if (!state) return;
+      if (!state.dragging && !shouldStartColumnDrag(moveEvent.clientX - state.startX, moveEvent.clientY - state.startY)) {
+        return;
+      }
+      if (!state.dragging) {
+        state.dragging = true;
+        document.body.classList.add("is-dragging-column");
+      }
+      const scrollContainer = tableScrollRef.current;
+      const direction = resolveAutoScrollDirection(scrollContainer, moveEvent.clientX);
+      if (direction !== 0) {
+        scrollColumnContainer(scrollContainer, direction);
+      }
+      const slots = collectColumnSlots(scrollContainer, state.key);
+      const pointerXInScrollSpace = getPointerXInScrollSpace(scrollContainer, moveEvent.clientX);
+      const nextPreview = buildPreviewOrderFromSlots(managedColumns.map((column) => column.key), state.key, slots, pointerXInScrollSpace);
+      dragPreviewKeysRef.current = nextPreview;
+      setDragPreviewKeys(nextPreview);
+      setDragGhost({
+        key: state.key,
+        label: state.label,
+        x: moveEvent.clientX + 14,
+        y: moveEvent.clientY + 14,
+      });
+    };
+
+    const finish = () => {
+      const state = dragStateRef.current;
+      if (!state) return;
+      const wasDragging = state.dragging;
+      document.body.classList.remove("is-dragging-column");
+      dragStateRef.current = null;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerCancel);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      if (wasDragging && dragPreviewKeysRef.current) {
+        suppressColumnMenuOpenRef.current = true;
+        window.setTimeout(() => {
+          suppressColumnMenuOpenRef.current = false;
+        }, 0);
+        updateTableSchemaColumns((current) => reorderColumnsByKeys(current, dragPreviewKeysRef.current ?? []));
+      }
+      setDragGhost(null);
+      setDragPreviewKeys(null);
+    };
+
+    const onPointerUp = () => finish();
+    const onPointerCancel = () => finish();
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      onPointerMove(moveEvent as unknown as PointerEvent);
+    };
+    const onMouseUp = () => finish();
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerCancel);
+    document.addEventListener("pointermove", onPointerMove);
+    document.addEventListener("pointerup", onPointerUp);
+    document.addEventListener("pointercancel", onPointerCancel);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
   return (
     <section className="node-page node-page--array">
       <PageHeader
@@ -545,9 +794,10 @@ function ArrayPage({
               >
                 <colgroup>
                   {showStructuralRowActions ? <col data-column="__edit__" style={{ width: "144px" }} /> : null}
-                  {columns.map((column) => (
+                  {orderedColumns.map((column) => (
                     <col
                       data-column={column}
+                      data-column-field={column === "#" ? undefined : column}
                       key={column}
                       style={{ width: `${(columnWidths[column] ?? 140) + (column === trailingColumnKey ? expandedTrailingWidth : 0)}px` }}
                     />
@@ -563,16 +813,21 @@ function ArrayPage({
                         </div>
                       </th>
                     ) : null}
-                    {columns.map((column, columnIndex) => (
+                    {orderedColumns.map((column, columnIndex) => (
                       (() => {
                         const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
-                        const columnLabel = column === "#"
-                          ? "#"
-                          : (referenceColumn?.title ?? schema?.items?.properties?.[column]?.title ?? column);
+                        const configuredColumn = configuredTableColumns.find((entry) => entry.key === column);
+                        const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, schema?.items);
                         const isDescriptionColumn = referenceColumn?.key === "description";
+                        const isSortable = Boolean(configuredColumn?.sortable);
+                        const sortButtonLabel =
+                          sortState?.key === column && sortState.direction === "asc"
+                            ? `Sort by ${columnLabel} descending`
+                            : `Sort by ${columnLabel}`;
                         return (
                       <th
                         aria-label={columnLabel}
+                        data-column-field={column === "#" ? undefined : column}
                             className={
                               [
                                 columnIndex === 0 ? "array-column--sticky" : "",
@@ -585,8 +840,85 @@ function ArrayPage({
                         key={column}
                       >
                         <div className="array-column-header">
-                              <span>{columnLabel}</span>
-                          {column === "#" ? null : !showReferenceProjectionTable ? (
+                              {isSortable ? (
+                                <button
+                                  aria-label={sortButtonLabel}
+                                  className="array-column-sort-button"
+                                  data-sort-direction={sortState?.key === column ? sortState.direction : "none"}
+                                  type="button"
+                                  onClick={() => {
+                                    setSortState((current) => {
+                                      if (current?.key !== column) return { key: column, direction: "asc" };
+                                      if (current.direction === "asc") return { key: column, direction: "desc" };
+                                      return { key: column, direction: "asc" };
+                                    });
+                                  }}
+                                >
+                                  <span>{columnLabel}</span>
+                                </button>
+                              ) : (
+                                <span>{columnLabel}</span>
+                              )}
+                          {canAuthorTableSchema && column !== "#" ? (
+                            <div className="array-column-authoring">
+                              <button
+                                aria-label={`Column settings for ${columnLabel}`}
+                                className="array-column-menu-button"
+                                type="button"
+                                onPointerDown={(event) => beginColumnDrag(event, column, columnLabel)}
+                                onMouseDown={(event) => beginColumnDrag(event, column, columnLabel)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (suppressColumnMenuOpenRef.current) return;
+                                  setIsColumnManagerOpen(false);
+                                  setActiveColumnMenuKey((current) => (current === column ? null : column));
+                                }}
+                              />
+                              {activeColumnMenuKey === column ? (
+                                <div className="schema-column-menu" onClick={(event) => event.stopPropagation()}>
+                                  <label className="schema-column-menu__field">
+                                    <span>Label</span>
+                                    <input
+                                      aria-label={`Column label for ${columnLabel}`}
+                                      className="detail-input"
+                                      type="text"
+                                      value={configuredColumn?.label ?? columnLabel}
+                                      onChange={(event) => {
+                                        updateSingleColumn(column, (current) => ({
+                                          ...current,
+                                          label: event.target.value.trim().length ? event.target.value : undefined,
+                                        }));
+                                      }}
+                                    />
+                                  </label>
+                                  <div className="schema-column-menu__actions">
+                                    <button
+                                      type="button"
+                                      onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column, "left"))}
+                                    >
+                                      Move left
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column, "right"))}
+                                    >
+                                      Move right
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column));
+                                        setActiveColumnMenuKey(null);
+                                      }}
+                                    >
+                                      Hide
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {column === "#" ? null : !showReferenceProjectionTable && !configuredColumn ? (
                             <small className={getTypeToneClassForType(describeArrayColumnType(value, column, host))}>{describeArrayColumnType(value, column, host)}</small>
                           ) : null}
                         </div>
@@ -599,12 +931,12 @@ function ArrayPage({
                 <tbody>
                   {value.length === 0 ? (
                     <tr className="array-empty-row">
-                      <td className="array-empty-cell" colSpan={columns.length + (showStructuralRowActions ? 1 : 0)}>
+                      <td className="array-empty-cell" colSpan={orderedColumns.length + (showStructuralRowActions ? 1 : 0)}>
                         This array has no items.
                       </td>
                     </tr>
                   ) : null}
-                  {value.map((item, index) => {
+                  {displayRows.map(({ item, sourceIndex }, displayIndex) => {
                     const clickable = isNavigable(item);
                     const isActiveReferenceRow = activeReferenceSourceId != null && inferReferenceSourceId(item, host) === activeReferenceSourceId;
                     if (showReferenceProjectionTable) {
@@ -612,11 +944,11 @@ function ArrayPage({
                         <tr
                           className={[
                             clickable ? "is-clickable" : "",
-                            activeChildSegment === index || isActiveReferenceRow ? "is-active-row" : "",
+                            activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
                           ].filter(Boolean).join(" ")}
-                          data-row-index={index}
-                          key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
-                          onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                          data-row-index={sourceIndex}
+                          key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
+                          onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
                         >
                           {showStructuralRowActions ? (
                             <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
@@ -629,7 +961,7 @@ function ArrayPage({
                                   onPointerUp={(event) => {
                                     event.stopPropagation();
                                     const next = [...value];
-                                    next.splice(index + 1, 0, cloneJsonValue(item));
+                                    next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
                                     onApplyValue(next);
                                   }}
                                 >
@@ -643,7 +975,7 @@ function ArrayPage({
                                   onPointerUp={(event) => {
                                     event.stopPropagation();
                                     if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                    onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                    onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
                                   }}
                                 >
                                   Delete
@@ -651,7 +983,7 @@ function ArrayPage({
                               </div>
                             </td>
                           ) : null}
-                          {columns.map((column, columnIndex) => {
+                          {orderedColumns.map((column, columnIndex) => {
                             if (column === "#") {
                               return (
                                 <td
@@ -660,15 +992,15 @@ function ArrayPage({
                                     "array-column--index",
                                     showStructuralRowActions ? "array-column--after-actions" : "",
                                   ].filter(Boolean).join(" ")}
-                                  key={`${index}:index`}
+                                  key={`${sourceIndex}:index`}
                                 >
-                                  <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{index + 1}</span>
+                                  <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
                                 </td>
                               );
                             }
                             const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
                             if (!referenceColumn) {
-                              return <td key={`${index}:${column}`} />;
+                              return <td key={`${sourceIndex}:${column}`} />;
                             }
                             const imageColumn = isImageDisplaySchema(referenceColumn.columnSchema);
                             return (
@@ -678,7 +1010,7 @@ function ArrayPage({
                                   imageColumn ? "array-column--image" : "",
                                   referenceColumn.key === "description" ? "array-column--description" : "",
                                 ].filter(Boolean).join(" ") || undefined}
-                                key={`${index}:${column}`}
+                                key={`${sourceIndex}:${column}`}
                               >
                                 {renderReferenceTableCell(item, referenceColumn, schema?.items, resolveNamedSchema, host)}
                               </td>
@@ -696,11 +1028,11 @@ function ArrayPage({
                             className={[
                               "array-row--mixed",
                               clickable ? "is-clickable" : "",
-                              activeChildSegment === index || isActiveReferenceRow ? "is-active-row" : "",
+                              activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
                             ].filter(Boolean).join(" ")}
-                            data-row-index={index}
-                            key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
-                            onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                            data-row-index={sourceIndex}
+                            key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
+                            onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
                           >
                             {showStructuralRowActions ? (
                               <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
@@ -713,7 +1045,7 @@ function ArrayPage({
                                     onPointerUp={(event) => {
                                       event.stopPropagation();
                                       const next = [...value];
-                                      next.splice(index + 1, 0, cloneJsonValue(item));
+                                      next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
                                       onApplyValue(next);
                                     }}
                                   >
@@ -724,10 +1056,10 @@ function ArrayPage({
                                     disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
                                     type="button"
                                     onPointerDown={(event) => event.preventDefault()}
-                                   onPointerUp={(event) => {
+                                    onPointerUp={(event) => {
                                       event.stopPropagation();
                                       if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                      onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                      onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
                                     }}
                                   >
                                     Delete
@@ -737,7 +1069,7 @@ function ArrayPage({
                             ) : null}
                             {columns.length > 0 ? (
                               <td className="array-column--sticky array-cell--mixed array-cell--mixed-primary">
-                                <span className="array-cell-summary array-cell-summary--mixed-type">{describeType(item, host)}</span>
+                                <span className="array-cell-summary array-cell-summary--mixed-type">{columns[0] === "#" ? String(displayIndex + 1) : describeType(item, host)}</span>
                               </td>
                             ) : null}
                             {columns.length > 1 ? (
@@ -759,11 +1091,11 @@ function ArrayPage({
                         <tr
                           className={[
                             clickable ? "is-clickable" : "",
-                            activeChildSegment === index ? "is-active-row" : "",
+                            activeChildSegment === sourceIndex ? "is-active-row" : "",
                           ].filter(Boolean).join(" ")}
-                          data-row-index={index}
-                          key={`${index}:${summarizeRowIdentity(item, index, path, host)}`}
-                          onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                          data-row-index={sourceIndex}
+                          key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
+                          onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
                       >
                         {showStructuralRowActions ? (
                           <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
@@ -776,7 +1108,7 @@ function ArrayPage({
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
                                   const next = [...value];
-                                  next.splice(index + 1, 0, cloneJsonValue(item));
+                                  next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
                                   onApplyValue(next);
                                 }}
                               >
@@ -790,7 +1122,7 @@ function ArrayPage({
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
                                   if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
                                 }}
                               >
                                 Delete
@@ -798,7 +1130,21 @@ function ArrayPage({
                             </div>
                           </td>
                         ) : null}
-                          {columns.map((column, columnIndex) => {
+                          {orderedColumns.map((column, columnIndex) => {
+                            if (column === "#") {
+                              return (
+                                <td
+                                  className={[
+                                    "array-column--sticky",
+                                    "array-column--index",
+                                    showStructuralRowActions ? "array-column--after-actions" : "",
+                                  ].filter(Boolean).join(" ")}
+                                  key={`${sourceIndex}:index`}
+                                >
+                                  <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
+                                </td>
+                              );
+                            }
                             const hasColumn = Object.prototype.hasOwnProperty.call(record, column);
                             return (
                             <td
@@ -809,7 +1155,7 @@ function ArrayPage({
                                   !hasColumn ? "array-cell--missing" : "",
                                 ].filter(Boolean).join(" ") || undefined
                               }
-                              key={`${index}:${column}`}
+                              key={`${sourceIndex}:${column}`}
                             >
                               <span
                                 className={[
@@ -828,14 +1174,14 @@ function ArrayPage({
                     }
 
                     return (
-                      <tr
-                        className={[
-                          clickable ? "is-clickable" : "",
-                          activeChildSegment === index || isActiveReferenceRow ? "is-active-row" : "",
-                        ].filter(Boolean).join(" ")}
-                        data-row-index={index}
-                        key={`${index}:${String(item)}`}
-                        onClick={clickable ? () => onNavigate([...path, index]) : undefined}
+                        <tr
+                          className={[
+                            clickable ? "is-clickable" : "",
+                            activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
+                          ].filter(Boolean).join(" ")}
+                        data-row-index={sourceIndex}
+                        key={`${sourceIndex}:${String(item)}`}
+                        onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
                       >
                         {showStructuralRowActions ? (
                           <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
@@ -848,7 +1194,7 @@ function ArrayPage({
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
                                   const next = [...value];
-                                  next.splice(index + 1, 0, cloneJsonValue(item));
+                                  next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
                                   onApplyValue(next);
                                 }}
                               >
@@ -862,7 +1208,7 @@ function ArrayPage({
                                 onPointerUp={(event) => {
                                   event.stopPropagation();
                                   if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== index));
+                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
                                 }}
                               >
                                 Delete
@@ -871,7 +1217,7 @@ function ArrayPage({
                           </td>
                         ) : null}
                         <td className={["array-column--sticky", "array-column--index", showStructuralRowActions ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>
-                          <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{index + 1}</span>
+                          <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
                         </td>
                         <td>{describeType(item, host)}</td>
                         <td>
@@ -881,23 +1227,23 @@ function ArrayPage({
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                onNavigate([...path, index]);
+                                onNavigate([...path, sourceIndex]);
                               }}
                             >
                               <span className="nested-entry-icon" aria-hidden="true">
                                 {getStructureIcon(item, host)}
                               </span>
-                              {renderNestedEntryContent(item, schema?.items, host, resolveNamedSchema, summarizeRowIdentity(item, index, path, host))}
+                              {renderNestedEntryContent(item, schema?.items, host, resolveNamedSchema, summarizeRowIdentity(item, sourceIndex, path, host))}
                             </button>
                           ) : (
                             renderPrimitiveEditor({
                               value: item,
-                              ariaLabel: `Array item ${index}`,
-                              path: [...path, index],
+                              ariaLabel: `Array item ${sourceIndex}`,
+                              path: [...path, sourceIndex],
                               host,
                               readOnly: pageReadOnly,
                               onChange(nextValue) {
-                                onApplyValue(setValueAtPath(value, [index], nextValue));
+                                onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
                               },
                             })
                           )}
@@ -907,7 +1253,7 @@ function ArrayPage({
                   })}
                     {showStructuralRowActions && showReferenceProjectionTable ? (
                       renderReferenceCreateRow({
-                        columns,
+                        columns: orderedColumns,
                         createDisabled: maxItemsReached || isCreatingReferenceRow,
                         onCreate: handleCreateReferenceRow,
                       })
@@ -916,7 +1262,7 @@ function ArrayPage({
                       renderPendingArrayRow({
                         value,
                         pendingRow,
-                        columns,
+                        columns: orderedColumns,
                         objectRows,
                         host,
                         useMergedValueCell: showReferenceProjectionTable,
@@ -938,6 +1284,18 @@ function ArrayPage({
             </div>
             <section className="editor-actions-panel editor-actions-panel--table">
               <div className="editor-actions-row">
+                {canAuthorTableSchema ? (
+                  <button
+                    className="ghost-button compact-button"
+                    type="button"
+                    onClick={() => {
+                      setActiveColumnMenuKey(null);
+                      setIsColumnManagerOpen((current) => !current);
+                    }}
+                  >
+                    Columns
+                  </button>
+                ) : null}
                 {enableRawEditor && canEditCurrentPage ? (
                   <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
                     Raw
@@ -954,7 +1312,64 @@ function ArrayPage({
                   </button>
                 ) : null}
               </div>
+              {canAuthorTableSchema && isColumnManagerOpen ? (
+                <div className="schema-column-manager">
+                  <div className="schema-column-manager__section">
+                    <strong>Visible columns</strong>
+                    {managedColumns.map((column) => {
+                      const label = getConfiguredColumnLabel(column.key, column, referenceViewColumns.find((entry) => entry.key === column.key), schema?.items);
+                      return (
+                        <div className="schema-column-manager__row" key={column.key}>
+                          <label className="schema-column-manager__label">
+                            <span>{label}</span>
+                            <input
+                              aria-label={`Column label for ${label}`}
+                              className="detail-input"
+                              type="text"
+                              value={label}
+                              onChange={(event) => {
+                                updateSingleColumn(column.key, (current) => ({
+                                  ...current,
+                                  label: event.target.value.trim().length ? event.target.value : undefined,
+                                }));
+                              }}
+                            />
+                          </label>
+                          <div className="schema-column-manager__actions">
+                            <button type="button" onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column.key, "left"))}>Left</button>
+                            <button type="button" onClick={() => updateTableSchemaColumns((current) => moveTableColumn(current, column.key, "right"))}>Right</button>
+                            <button type="button" onClick={() => updateTableSchemaColumns((current) => current.filter((entry) => entry.key !== column.key))}>Hide</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="schema-column-manager__section">
+                    <strong>Hidden columns</strong>
+                    {availableSchemaColumns.filter((column) => !managedColumns.some((entry) => entry.key === column.key)).map((column) => (
+                      <div className="schema-column-manager__row" key={column.key}>
+                        <span>{column.label}</span>
+                        <button
+                          aria-label={`Show column ${column.label}`}
+                          type="button"
+                          onClick={() => updateTableSchemaColumns((current) => [...current, { key: column.key }])}
+                        >
+                          Show
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </section>
+            {dragGhost ? (
+              <div
+                className="column-drag-ghost"
+                style={{ left: dragGhost.x, top: dragGhost.y }}
+              >
+                <div className="column-drag-ghost-name">{dragGhost.label}</div>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -1256,6 +1671,7 @@ function renderPrimitiveEditor(props: {
   const readOnly = props.readOnly || props.schema?.const !== undefined;
   const nullableBranch = getNullableBranchSchema(props.schema);
   const nullableLabel = getNullableBranchLabel(nullableBranch);
+  const editorOptionsState = resolveEditorOptions(props.schema, props.host);
   const referenceOptions = props.schema?.["x-editor"]?.reference && props.host?.getReferenceOptions
     ? props.host.getReferenceOptions({
       path: props.path,
@@ -1264,6 +1680,57 @@ function renderPrimitiveEditor(props: {
       reference: props.schema["x-editor"]?.reference,
     })
     : [];
+
+  if (editorOptionsState.error) {
+    return (
+      <div className="schema-editor-error">
+        <input
+          aria-label={props.ariaLabel}
+          className="detail-input"
+          disabled={readOnly}
+          value={typeof props.value === "string" ? props.value : String(props.value ?? "")}
+          onChange={(event) => props.onChange(event.target.value)}
+        />
+        <div className="form-hint form-hint--danger">{editorOptionsState.error}</div>
+      </div>
+    );
+  }
+
+  if (props.schema?.["x-editor"]?.fieldType === "multi-select" && Array.isArray(props.value)) {
+    return withNullableControls(
+      <SchemaMultiSelectEditor
+        ariaLabel={props.ariaLabel}
+        options={editorOptionsState.options}
+        readOnly={readOnly}
+        value={props.value as Array<string | number>}
+        onChange={props.onChange}
+      />,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
+    );
+  }
+
+  if (editorOptionsState.options.length > 0 && props.schema?.["x-editor"]?.fieldType === "select") {
+    return withNullableControls(
+      <select
+        aria-label={props.ariaLabel}
+        className="detail-input"
+        disabled={readOnly}
+        value={String(props.value ?? "")}
+        onChange={(event) => props.onChange(coerceEditorOptionValue(event.target.value, editorOptionsState.options))}
+      >
+        {editorOptionsState.options.map((option) => (
+          <option key={String(option.value)} value={String(option.value)}>
+            {option.label}
+          </option>
+        ))}
+      </select>,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
+    );
+  }
 
   if (nullableBranch) {
     if (props.value === null) {
@@ -1408,6 +1875,52 @@ function renderPrimitiveEditor(props: {
   );
 }
 
+function SchemaMultiSelectEditor(props: {
+  value: Array<string | number>;
+  options: ResolvedEditorOption[];
+  readOnly: boolean;
+  ariaLabel: string;
+  onChange: (nextValue: Array<string | number>) => void;
+}) {
+  const selectedValues = new Set(props.value.map((item) => String(item)));
+  return (
+    <div className="schema-multi-select-editor">
+      <div className="schema-multi-select-chips" aria-label={`${props.ariaLabel} selected values`}>
+        {props.value.map((item) => {
+          const option = props.options.find((candidate) => String(candidate.value) === String(item));
+          return (
+            <span className={`schema-chip ${option?.color ? `schema-chip--${option.color}` : ""}`.trim()} key={String(item)}>
+              {option?.label ?? String(item)}
+            </span>
+          );
+        })}
+      </div>
+      <div className="schema-multi-select-options">
+        {props.options.map((option) => {
+          const checked = selectedValues.has(String(option.value));
+          return (
+            <label className="schema-multi-select-option" key={String(option.value)}>
+              <input
+                checked={checked}
+                disabled={props.readOnly}
+                type="checkbox"
+                onChange={() => {
+                  if (checked) {
+                    props.onChange(props.value.filter((item) => String(item) !== String(option.value)));
+                    return;
+                  }
+                  props.onChange([...props.value, option.value]);
+                }}
+              />
+              <span>{option.label}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function withNullableControls(
   control: ReactNode,
   nullableBranch: EditorSchema | undefined,
@@ -1465,12 +1978,27 @@ type ReferenceViewColumn = {
   columnSchema?: EditorSchema;
 };
 
+type ResolvedEditorOption = {
+  value: string | number;
+  label: string;
+  color: EditorViewOptionColor | null;
+};
+
+type ArrayDisplayRow = {
+  item: unknown;
+  sourceIndex: number;
+};
+
 function getArrayColumns(
   items: unknown[],
   host?: EditorHost,
   itemSchema?: EditorSchema,
   referenceViewColumns: ReferenceViewColumn[] = [],
+  configuredColumns: EditorTableColumn[] = [],
 ) {
+  if (configuredColumns.length > 0) {
+    return ["#", ...configuredColumns.map((column) => column.key)];
+  }
   if (referenceViewColumns.length > 0) {
     return ["#", ...referenceViewColumns.map((column) => column.key)];
   }
@@ -1506,12 +2034,14 @@ function getArrayColumnWidths(
   host?: EditorHost,
   itemSchema?: EditorSchema,
   referenceViewColumns: ReferenceViewColumn[] = [],
+  configuredColumns: EditorTableColumn[] = [],
 ) {
   const widths: Record<string, number> = {};
   const sampleSize = Math.min(items.length, 40);
 
   for (const column of columns) {
     const referenceColumn = referenceViewColumns.find((entry) => entry.key === column);
+    const configuredColumn = configuredColumns.find((entry) => entry.key === column);
     if (referenceColumn) {
       if (isImageDisplaySchema(referenceColumn.columnSchema)) {
         const preview = referenceColumn.columnSchema?.["x-editor"]?.display?.preview;
@@ -1519,13 +2049,13 @@ function getArrayColumnWidths(
         widths[column] = Math.max(72, Math.min(120, previewWidth + 32));
         continue;
       }
-      const headerWidth = measureColumnText(referenceColumn.title);
+      const headerWidth = measureColumnText(configuredColumn?.label ?? referenceColumn.title);
       let contentWidth = headerWidth;
       for (let index = 0; index < sampleSize; index += 1) {
         const cellText = getReferenceTableCellText(items[index], referenceColumn, itemSchema, host);
         contentWidth = Math.max(contentWidth, measureColumnText(cellText));
       }
-      widths[column] = clampColumnWidth(contentWidth, referenceColumn.title);
+      widths[column] = clampColumnWidth(contentWidth, configuredColumn?.label ?? referenceColumn.title);
       continue;
     }
 
@@ -1534,7 +2064,7 @@ function getArrayColumnWidths(
       continue;
     }
 
-    const headerWidth = measureColumnText(column);
+    const headerWidth = measureColumnText(configuredColumn?.label ?? itemSchema?.properties?.[column]?.title ?? column);
     let contentWidth = headerWidth;
 
     if (hasObjectTableRows(items, host)) {
@@ -1571,6 +2101,113 @@ function describeArrayColumnType(items: unknown[], column: string, host?: Editor
     | Record<string, unknown>
     | undefined;
   return describeType(sample?.[column], host);
+}
+
+function getConfiguredTableColumns(schema: EditorSchema | undefined) {
+  return schema?.["x-editor"]?.table?.columns ?? [];
+}
+
+function getAvailableSchemaColumns(schema: EditorSchema | undefined): Array<{ key: string; label: string }> {
+  if (!schema?.properties) return [];
+  return Object.entries(schema.properties).map(([key, propertySchema]) => ({
+    key,
+    label: propertySchema.title ?? key,
+  }));
+}
+
+function getManagedTableColumns(
+  configuredColumns: EditorTableColumn[],
+  renderedColumns: string[],
+  availableColumns: Array<{ key: string; label: string }>,
+) {
+  if (configuredColumns.length > 0) {
+    return configuredColumns;
+  }
+  return renderedColumns
+    .filter((key) => key !== "#")
+    .filter((key) => availableColumns.some((entry) => entry.key === key))
+    .map((key) => ({ key }));
+}
+
+function setSchemaTableColumns(schema: EditorSchema, columns: EditorTableColumn[]): EditorSchema {
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      table: {
+        columns,
+      },
+    },
+  };
+}
+
+function moveTableColumn(columns: EditorTableColumn[], key: string, direction: "left" | "right") {
+  const currentIndex = columns.findIndex((column) => column.key === key);
+  if (currentIndex < 0) return columns;
+  const targetIndex = direction === "left" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= columns.length) return columns;
+  const next = [...columns];
+  const [entry] = next.splice(currentIndex, 1);
+  next.splice(targetIndex, 0, entry);
+  return next;
+}
+
+function reorderColumnsByKeys(columns: EditorTableColumn[], orderedKeys: string[]) {
+  if (orderedKeys.length === 0) return columns;
+  const rank = new Map(orderedKeys.map((key, index) => [key, index]));
+  return [...columns].sort((left, right) => {
+    const leftRank = rank.get(left.key);
+    const rightRank = rank.get(right.key);
+    if (leftRank == null && rightRank == null) return 0;
+    if (leftRank == null) return 1;
+    if (rightRank == null) return -1;
+    return leftRank - rightRank;
+  });
+}
+
+function getConfiguredColumnLabel(
+  column: string,
+  configuredColumn: EditorTableColumn | undefined,
+  referenceColumn: ReferenceViewColumn | undefined,
+  itemSchema: EditorSchema | undefined,
+) {
+  if (column === "#") return "#";
+  return configuredColumn?.label ?? referenceColumn?.title ?? itemSchema?.properties?.[column]?.title ?? column;
+}
+
+function buildArrayDisplayRows(
+  items: unknown[],
+  sortState: { key: string; direction: "asc" | "desc" } | null,
+  referenceViewColumns: ReferenceViewColumn[],
+  configuredColumns: EditorTableColumn[],
+  host?: EditorHost,
+): ArrayDisplayRow[] {
+  const rows = items.map((item, sourceIndex) => ({ item, sourceIndex }));
+  if (!sortState) return rows;
+  const configuredColumn = configuredColumns.find((column) => column.key === sortState.key);
+  if (!configuredColumn?.sortable) return rows;
+  const referenceColumn = referenceViewColumns.find((column) => column.key === sortState.key);
+  return [...rows].sort((left, right) => {
+    const leftValue = normalizeSortValue(left.item, sortState.key, referenceColumn, host);
+    const rightValue = normalizeSortValue(right.item, sortState.key, referenceColumn, host);
+    const result = leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: "base" });
+    return sortState.direction === "asc" ? result : -result;
+  });
+}
+
+function normalizeSortValue(
+  item: unknown,
+  key: string,
+  referenceColumn: ReferenceViewColumn | undefined,
+  host?: EditorHost,
+) {
+  if (referenceColumn) {
+    return getReferenceTableCellText(item, referenceColumn, undefined, host).trim();
+  }
+  if (isPlainObject(item)) {
+    return previewValue((item as Record<string, unknown>)[key], host).trim();
+  }
+  return previewValue(item, host).trim();
 }
 
 function clampColumnWidth(width: number, column: string) {
@@ -2062,6 +2699,80 @@ function getReferenceViewColumnsFromSchema(viewSchema: EditorSchema | undefined)
   return columns;
 }
 
+function resolveEditorOptions(schema: EditorSchema | undefined, host?: EditorHost): { options: ResolvedEditorOption[]; error: string | null } {
+  const editor = schema?.["x-editor"];
+  if (!editor) return { options: [], error: null };
+  if (editor.options?.length && editor.optionsSource) {
+    return { options: [], error: "Schema cannot declare both inline options and optionsSource" };
+  }
+  if (editor.options?.length) {
+    return { options: editor.options.map(normalizeEditorOption), error: null };
+  }
+  if (!editor.optionsSource) {
+    return { options: [], error: null };
+  }
+  if (editor.optionsSource.kind !== "json-file") {
+    return { options: [], error: `Unsupported options source kind: ${editor.optionsSource.kind}` };
+  }
+  const resolved = resolveReferenceDocument(editor.optionsSource.uri, host);
+  if (!resolved.ok) {
+    return { options: [], error: resolved.error.message };
+  }
+  if (!Array.isArray(resolved.value)) {
+    return { options: [], error: "Options source must resolve to a JSON array" };
+  }
+  return {
+    options: resolved.value
+      .map((entry) => mapEditorOptionRecord(entry, editor.optionsSource!))
+      .filter((entry): entry is ResolvedEditorOption => entry != null),
+    error: null,
+  };
+}
+
+function normalizeEditorOption(option: EditorViewOption): ResolvedEditorOption {
+  return {
+    value: option.value,
+    label: option.label ?? String(option.value),
+    color: option.color ?? null,
+  };
+}
+
+function mapEditorOptionRecord(
+  entry: unknown,
+  source: Exclude<NonNullable<EditorSchema["x-editor"]>["optionsSource"], undefined>,
+): ResolvedEditorOption | null {
+  if (!isPlainObject(entry)) return null;
+  const rawValue = entry[source.valueField];
+  if (typeof rawValue !== "string" && typeof rawValue !== "number") return null;
+  const rawLabel = source.labelField ? entry[source.labelField] : undefined;
+  const rawColor = source.colorField ? entry[source.colorField] : undefined;
+  return {
+    value: rawValue,
+    label: typeof rawLabel === "string" && rawLabel.trim().length > 0 ? rawLabel : String(rawValue),
+    color: isEditorOptionColor(rawColor) ? rawColor : null,
+  };
+}
+
+function isEditorOptionColor(value: unknown): value is EditorViewOptionColor {
+  return ["red", "orange", "yellow", "green", "blue", "gray", "gold"].includes(String(value));
+}
+
+function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) {
+  const fieldType = schema?.["x-editor"]?.fieldType;
+  if (fieldType === "select") {
+    return value == null || typeof value === "string" || typeof value === "number";
+  }
+  if (fieldType === "multi-select") {
+    return Array.isArray(value);
+  }
+  return false;
+}
+
+function coerceEditorOptionValue(rawValue: string, options: ResolvedEditorOption[]) {
+  const match = options.find((option) => String(option.value) === rawValue);
+  return match?.value ?? rawValue;
+}
+
 function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefined, host?: EditorHost): ReactNode {
   const display = schema?.["x-editor"]?.display;
   if (typeof value === "string" && display?.kind === "image") {
@@ -2208,6 +2919,34 @@ function getOrderedKeys(value: Record<string, unknown>, schema?: EditorSchema) {
   const remaining = currentKeys.filter((key) => !prioritized.includes(key));
   return [...prioritized, ...remaining];
 }
+
+function reorderSchemaProperties(schema: EditorSchema, key: string, direction: "up" | "down"): EditorSchema {
+  if (!schema.properties?.[key]) return schema;
+  const entries = Object.entries(schema.properties);
+  const currentIndex = entries.findIndex(([entryKey]) => entryKey === key);
+  if (currentIndex < 0) return schema;
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= entries.length) return schema;
+  const nextEntries = [...entries];
+  const [entry] = nextEntries.splice(currentIndex, 1);
+  nextEntries.splice(targetIndex, 0, entry);
+  return {
+    ...schema,
+    properties: Object.fromEntries(nextEntries),
+  };
+}
+
+function moveKey(keys: string[], key: string, direction: "up" | "down") {
+  const currentIndex = keys.indexOf(key);
+  if (currentIndex < 0) return keys;
+  const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+  if (targetIndex < 0 || targetIndex >= keys.length) return keys;
+  const next = [...keys];
+  const [entry] = next.splice(currentIndex, 1);
+  next.splice(targetIndex, 0, entry);
+  return next;
+}
+
 
 function isRequiredField(schema: EditorSchema | undefined, key: string) {
   return schema?.required?.includes(key) ?? false;
