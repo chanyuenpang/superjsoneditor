@@ -53,6 +53,11 @@ function getBackgroundPageElement() {
   return document.querySelector(".stack-page--background:not(.stack-page--overlay)") as HTMLElement;
 }
 
+function quickPressHeaderMenu(button: HTMLElement) {
+  fireEvent.mouseDown(button, { button: 0, clientX: 100, clientY: 20 });
+  fireEvent.mouseUp(window, { button: 0, clientX: 100, clientY: 20 });
+}
+
 function createNavigationSemanticsSchemaHost(): EditorSchemaHost {
   return {
     getSchema() {
@@ -139,6 +144,17 @@ test("reference projection demo stays aligned with real item fields", () => {
   expect(screen.queryByRole("button", { name: /Description/ })).toBeNull();
 });
 
+test("reference projection demo can open nested encounter references from shared demo sources", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Reference Projection" }));
+  fireEvent.click(screen.getByRole("row", { name: "2 Moon Charm item" }));
+  fireEvent.click(screen.getByRole("button", { name: "boundEncounter reference asset://encounters/shadow-eye.json" }));
+
+  expect(screen.queryByText("Reference content not found")).toBeNull();
+  expect(getCurrentPageQueries().getByDisplayValue("shadow-eye")).toBeInTheDocument();
+});
+
 test("demo settings can toggle editing and raw json affordances", () => {
   render(<App />);
 
@@ -160,6 +176,20 @@ test("demo settings can switch the layout mode to pinned root", () => {
   fireEvent.change(screen.getByLabelText("Layout mode"), { target: { value: "pinned-root" } });
 
   expect(screen.getByLabelText("Layout mode")).toHaveValue("pinned-root");
+});
+
+test("demo settings can toggle auto fullscreen when only the left page is visible", () => {
+  const { container } = render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  const fullscreenToggle = screen.getByLabelText("Auto fullscreen single left page");
+  expect(fullscreenToggle).not.toBeChecked();
+  expect(container.querySelector(".stack-page--fullscreen-left")).toBeNull();
+
+  fireEvent.click(fullscreenToggle);
+
+  expect(fullscreenToggle).toBeChecked();
+  expect(container.querySelector(".stack-page--fullscreen-left")).not.toBeNull();
 });
 
 test("demo app uses wide-screen dual-page stack flow", () => {
@@ -1244,14 +1274,14 @@ test("sortable schema table columns can be toggled from the header without initi
     .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
   expect(beforeSort).toEqual(["Second Quest", "First Quest"]);
 
-  fireEvent.click(screen.getByRole("button", { name: "Title" }));
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Title" }));
   fireEvent.click(screen.getByRole("button", { name: /Sort ascending/i }));
 
   const afterAscSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
     .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
   expect(afterAscSort).toEqual(["First Quest", "Second Quest"]);
 
-  fireEvent.click(screen.getByRole("button", { name: "Title" }));
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Title" }));
   fireEvent.click(screen.getByRole("button", { name: /Sort descending/i }));
 
   const afterDescSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
@@ -1998,7 +2028,7 @@ test("schema authoring columns manager can add hidden object-array columns while
   const visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
   fireEvent.click(within(visibilityPanel).getByRole("button", { name: /Health/ }));
   fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Identifier" }));
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Identifier" }));
   fireEvent.change(screen.getByLabelText("Column label for Identifier"), { target: { value: "Quest ID" } });
 
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
@@ -2008,6 +2038,52 @@ test("schema authoring columns manager can add hidden object-array columns while
     { key: "id", label: "Quest ID" },
     { key: "hp" },
   ]);
+});
+
+test("schema column header long press does not open the menu", () => {
+  vi.useFakeTimers();
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title", sortable: true },
+          { key: "id" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest" },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const headerButton = screen.getByRole("button", { name: "Identifier" });
+
+  try {
+    fireEvent.mouseDown(headerButton, { button: 0, clientX: 100, clientY: 20 });
+    act(() => {
+      vi.advanceTimersByTime(350);
+    });
+    fireEvent.mouseUp(window, { button: 0, clientX: 100, clientY: 20 });
+    fireEvent.click(headerButton);
+
+    expect(screen.queryByLabelText("Column label for Identifier")).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test("schema authoring can drag table headers to rewrite default column order", async () => {
@@ -2186,7 +2262,7 @@ test("schema authoring can add hidden reference projection columns and rename th
   const visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
   fireEvent.click(within(visibilityPanel).getByRole("button", { name: /Identifier/ }));
   fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Name" }));
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Name" }));
   fireEvent.change(screen.getAllByLabelText("Column label for Name").at(-1) as HTMLElement, { target: { value: "Display Name" } });
 
   const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
@@ -2424,7 +2500,7 @@ test("schema header wrap toggle writes column wrap config and applies wrapped-ce
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Title" }));
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Title" }));
   fireEvent.click(screen.getByRole("button", { name: "Wrap text" }));
 
   await waitFor(() => {

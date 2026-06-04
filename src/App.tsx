@@ -86,7 +86,7 @@ const freeJsonHost: EditorHost = {
 
 const referenceProjectionHost: EditorHost = {
   loadReferenceSource(uri) {
-    return referenceProjectionDocuments[uri];
+    return referenceProjectionDocuments[uri] ?? freeJsonDocuments[uri];
   },
 };
 
@@ -429,6 +429,7 @@ export function App() {
   const [layoutMode, setLayoutMode] = useState<"stack-flow" | "pinned-root">("stack-flow");
   const [editingEnabled, setEditingEnabled] = useState(true);
   const [rawJsonEnabled, setRawJsonEnabled] = useState(true);
+  const [leftPageFullscreen, setLeftPageFullscreen] = useState(false);
   const activeScenario = useMemo(
     () => demoScenarios.find((scenario) => scenario.id === activeScenarioId) ?? demoScenarios[0],
     [activeScenarioId],
@@ -496,6 +497,7 @@ export function App() {
             enableRawEditor={rawJsonEnabled}
             host={activeScenario.host}
             layoutMode={layoutMode}
+            leftPageFullscreen={leftPageFullscreen}
             onSave={saveHandler}
             onUnavailableSaveAttempt={unavailableSaveHandler}
             readOnly={!editingEnabled}
@@ -504,9 +506,11 @@ export function App() {
             toolbarActions={(
               <DemoSettingsPopover
                 editingEnabled={editingEnabled}
+                leftPageFullscreen={leftPageFullscreen}
                 layoutMode={layoutMode}
                 rawJsonEnabled={rawJsonEnabled}
                 onEditingEnabledChange={setEditingEnabled}
+                onLeftPageFullscreenChange={setLeftPageFullscreen}
                 onLayoutModeChange={setLayoutMode}
                 onRawJsonEnabledChange={setRawJsonEnabled}
               />
@@ -563,9 +567,11 @@ function createMutableSchemaHost(
 
 function DemoSettingsPopover(props: {
   editingEnabled: boolean;
+  leftPageFullscreen: boolean;
   layoutMode: "stack-flow" | "pinned-root";
   rawJsonEnabled: boolean;
   onEditingEnabledChange: (nextValue: boolean) => void;
+  onLeftPageFullscreenChange: (nextValue: boolean) => void;
   onLayoutModeChange: (nextValue: "stack-flow" | "pinned-root") => void;
   onRawJsonEnabledChange: (nextValue: boolean) => void;
 }) {
@@ -612,6 +618,15 @@ function DemoSettingsPopover(props: {
                 onChange={(event) => props.onRawJsonEnabledChange(event.target.checked)}
               />
               <span>Enable raw JSON</span>
+            </label>
+            <label className="demo-settings-checkbox">
+              <input
+                aria-label="Auto fullscreen single left page"
+                checked={props.leftPageFullscreen}
+                type="checkbox"
+                onChange={(event) => props.onLeftPageFullscreenChange(event.target.checked)}
+              />
+              <span>Auto fullscreen single left page</span>
             </label>
           </div>
         </Popover.Content>

@@ -29,6 +29,7 @@ type SchemaColumnHeaderProps = {
 const minColumnWidth = 56;
 const maxColumnWidth = 560;
 const dragThreshold = 4;
+const clickMenuOpenThresholdMs = 300;
 
 export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -40,11 +41,13 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
     pointerId: number;
     startX: number;
     startY: number;
+    startTime: number;
     moved: boolean;
     dragging: boolean;
     startRect: DOMRect;
     pointerOffsetX: number;
   } | null>(null);
+  const suppressNextClickRef = useRef(false);
   const dragState = useRef<{
     startX: number;
     startRight: number;
@@ -142,6 +145,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
 
   function beginDrag(event: ReactPointerEvent<HTMLButtonElement>) {
     if (event.button !== 0) return;
+    if (pressStateRef.current) return;
     event.stopPropagation();
     event.preventDefault();
     setMenuOpen(false);
@@ -150,6 +154,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      startTime: Date.now(),
       moved: false,
       dragging: false,
       startRect,
@@ -176,7 +181,8 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
       const state = pressStateRef.current;
       if (!state) return;
       if (state.dragging) props.onDragEnd(props.fieldName);
-      else if (!state.moved && openMenu) setMenuOpen(true);
+      else if (!state.moved && openMenu && Date.now() - state.startTime < clickMenuOpenThresholdMs) setMenuOpen(true);
+      suppressNextClickRef.current = true;
       props.onPressChange(props.fieldName, false);
       document.body.classList.remove("is-dragging-column");
       pressStateRef.current = null;
@@ -234,6 +240,11 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          if (event.detail > 0) return;
+          if (suppressNextClickRef.current) {
+            suppressNextClickRef.current = false;
+            return;
+          }
           setMenuOpen(true);
         }}
         onKeyDown={(event) => {

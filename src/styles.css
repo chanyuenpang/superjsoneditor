@@ -897,11 +897,68 @@ button {
   text-transform: lowercase;
 }
 
+.menu-content {
+  background: #fff;
+  border: 1px solid #dedbd6;
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(15, 15, 15, 0.12);
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  padding: 6px;
+}
+
+.menu-item {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #37352f;
+  cursor: pointer;
+  display: flex;
+  font-size: 14px;
+  gap: 8px;
+  justify-content: flex-start;
+  min-height: 28px;
+  padding: 0 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.menu-item:hover {
+  background: #efeeeb;
+}
+
+.menu-item:focus-visible {
+  background: #efeeeb;
+  outline: none;
+}
+
+.menu-item svg {
+  color: #787774;
+  flex: 0 0 auto;
+}
+
+.menu-item.danger {
+  color: #d44c47;
+}
+
+.menu-item.danger svg {
+  color: currentColor;
+}
+
+.menu-separator {
+  background: #e4e2de;
+  height: 1px;
+  margin: 6px 0;
+}
+
 .column-menu-popup {
   left: 0;
   position: fixed;
   top: 0;
-  width: 220px;
+  width: 240px;
   z-index: 2000;
 }
 
@@ -2231,6 +2288,10 @@ th:hover .column-resize-handle::after,
   gap: 8px;
   grid-template-columns: 16px minmax(0, 1fr);
   min-height: 38px;
+  padding: 0 10px;
+}
+
+.schema-column-menu__input-row.menu-item {
   padding: 0 10px;
 }
 
