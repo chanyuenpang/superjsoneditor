@@ -910,7 +910,7 @@ button {
   cursor: col-resize;
   opacity: 0;
   position: absolute;
-  right: 0;
+  right: -10px;
   top: 0;
   width: 16px;
   z-index: 30;
@@ -922,20 +922,18 @@ button {
   content: "";
   opacity: 0;
   position: absolute;
-  right: 0;
+  right: -1px;
   top: 4px;
   width: 2px;
 }
 
 th:hover .column-resize-handle,
-.column-resize-handle:hover,
-.is-resizing-column .column-resize-handle {
+.column-resize-handle:hover {
   opacity: 1;
 }
 
 th:hover .column-resize-handle::after,
-.column-resize-handle:hover::after,
-.is-resizing-column .column-resize-handle::after {
+.column-resize-handle:hover::after {
   opacity: 1;
 }
 
@@ -948,7 +946,7 @@ th:hover .column-resize-handle::after,
   background: #2f80ed;
   bottom: 0;
   content: "";
-  left: var(--column-resize-guide-x, 0);
+  left: calc(var(--column-resize-guide-x, 0px) - 1px);
   pointer-events: none;
   position: fixed;
   top: 52px;

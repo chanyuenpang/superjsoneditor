@@ -47,6 +47,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
   } | null>(null);
   const dragState = useRef<{
     startX: number;
+    startRight: number;
     startWidth: number;
     lastWidth: number;
   } | null>(null);
@@ -92,21 +93,26 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
     event.preventDefault();
     event.stopPropagation();
 
+    const headerElement = event.currentTarget.closest("th") ?? headerRef.current;
+    const startWidth = widthRef.current;
+    const startRight = headerElement?.getBoundingClientRect().right ?? event.clientX;
     dragState.current = {
       startX: event.clientX,
-      startWidth: widthRef.current,
-      lastWidth: widthRef.current,
+      startRight,
+      startWidth,
+      lastWidth: startWidth,
     };
 
     document.body.classList.add("is-resizing-column");
-    updateResizeGuide(event.clientX);
+    updateResizeGuide(startRight);
 
     const onPointerMove = (moveEvent: PointerEvent) => {
       if (!dragState.current) return;
-      const nextWidth = clampColumnWidth(dragState.current.startWidth + moveEvent.clientX - dragState.current.startX);
+      const state = dragState.current;
+      const nextWidth = clampColumnWidth(state.startWidth + moveEvent.clientX - state.startX);
       if (Math.abs(nextWidth - dragState.current.lastWidth) < 4) return;
       dragState.current.lastWidth = nextWidth;
-      updateResizeGuide(moveEvent.clientX);
+      updateResizeGuide(state.startRight + (nextWidth - state.startWidth));
       updateTableColumnWidth(headerRef.current, props.fieldName, nextWidth);
     };
 
@@ -320,8 +326,8 @@ function clampColumnWidth(width: number) {
   return Math.max(minColumnWidth, Math.min(maxColumnWidth, Math.round(width)));
 }
 
-function updateResizeGuide(clientX: number) {
-  document.body.style.setProperty("--column-resize-guide-x", `${Math.round(clientX)}px`);
+function updateResizeGuide(guideRight: number) {
+  document.body.style.setProperty("--column-resize-guide-x", `${Math.round(guideRight)}px`);
 }
 
 function updateTableColumnWidth(headerElement: HTMLElement | null, fieldName: string, width: number) {
