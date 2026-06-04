@@ -84,6 +84,7 @@ export function EditorShell({
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [validationResult, setValidationResult] = useState<EditorValidationResult | null>(null);
   const [isEditingCurrentPage, setIsEditingCurrentPage] = useState(false);
+  const [pageToolbarHost, setPageToolbarHost] = useState<HTMLDivElement | null>(null);
   const [, setSchemaRevision] = useState(0);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
@@ -524,6 +525,7 @@ export function EditorShell({
             </div>
           )}
           <div className="toolbar-spacer" />
+          <div className="toolbar-inline-slot" ref={setPageToolbarHost} />
           {toolbarActions}
           {saveState !== "idle" ? (
             <div className="toolbar-meta status-text">
@@ -597,6 +599,7 @@ export function EditorShell({
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  toolbarPortalHost={pageToolbarHost}
                     referenceError={currentPage.referenceError}
                     isReference={currentPage.isReference}
                     referenceScopeDepth={referenceScopeDepths[compactPageIndex]}
@@ -689,6 +692,7 @@ export function EditorShell({
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                     validationResult={validationResult}
                     enableRawEditor={enableRawEditor}
+                    toolbarPortalHost={index === visiblePages.length - 1 ? pageToolbarHost : null}
                     referenceError={page.referenceError}
                     isReference={page.isReference}
                     referenceScopeDepth={referenceScopeDepths[fullPageIndex]}
@@ -749,6 +753,7 @@ export function EditorShell({
                   onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  toolbarPortalHost={null}
                   referenceError={stackAnimation.exitingPage.referenceError}
                   isReference={stackAnimation.exitingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
@@ -787,6 +792,7 @@ export function EditorShell({
                   onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  toolbarPortalHost={null}
                   referenceError={stackAnimation.exitingPage.referenceError}
                   isReference={stackAnimation.exitingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}
@@ -826,6 +832,7 @@ export function EditorShell({
                   onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  toolbarPortalHost={null}
                   referenceError={stackAnimation.promotingPage.referenceError}
                   isReference={stackAnimation.promotingPage.isReference}
                   referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.promotingPage)}
@@ -888,6 +895,7 @@ export function EditorShell({
                         onUpdateNamedSchema={handleUpdateNamedSchema}
                         validationResult={validationResult}
                         enableRawEditor={enableRawEditor}
+                        toolbarPortalHost={visiblePages.length === 1 ? pageToolbarHost : null}
                         referenceError={rootPage.referenceError}
                         isReference={rootPage.isReference}
                         referenceScopeDepth={referenceScopeDepths[0]}
@@ -961,6 +969,7 @@ export function EditorShell({
                         onUpdateNamedSchema={handleUpdateNamedSchema}
                         validationResult={validationResult}
                         enableRawEditor={enableRawEditor}
+                        toolbarPortalHost={pageToolbarHost}
                         referenceError={pinnedRightPage.referenceError}
                         isReference={pinnedRightPage.isReference}
                         referenceScopeDepth={referenceScopeDepths[Math.max(0, pages.length - 1)]}
@@ -1007,6 +1016,7 @@ export function EditorShell({
                       onUpdateNamedSchema={handleUpdateNamedSchema}
                       validationResult={validationResult}
                       enableRawEditor={enableRawEditor}
+                      toolbarPortalHost={null}
                       referenceError={stackAnimation.exitingPage.referenceError}
                       isReference={stackAnimation.exitingPage.isReference}
                       referenceScopeDepth={getReferenceScopeDepthForPage(pages, stackAnimation.exitingPage)}

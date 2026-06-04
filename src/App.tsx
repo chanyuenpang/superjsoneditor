@@ -137,24 +137,54 @@ const rewardItemSchema: EditorSchema = {
   type: "object",
   properties: {
     id: { type: "string", title: "ID" },
+    kind: { type: "string", title: "Kind" },
     name: { type: "string", title: "Name" },
-    icon: {
+    damage: {
+      type: "object",
+      title: "Damage",
+      properties: {
+        min: { type: "integer", title: "Min" },
+        max: { type: "integer", title: "Max" },
+      },
+    },
+    bonus: {
+      type: "object",
+      title: "Bonus",
+      properties: {
+        manaRegen: { type: "integer", title: "Mana Regen" },
+      },
+      additionalProperties: { type: "integer" },
+    },
+    boundEncounter: {
       type: "string",
-      title: "Icon",
+      title: "Bound Encounter",
       "x-editor": {
-        display: {
-          kind: "image",
-          preview: { width: 32, height: 24, fit: "contain" },
+        reference: {
+          target: { schemaRef: "encounter" },
+          view: { layout: "inline", schemaRef: "encounter_row" },
         },
       },
     },
-    description: { type: "string", title: "Description" },
   },
 };
 
 const rewardItemRowSchema: EditorSchema = {
   type: "object",
   properties: {
+    id: {
+      type: "string",
+      title: "ID",
+      "x-editor": {
+        projection: { path: ["id"] },
+      },
+    },
+    kind: {
+      type: "string",
+      title: "Kind",
+      "x-editor": {
+        projection: { path: ["kind"] },
+      },
+    },
     name: {
       type: "string",
       title: "Name",
@@ -162,25 +192,44 @@ const rewardItemRowSchema: EditorSchema = {
         projection: { path: ["name"] },
       },
     },
-    icon: {
+    boundEncounter: {
       type: "string",
-      title: "Icon",
+      title: "Bound Encounter",
       "x-editor": {
-        projection: { path: ["icon"] },
-        display: {
-          kind: "image",
-          preview: { width: 32, height: 24, fit: "contain" },
-        },
+        projection: { path: ["boundEncounter"] },
       },
     },
-    description: {
+  },
+};
+
+const encounterSchema: EditorSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string", title: "ID" },
+    kind: { type: "string", title: "Kind" },
+    enemies: {
+      type: "array",
+      title: "Enemies",
+      items: { type: "string" },
+    },
+  },
+};
+
+const encounterRowSchema: EditorSchema = {
+  type: "object",
+  properties: {
+    id: {
       type: "string",
-      title: "Description",
+      title: "ID",
       "x-editor": {
-        projection: { path: ["description"] },
-        display: {
-          text: { sentenceLimit: 1 },
-        },
+        projection: { path: ["id"] },
+      },
+    },
+    kind: {
+      type: "string",
+      title: "Kind",
+      "x-editor": {
+        projection: { path: ["kind"] },
       },
     },
   },
@@ -194,7 +243,7 @@ const referenceProjectionSchemaHost = createMutableSchemaHost(
         table: {
           columns: [
             { field: ["name"], label: "Name" },
-            { field: ["icon"] },
+            { field: ["kind"] },
           ],
         },
       },
@@ -210,10 +259,14 @@ const referenceProjectionSchemaHost = createMutableSchemaHost(
     },
     "asset://items/iron-sword.json": rewardItemSchema,
     "asset://items/moon-charm.json": rewardItemSchema,
+    "asset://encounters/shadow-eye.json": encounterSchema,
+    "asset://encounters/wolf-pack.json": encounterSchema,
   },
   {
     reward_item: rewardItemSchema,
     reward_item_row: rewardItemRowSchema,
+    encounter: encounterSchema,
+    encounter_row: encounterRowSchema,
   },
 );
 
@@ -282,6 +335,8 @@ const selectAndTagsSchemaHost = createMutableSchemaHost(
   {
     reward_item: rewardItemSchema,
     reward_item_row: rewardItemRowSchema,
+    encounter: encounterSchema,
+    encounter_row: encounterRowSchema,
   },
 );
 

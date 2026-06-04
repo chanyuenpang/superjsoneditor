@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import { icons } from "./icons";
 
 type SchemaColumnHeaderProps = {
@@ -32,6 +32,7 @@ const dragThreshold = 4;
 
 export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const widthRef = useRef(props.width);
@@ -56,6 +57,15 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
 
   useEffect(() => {
     if (!menuOpen) return;
+    const syncMenuPosition = () => {
+      const rect = headerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPosition({
+        left: rect.left,
+        top: rect.bottom + 6,
+      });
+    };
+    syncMenuPosition();
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -66,9 +76,13 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setMenuOpen(false);
     };
+    window.addEventListener("resize", syncMenuPosition);
+    window.addEventListener("scroll", syncMenuPosition, true);
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("keydown", onKeyDown);
     return () => {
+      window.removeEventListener("resize", syncMenuPosition);
+      window.removeEventListener("scroll", syncMenuPosition, true);
       window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("keydown", onKeyDown);
     };
@@ -230,13 +244,19 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
         <span>{props.label}</span>
         {props.typeLabel ? <small>{props.typeLabel}</small> : null}
       </button>
-      {menuOpen ? (
-        <div className="menu-content column-menu-popup schema-column-menu-popup" ref={menuRef} role="menu">
-          <label className="schema-column-menu__field">
-            <span>Label</span>
+      {menuOpen && menuPosition && typeof document !== "undefined" ? createPortal(
+        <div
+          className="menu-content column-menu-popup schema-column-menu-popup"
+          ref={menuRef}
+          role="menu"
+          style={{ left: `${menuPosition.left}px`, top: `${menuPosition.top}px` }}
+        >
+          <label className="menu-item schema-column-menu__input-row">
+            <icons.edit size={15} />
             <input
               aria-label={`Column label for ${props.label}`}
-              className="detail-input"
+              className="schema-column-menu__input"
+              placeholder="Column label"
               type="text"
               value={props.label}
               onChange={(event) => {
@@ -244,6 +264,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
               }}
             />
           </label>
+          <div className="menu-separator" />
           {props.sortable ? (
             <>
               <button className="menu-item" onClick={() => runAfterMenuClose(() => props.onSort("asc"))} type="button">
@@ -274,10 +295,11 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
           <button className="menu-item" onClick={() => runAfterMenuClose(props.onResetWidth)} type="button">
             <icons.reset size={15} /> Reset width
           </button>
-          <button className="menu-item" onClick={() => runAfterMenuClose(props.onHide)} type="button">
+          <button className="menu-item danger" onClick={() => runAfterMenuClose(props.onHide)} type="button">
             <icons.hidden size={15} /> Hide
           </button>
-        </div>
+        </div>,
+        document.body,
       ) : null}
       <div
         aria-label={`Resize ${props.label} column`}

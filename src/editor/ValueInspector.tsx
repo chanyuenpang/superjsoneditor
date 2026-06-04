@@ -1,5 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
+import { createPortal } from "react-dom";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { getReferenceLabel, getReferenceUri, isReferenceValue, resolveReferenceDocument, type EditorHost, type ReferenceErrorInfo } from "./host";
@@ -61,6 +63,7 @@ type ValueInspectorProps = {
   onNavigate: (path: JsonPath) => void;
   onApplyValue: (nextValue: unknown) => void;
   onEditModeChange?: (isEditing: boolean) => void;
+  toolbarPortalHost?: HTMLElement | null;
   enableRawEditor?: boolean;
 };
 
@@ -552,6 +555,7 @@ function ArrayPage({
   onNavigate,
   onApplyValue,
   onEditModeChange,
+  toolbarPortalHost,
   readOnly = false,
   enableRawEditor = true,
 }: ValueInspectorProps & { value: unknown[] }) {
@@ -587,6 +591,11 @@ function ArrayPage({
   );
   const referenceItemSchema = schema?.items;
   const referenceSchema = referenceItemSchema?.["x-editor"]?.reference;
+  const referenceTargetSchemaRef = referenceSchema?.target?.schemaRef;
+  const referenceTargetSchema = useMemo(
+    () => referenceTargetSchemaRef ? resolveNamedSchema?.(referenceTargetSchemaRef) : undefined,
+    [referenceTargetSchemaRef, resolveNamedSchema],
+  );
   const referenceViewColumns = useMemo(
     () => getReferenceViewColumns(value, referenceViewSchema, host),
     [host, referenceViewSchema, value],
@@ -599,7 +608,7 @@ function ArrayPage({
     [tableSchema],
   );
   const [sortState, setSortState] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
-  const [isColumnManagerOpen, setIsColumnManagerOpen] = useState(false);
+  const [hiddenFieldsOpen, setHiddenFieldsOpen] = useState(false);
   const [pressedColumnKey, setPressedColumnKey] = useState<string | null>(null);
   const [dragPreviewKeys, setDragPreviewKeys] = useState<string[] | null>(null);
   const [dragGhost, setDragGhost] = useState<{ key: string; label: string; x: number; y: number } | null>(null);
@@ -613,8 +622,10 @@ function ArrayPage({
   } | null>(null);
   const showStructuralRowActions = editMode && !pageReadOnly;
   const availableSchemaColumns = useMemo(
-    () => getAvailableSchemaColumns(columnSourceSchema),
-    [columnSourceSchema],
+    () => showReferenceProjectionTable
+      ? getAvailableSchemaColumns(referenceTargetSchema)
+      : getAvailableSchemaColumns(columnSourceSchema),
+    [columnSourceSchema, referenceTargetSchema, showReferenceProjectionTable],
   );
   const canAuthorTableSchema = Boolean(
     !pageReadOnly && sourceId && onUpdateDocumentSchema,
@@ -627,18 +638,46 @@ function ArrayPage({
     () => getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns),
     [availableSchemaColumns, columns, configuredTableColumns],
   );
+  const visibilityColumns = useMemo(() => {
+    const ordered = managedColumns.map((column) => {
+      const columnId = getTableColumnId(column);
+      const referenceColumn = findReferenceColumn(columnId, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
+      return {
+        key: columnId,
+        column,
+        label: getConfiguredColumnLabel(columnId, column, referenceColumn, showReferenceProjectionTable ? referenceTargetSchema : columnSourceSchema),
+        visible: true,
+      };
+    });
+    const hidden = availableSchemaColumns
+      .filter((column) => !managedColumns.some((entry) => getTableColumnId(entry) === column.key))
+      .map((column) => ({
+        key: column.key,
+        column,
+        label: column.label,
+        visible: false,
+      }));
+    return [...ordered, ...hidden];
+  }, [availableSchemaColumns, columnSourceSchema, configuredTableColumns, managedColumns, referenceTargetSchema, referenceViewColumns, showReferenceProjectionTable]);
   const orderedColumns = useMemo(
     () => dragPreviewKeys ? ["#", ...dragPreviewKeys] : columns,
     [columns, dragPreviewKeys],
   );
   const objectRows = useMemo(() => hasObjectTableRows(value, host), [value, host]);
   const displayRows = useMemo(
-    () => buildArrayDisplayRows(value, sortState, referenceViewColumns, configuredTableColumns, host),
-    [value, sortState, referenceViewColumns, configuredTableColumns, host],
+    () => buildArrayDisplayRows(value, sortState, referenceViewColumns, configuredTableColumns, host, referenceTargetSchema),
+    [value, sortState, referenceViewColumns, configuredTableColumns, host, referenceTargetSchema],
   );
   const columnWidths = useMemo(
-    () => getArrayColumnWidths(value, orderedColumns, host, columnSourceSchema, referenceViewColumns, configuredTableColumns),
-    [value, orderedColumns, host, columnSourceSchema, referenceViewColumns, configuredTableColumns],
+    () => getArrayColumnWidths(
+      value,
+      orderedColumns,
+      host,
+      showReferenceProjectionTable ? (referenceTargetSchema ?? columnSourceSchema) : columnSourceSchema,
+      referenceViewColumns,
+      configuredTableColumns,
+    ),
+    [value, orderedColumns, host, columnSourceSchema, referenceTargetSchema, referenceViewColumns, configuredTableColumns, showReferenceProjectionTable],
   );
   const tableMinWidth = useMemo(
     () => orderedColumns.reduce((total, column) => total + (columnWidths[column] ?? 140), 0),
@@ -662,6 +701,7 @@ function ArrayPage({
     setSortState(null);
     setDragPreviewKeys(null);
     setDragGhost(null);
+    setHiddenFieldsOpen(false);
   }, [pathKey, schemaItemsSignature]);
 
   useEffect(() => {
@@ -730,12 +770,12 @@ function ArrayPage({
     }
   }
 
-  function updateTableSchemaColumns(updater: (columns: EditorTableColumn[]) => EditorTableColumn[]) {
+  const updateTableSchemaColumns = useCallback((updater: (columns: EditorTableColumn[]) => EditorTableColumn[]) => {
     if (!canAuthorTableSchema) return;
     const currentColumns = getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns);
     const applyUpdate = (targetSchema: EditorSchema) => setSchemaTableColumns(targetSchema, updater(currentColumns));
     void onUpdateDocumentSchema?.(sourceId as string, path, "self", applyUpdate);
-  }
+  }, [availableSchemaColumns, canAuthorTableSchema, columns, configuredTableColumns, onUpdateDocumentSchema, path, sourceId]);
 
   function updateSingleColumn(
     key: string,
@@ -744,6 +784,25 @@ function ArrayPage({
     updateTableSchemaColumns((currentColumns) =>
       currentColumns.map((column) => (getTableColumnId(column) === key ? updater(column) : column)),
     );
+  }
+
+  function unhideColumn(column: AvailableSchemaColumn) {
+    updateTableSchemaColumns((current) => [
+      ...current,
+      isSimpleKeyField(column.field, column.key) ? { key: column.key } : { field: column.field },
+    ]);
+  }
+
+  function toggleColumnVisibility(columnKey: string) {
+    const visibleEntry = managedColumns.find((column) => getTableColumnId(column) === columnKey);
+    if (visibleEntry) {
+      updateTableSchemaColumns((current) => current.filter((entry) => getTableColumnId(entry) !== columnKey));
+      return;
+    }
+    const hiddenEntry = availableSchemaColumns.find((column) => column.key === columnKey);
+    if (hiddenEntry) {
+      unhideColumn(hiddenEntry);
+    }
   }
 
   return (
@@ -811,7 +870,7 @@ function ArrayPage({
                     ) : null}
                     {orderedColumns.map((column, columnIndex) => (
                       (() => {
-                        const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns);
+                        const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
                         const configuredColumn = findConfiguredTableColumn(configuredTableColumns, column);
                         const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, columnSourceSchema);
                         const isDescriptionColumn = referenceColumn?.key === "description";
@@ -837,7 +896,22 @@ function ArrayPage({
                         }
                         key={column}
                       >
-                        {canAuthorTableSchema && column !== "#" ? (
+                        {column === "#" ? (
+                          canAuthorTableSchema ? (
+                            <HiddenFieldsToolbarAction
+                              columns={visibilityColumns}
+                              isOpen={hiddenFieldsOpen}
+                              onToggle={() => setHiddenFieldsOpen((current) => !current)}
+                              onToggleColumn={toggleColumnVisibility}
+                              triggerClassName="array-column-visibility-trigger"
+                              triggerIconOnly
+                            />
+                          ) : (
+                            <div className="array-column-header">
+                              <span>#</span>
+                            </div>
+                          )
+                        ) : canAuthorTableSchema ? (
                           <SchemaColumnHeader
                             fieldName={column}
                             isDragging={dragStateRef.current?.key === column && dragStateRef.current.dragging}
@@ -883,7 +957,6 @@ function ArrayPage({
                                 dragging: true,
                               };
                               document.body.classList.add("is-dragging-column");
-                              setIsColumnManagerOpen(false);
                               setDragGhost({
                                 key: column,
                                 label: columnLabel,
@@ -1000,7 +1073,7 @@ function ArrayPage({
                                 </td>
                               );
                             }
-                            const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns);
+                            const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
                             if (!referenceColumn) {
                               return <td key={`${sourceIndex}:${column}`} />;
                             }
@@ -1295,17 +1368,6 @@ function ArrayPage({
             </div>
             <section className="editor-actions-panel editor-actions-panel--table">
               <div className="editor-actions-row">
-                {canAuthorTableSchema ? (
-                  <button
-                    className="ghost-button compact-button"
-                    type="button"
-                    onClick={() => {
-                      setIsColumnManagerOpen((current) => !current);
-                    }}
-                  >
-                    Columns
-                  </button>
-                ) : null}
                 {enableRawEditor && canEditCurrentPage ? (
                   <button className="ghost-button compact-button raw-toggle-button" type="button" onClick={() => setRawOpen((current) => !current)}>
                     Raw
@@ -1322,48 +1384,6 @@ function ArrayPage({
                   </button>
                 ) : null}
               </div>
-              {canAuthorTableSchema && isColumnManagerOpen ? (
-                <div className="schema-column-manager">
-                  <div className="schema-column-manager__section">
-                    <strong>Visible columns</strong>
-                    <div className="form-hint">Rename, reorder, resize, and wrap columns from the table headers.</div>
-                    {managedColumns.map((column) => {
-                      const columnId = getTableColumnId(column);
-                      const label = getConfiguredColumnLabel(columnId, column, findReferenceColumn(columnId, configuredTableColumns, referenceViewColumns), columnSourceSchema);
-                      return (
-                        <div className="schema-column-manager__row" key={columnId}>
-                          <span>{label}</span>
-                          <button
-                            aria-label={`Hide column ${label}`}
-                            type="button"
-                            onClick={() => updateTableSchemaColumns((current) => current.filter((entry) => getTableColumnId(entry) !== columnId))}
-                          >
-                            Hide
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <div className="schema-column-manager__section">
-                    <strong>Hidden columns</strong>
-                    {availableSchemaColumns.filter((column) => !managedColumns.some((entry) => getTableColumnId(entry) === column.key)).map((column) => (
-                      <div className="schema-column-manager__row" key={column.key}>
-                        <span>{column.label}</span>
-                        <button
-                          aria-label={`Show column ${column.label}`}
-                          type="button"
-                          onClick={() => updateTableSchemaColumns((current) => [
-                            ...current,
-                            isSimpleKeyField(column.field, column.key) ? { key: column.key } : { field: column.field },
-                          ])}
-                        >
-                          Show
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
             </section>
             {dragGhost ? (
               <div
@@ -1377,6 +1397,86 @@ function ArrayPage({
         )}
       </div>
     </section>
+  );
+}
+
+function HiddenFieldsToolbarAction({
+  columns,
+  isOpen,
+  onToggle,
+  onToggleColumn,
+  triggerClassName,
+  triggerIconOnly = false,
+}: {
+  columns: Array<{ key: string; label: string; visible: boolean }>;
+  isOpen: boolean;
+  onToggle: () => void;
+  onToggleColumn: (columnKey: string) => void;
+  triggerClassName?: string;
+  triggerIconOnly?: boolean;
+}) {
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelPosition, setPanelPosition] = useState<{ right: number; top: number } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const syncPanelPosition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setPanelPosition({
+        right: Math.max(12, window.innerWidth - rect.right),
+        top: rect.bottom + 8,
+      });
+    };
+    syncPanelPosition();
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (triggerRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      onToggle();
+    };
+    window.addEventListener("resize", syncPanelPosition);
+    window.addEventListener("scroll", syncPanelPosition, true);
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => {
+      window.removeEventListener("resize", syncPanelPosition);
+      window.removeEventListener("scroll", syncPanelPosition, true);
+      window.removeEventListener("pointerdown", onPointerDown, true);
+    };
+  }, [isOpen, onToggle]);
+
+  return (
+    <div className="toolbar-hidden-fields">
+      <button
+        aria-label="Column visibility"
+        className={triggerClassName ?? "ghost-button icon-button toolbar-action-button"}
+        ref={triggerRef}
+        title="Column visibility"
+        type="button"
+        onClick={onToggle}
+      >
+        {triggerIconOnly ? <icons.visible size={15} /> : <icons.visible size={16} />}
+      </button>
+      {isOpen && panelPosition && typeof document !== "undefined" ? createPortal(
+        <div
+          className="hidden-fields-panel"
+          ref={panelRef}
+          style={{ right: `${panelPosition.right}px`, top: `${panelPosition.top}px` }}
+        >
+          <div className="hidden-fields-list">
+            {columns.map((column) => (
+              <button className="hidden-field-item" key={column.key} type="button" onClick={() => onToggleColumn(column.key)}>
+                <span>{column.label}</span>
+                {column.visible ? <icons.visible size={15} /> : <icons.hidden size={15} />}
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+    </div>
   );
 }
 
@@ -2034,7 +2134,7 @@ function getArrayColumnWidths(
   const sampleSize = Math.min(items.length, 40);
 
   for (const column of columns) {
-    const referenceColumn = findReferenceColumn(column, configuredColumns, referenceViewColumns);
+    const referenceColumn = findReferenceColumn(column, configuredColumns, referenceViewColumns, itemSchema);
     const configuredColumn = findConfiguredTableColumn(configuredColumns, column);
     if (configuredColumn?.width) {
       widths[column] = configuredColumn.width;
@@ -2225,12 +2325,22 @@ function findReferenceColumn(
   columnId: string,
   configuredColumns: EditorTableColumn[],
   referenceColumns: ReferenceViewColumn[],
+  targetSchema?: EditorSchema,
 ) {
   const configuredColumn = findConfiguredTableColumn(configuredColumns, columnId);
   const configuredPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
   if (configuredPath.length > 0) {
     const matchedByPath = referenceColumns.find((entry) => isSameJsonPath(entry.path, configuredPath));
     if (matchedByPath) return matchedByPath;
+    const targetFieldSchema = resolveSchemaAtPath(targetSchema, configuredPath, undefined);
+    if (targetFieldSchema) {
+      return {
+        key: columnId,
+        title: targetFieldSchema.title ?? formatTableColumnPath(configuredPath),
+        path: configuredPath,
+        columnSchema: targetFieldSchema,
+      };
+    }
   }
   return referenceColumns.find((entry) => entry.key === columnId);
 }
@@ -2253,12 +2363,13 @@ function buildArrayDisplayRows(
   referenceViewColumns: ReferenceViewColumn[],
   configuredColumns: EditorTableColumn[],
   host?: EditorHost,
+  targetSchema?: EditorSchema,
 ): ArrayDisplayRow[] {
   const rows = items.map((item, sourceIndex) => ({ item, sourceIndex }));
   if (!sortState) return rows;
   const configuredColumn = findConfiguredTableColumn(configuredColumns, sortState.key);
   if (!configuredColumn?.sortable) return rows;
-  const referenceColumn = findReferenceColumn(sortState.key, configuredColumns, referenceViewColumns);
+  const referenceColumn = findReferenceColumn(sortState.key, configuredColumns, referenceViewColumns, targetSchema);
   return [...rows].sort((left, right) => {
     const leftValue = normalizeSortValue(left.item, sortState.key, configuredColumn, referenceColumn, host);
     const rightValue = normalizeSortValue(right.item, sortState.key, configuredColumn, referenceColumn, host);

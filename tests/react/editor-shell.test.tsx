@@ -76,6 +76,23 @@ test("demo scenario switcher swaps the live schema showcase", () => {
   expect(screen.getByRole("button", { name: /Field Rarity/i })).toBeInTheDocument();
 });
 
+test("reference projection demo stays aligned with real item fields", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Reference Projection" }));
+
+  const headers = screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim());
+  expect(headers).toEqual(["#", "Name", "Kind"]);
+
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+  expect(screen.getByRole("button", { name: /ID/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Damage/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Bonus/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Bound Encounter/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Icon/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /Description/ })).toBeNull();
+});
+
 test("demo settings can toggle editing and raw json affordances", () => {
   render(<App />);
 
@@ -1708,8 +1725,10 @@ test("schema authoring columns manager can add hidden object-array columns while
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Columns" }));
-  fireEvent.click(screen.getByRole("button", { name: "Show column Health" }));
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+  const visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  fireEvent.click(within(visibilityPanel).getByRole("button", { name: /Health/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
   fireEvent.click(screen.getByRole("button", { name: "Identifier" }));
   fireEvent.change(screen.getByLabelText("Column label for Identifier"), { target: { value: "Quest ID" } });
 
@@ -1894,8 +1913,10 @@ test("schema authoring can add hidden reference projection columns and rename th
     />,
   );
 
-  fireEvent.click(screen.getByRole("button", { name: "Columns" }));
-  fireEvent.click(screen.getByRole("button", { name: "Show column Identifier" }));
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+  const visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  fireEvent.click(within(visibilityPanel).getByRole("button", { name: /Identifier/ }));
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
   fireEvent.click(screen.getByRole("button", { name: "Name" }));
   fireEvent.change(screen.getAllByLabelText("Column label for Name").at(-1) as HTMLElement, { target: { value: "Display Name" } });
 
@@ -1907,6 +1928,77 @@ test("schema authoring can add hidden reference projection columns and rename th
     { key: "id" },
   ]);
   expect(schemaHost.getNamedSchemaSnapshot("reward_item")?.["x-editor"]?.table?.columns).toBeUndefined();
+});
+
+test("reference column manager offers target schema fields even when projection schema omits them", () => {
+  const schemaHost = createMutableSchemaHost(
+    {
+      type: "array",
+      "x-editor": {
+        table: {
+          columns: [
+            { field: ["name"] },
+          ],
+        },
+      },
+      items: {
+        type: "string",
+        "x-editor": {
+          reference: {
+            target: {
+              schemaRef: "reward_item",
+            },
+            view: {
+              schemaRef: "reward_item_row",
+            },
+          },
+        },
+      },
+    },
+    {
+      reward_item: {
+        type: "object",
+        properties: {
+          id: { type: "string", title: "Identifier" },
+          name: { type: "string", title: "Name" },
+          icon: { type: "string", title: "Icon" },
+          description: { type: "string", title: "Description" },
+        },
+      },
+      reward_item_row: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            title: "Name",
+            "x-editor": {
+              projection: { path: ["name"] },
+            },
+          },
+        },
+      },
+    },
+  );
+
+  render(
+    <EditorShell
+      value={["asset://items/reward.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://items/reward.json"
+            ? { id: "reward", name: "Reward", icon: "res://icons/reward.png", description: "A reward item" }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+
+  expect(screen.getByRole("button", { name: /Identifier/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Icon/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Description/ })).toBeInTheDocument();
 });
 
 test("schema authoring field order controls rewrite object property order", () => {

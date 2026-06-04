@@ -361,6 +361,11 @@ button {
   flex: 1;
 }
 
+.toolbar-inline-slot {
+  align-items: center;
+  display: inline-flex;
+}
+
 .toolbar-meta {
   color: #787774;
   font-size: 12px;
@@ -448,6 +453,96 @@ button {
 
 .ghost-button:hover {
   background: #efeeeb;
+}
+
+.toolbar-hidden-fields {
+  position: relative;
+}
+
+.toolbar-action-button {
+  flex: 0 0 auto;
+}
+
+.icon-button {
+  justify-content: center;
+  padding: 0;
+  width: 28px;
+}
+
+.icon-button svg {
+  pointer-events: none;
+}
+
+.ghost-button.compact {
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.hidden-fields-panel {
+  background: #fff;
+  border: 1px solid #dedbd6;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(15, 15, 15, 0.12);
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 240px;
+  z-index: 2000;
+}
+
+.hidden-fields-header {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.hidden-fields-header strong {
+  font-size: 13px;
+}
+
+.hidden-fields-list {
+  display: grid;
+  gap: 6px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.hidden-field-item {
+  appearance: none;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e4e2de;
+  border-radius: 6px;
+  box-shadow: 0 1px 0 rgba(15, 15, 15, 0.02);
+  color: #37352f;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 32px;
+  padding: 0 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.hidden-field-item:hover {
+  background: #f3f2ef;
+  border-color: #d7d3cc;
+}
+
+.hidden-field-item span,
+.hidden-field-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hidden-field-item small {
+  color: #787774;
 }
 
 .main-content {
@@ -700,6 +795,36 @@ button {
   text-align: center;
 }
 
+.array-column-visibility-trigger {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #787774;
+  cursor: pointer;
+  display: flex;
+  height: 100%;
+  justify-content: center;
+  min-height: 34px;
+  min-width: 100%;
+  padding: 0;
+  width: 100%;
+}
+
+.array-column-visibility-trigger:hover:not(:disabled) {
+  background: #f5f4f1;
+}
+
+.array-column-visibility-trigger:disabled {
+  color: #a09f9a;
+  cursor: default;
+}
+
+.array-column-visibility-trigger svg {
+  pointer-events: none;
+}
+
 .data-table th.array-column--index,
 .data-table td.array-column--index {
   max-width: 45px;
@@ -774,10 +899,10 @@ button {
 
 .column-menu-popup {
   left: 0;
-  position: absolute;
-  top: calc(100% + 6px);
+  position: fixed;
+  top: 0;
   width: 220px;
-  z-index: 40;
+  z-index: 2000;
 }
 
 .column-resize-handle {
@@ -2100,15 +2225,35 @@ th:hover .column-resize-handle::after,
   font-weight: 600;
 }
 
-.schema-column-menu__field {
+.schema-column-menu__input-row {
+  align-items: center;
+  border: 1px solid #d7d3cc;
+  border-radius: 8px;
   display: grid;
-  gap: 6px;
+  gap: 8px;
+  grid-template-columns: 16px minmax(0, 1fr);
+  min-height: 38px;
+  padding: 0 10px;
 }
 
-.schema-column-menu__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.schema-column-menu__input-row:hover,
+.schema-column-menu__input-row:focus-within {
+  background: #fff;
+  border-color: #2f80ed;
+}
+
+.schema-column-menu__input {
+  background: transparent;
+  border: 0;
+  color: #37352f;
+  font: inherit;
+  min-width: 0;
+  outline: 0;
+  padding: 0;
+}
+
+.schema-column-menu__input::placeholder {
+  color: #9a9894;
 }
 
 .array-workspace td.array-cell--missing {
