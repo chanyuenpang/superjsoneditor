@@ -386,23 +386,27 @@ export function EditorShell({
   function resolvePageSchema(page: NavigationPage): EditorSchema | undefined {
     if (!schemaHost) return undefined;
     const sourceId = page.sourceId ?? rootSourceId;
-    const directSchema = schemaHost.getSchema({
-      sourceId,
-      path: page.path,
-      value: resolvePageValue(page),
-      documents: documentsBySourceId,
-    });
-    if (directSchema) {
-      return directSchema;
-    }
-
     const rootSchema = schemaHost.getSchema({
       sourceId,
       path: [],
       value: documentsBySourceId[sourceId],
       documents: documentsBySourceId,
     });
-    return resolveSchemaAtPath(rootSchema, page.path);
+    if (page.path.length === 0) {
+      return rootSchema;
+    }
+
+    const nestedSchema = resolveSchemaAtPath(rootSchema, page.path);
+    if (nestedSchema) {
+      return nestedSchema;
+    }
+
+    return schemaHost.getSchema({
+      sourceId,
+      path: page.path,
+      value: resolvePageValue(page),
+      documents: documentsBySourceId,
+    });
   }
 
   function resolveNamedSchema(name: string): EditorSchema | undefined {
@@ -735,12 +739,6 @@ export function EditorShell({
     <div className="app-frame" ref={shellRef}>
       <div className="workspace">
         <header className="toolbar">
-          {showDocumentTitle ? (
-            <div className="toolbar-title">
-              <strong>{rootLabel}</strong>
-              <span>{getPageTitle(currentPage)}</span>
-            </div>
-          ) : null}
           {isCompactStack ? (
             <label className="breadcrumbs-select" aria-label="Path">
               <select
@@ -765,7 +763,7 @@ export function EditorShell({
               </select>
             </label>
           ) : (
-            <div className={`breadcrumbs ${showDocumentTitle ? "" : "breadcrumbs--align-left"}`.trim()} aria-label="Breadcrumb">
+            <div className="breadcrumbs breadcrumbs--align-left" aria-label="Breadcrumb">
               <button className="breadcrumbs__button" type="button" onClick={() => handleJump([], rootSourceId)}>
                 {rootLabel}
               </button>
@@ -1009,54 +1007,49 @@ export function EditorShell({
               </section>
             ) : null}
             {(() => {
-              if (!(stackAnimation?.direction === "push" && stackFlowMotionPlan.rightMotion === "fade-in")) {
+              const rightVisiblePage = visiblePages.at(-1);
+              if (!(stackAnimation?.direction === "push" && stackFlowMotionPlan.rightMotion === "fade-in" && rightVisiblePage)) {
                 return null;
               }
-              const overlayPage = visiblePages.at(-1);
-              if (!overlayPage) {
-                return null;
-              }
-              const overlayValue = resolvePageValue(overlayPage);
-              const overlayDepth = getReferenceScopeDepthForPage(pages, overlayPage);
+              const rightVisibleSourceId = rightVisiblePage.sourceId ?? rootSourceId;
+              const rightVisibleValue = resolvePageValue(rightVisiblePage);
+              const rightVisibleScopeDepth = getReferenceScopeDepthForPage(pages, rightVisiblePage);
               return (
                 <section
                   className={`stack-page stack-page--foreground stack-page--overlay ${
                     stackFlowSourceVisiblePages?.length === 2 ? "stack-page--push-enter-delayed" : "stack-page--push-enter"
                   } ${
-                    overlayPage.isReference ? "is-reference" : ""
+                    rightVisiblePage.isReference ? "is-reference" : ""
                   } ${
-                    overlayValue && typeof overlayValue === "object"
-                      ? (Array.isArray(overlayValue) ? "stack-page--array" : "stack-page--object")
+                    rightVisibleValue && typeof rightVisibleValue === "object"
+                      ? (Array.isArray(rightVisibleValue) ? "stack-page--array" : "stack-page--object")
                       : "stack-page--primitive"
                   }`}
                   aria-hidden="true"
-                  key={`push-enter:${stackAnimation.key}:${overlayPage.sourceId ?? rootSourceId}:${overlayPage.path.join("/")}`}
+                  key={`push-enter:${stackAnimation.key}:${rightVisibleSourceId}:${rightVisiblePage.path.join("/")}`}
                   style={getStackPageStyle("stack-page--foreground")}
                 >
                   <ValueInspector
-                    value={overlayValue}
-                    savedValue={getValueAtPath(
-                      savedDocumentsBySourceId[overlayPage.sourceId ?? rootSourceId],
-                      overlayPage.path,
-                    )}
-                    sourceId={overlayPage.sourceId ?? rootSourceId}
-                    path={overlayPage.path}
-                    title={getPageTitle(overlayPage)}
+                    value={rightVisibleValue}
+                    savedValue={getValueAtPath(savedDocumentsBySourceId[rightVisibleSourceId], rightVisiblePage.path)}
+                    sourceId={rightVisibleSourceId}
+                    path={rightVisiblePage.path}
+                    title={getPageTitle(rightVisiblePage)}
                     host={host}
-                    schema={resolvePageSchema(overlayPage)}
+                    schema={resolvePageSchema(rightVisiblePage)}
                     resolveNamedSchema={resolveNamedSchema}
                     onUpdateDocumentSchema={handleUpdateDocumentSchema}
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                     validationResult={validationResult}
                     enableRawEditor={enableRawEditor}
                     toolbarPortalHost={null}
-                    referenceError={overlayPage.referenceError}
-                    isReference={overlayPage.isReference}
-                    referenceScopeDepth={overlayDepth}
+                    referenceError={rightVisiblePage.referenceError}
+                    isReference={rightVisiblePage.isReference}
+                    referenceScopeDepth={rightVisibleScopeDepth}
                     referenceSourceLabel={getReferenceSourceLabel(
-                      overlayPage.sourceId,
+                      rightVisiblePage.sourceId,
                       rootSourceId,
-                      overlayDepth,
+                      rightVisibleScopeDepth,
                     )}
                     activeReferenceSourceId={undefined}
                     onClosePage={undefined}

@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { DEMO_SOURCE_FILES } from "./src/demo-sources/manifest";
+import { DEMO_SOURCE_FILES_BY_LOCALE } from "./src/demo-sources/manifest";
 
 export default defineConfig({
   plugins: [
@@ -23,9 +23,13 @@ export default defineConfig({
               chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
             }
 
-            const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { documents: Record<string, unknown> };
+            const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+              documents: Record<string, unknown>;
+              locale?: "en" | "zh";
+            };
+            const sourceFiles = DEMO_SOURCE_FILES_BY_LOCALE[payload.locale ?? "en"];
             await Promise.all(
-              Object.entries(DEMO_SOURCE_FILES).map(async ([sourceId, relativeFile]) => {
+              Object.entries(sourceFiles).map(async ([sourceId, relativeFile]) => {
                 if (!(sourceId in payload.documents)) return;
                 const targetPath = path.resolve(server.config.root, relativeFile);
                 await writeFile(targetPath, `${JSON.stringify(payload.documents[sourceId], null, 2)}\n`, "utf8");

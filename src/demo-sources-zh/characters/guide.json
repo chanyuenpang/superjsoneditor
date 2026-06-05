@@ -1,0 +1,24 @@
+{
+  "id": "guide",
+  "profile": {
+    "name": "庞",
+    "class": "档案官",
+    "signatureItem": "asset://items/moon-charm.json",
+    "desk": "地库附馆三号桌"
+  },
+  "stats": {
+    "hp": 11,
+    "mp": 16,
+    "resistances": [
+      "回响"
+    ]
+  },
+  "duty": {
+    "shift": "夜账班",
+    "clearance": "档案封印",
+    "watchNotes": [
+      "每次灯塔航线完成后，负责批准护航账册更新。",
+      "持续记录封印标记附近出现的仪式异常。"
+    ]
+  }
+}

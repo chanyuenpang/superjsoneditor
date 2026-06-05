@@ -1918,7 +1918,7 @@ test("schema object mode only allows adding declared properties", () => {
   render(<EditorShell value={{ id: "quest_001" }} schemaHost={schemaHost} />);
 
   fireEvent.click(getCurrentActionButton("Edit"));
-  expect(screen.queryByPlaceholderText("newKey")).toBeNull();
+  expect(screen.queryByPlaceholderText("New property key")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Add property" }));
 
   expect(screen.getByDisplayValue("New Quest")).toBeInTheDocument();
@@ -1944,7 +1944,7 @@ test("schema object mode keeps add property controls hidden until Edit is enable
   render(<EditorShell value={{ id: "quest_001" }} schemaHost={schemaHost} />);
 
   expect(screen.queryByRole("button", { name: "Add property" })).toBeNull();
-  expect(screen.queryByPlaceholderText("newKey")).toBeNull();
+  expect(screen.queryByPlaceholderText("New property key")).toBeNull();
 });
 
 test("schema object mode allows dynamic keys from additionalProperties schema", () => {
@@ -1966,7 +1966,7 @@ test("schema object mode allows dynamic keys from additionalProperties schema", 
   render(<EditorShell value={{}} schemaHost={schemaHost} />);
 
   fireEvent.click(getCurrentActionButton("Edit"));
-  fireEvent.change(screen.getByPlaceholderText("newKey"), { target: { value: "bonus_hp" } });
+  fireEvent.change(screen.getByPlaceholderText("New property key"), { target: { value: "bonus_hp" } });
   fireEvent.click(screen.getByRole("button", { name: "Add property" }));
 
   expect(screen.getByLabelText("Field bonus_hp")).toHaveValue(7);
@@ -2193,7 +2193,31 @@ test("raw mode keeps schema validation active", () => {
   fireEvent.click(screen.getByRole("button", { name: "Apply JSON" }));
 
   expect(screen.getByText("String must have at least 3 characters")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("String must have at least 3 characters");
+  expect(screen.getByLabelText("JSON value editor")).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByLabelText("JSON value editor")).toHaveValue('{\n  "title": ""\n}');
+});
+
+test("raw mode applies valid object JSON and returns to field view", () => {
+  render(<EditorShell value={{ title: "Hero" }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+  fireEvent.change(screen.getByLabelText("JSON value editor"), { target: { value: '{\n  "title": "Mage"\n}' } });
+  fireEvent.click(screen.getByRole("button", { name: "Apply JSON" }));
+
+  expect(screen.queryByLabelText("JSON value editor")).toBeNull();
+  expect(screen.getByLabelText("Field title")).toHaveValue("Mage");
+});
+
+test("schema-authoring row object page can apply unchanged raw JSON", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByText("Wake The Beacon"));
+  fireEvent.click(getCurrentPageQueries().getByRole("button", { name: "Raw" }));
+  fireEvent.click(getCurrentPageQueries().getByRole("button", { name: "Apply JSON" }));
+
+  expect(screen.queryByLabelText("JSON value editor")).toBeNull();
+  expect(getCurrentPageQueries().getByLabelText("Field Quest")).toHaveValue("Wake The Beacon");
 });
 
 test("nullable schema fields expose an explicit null toggle", () => {
@@ -3121,7 +3145,6 @@ test("schema authoring field order controls rewrite object property order", () =
     />,
   );
 
-  fireEvent.click(getCurrentActionButton("Edit"));
   const healthHandle = screen.getByRole("button", { name: "Reorder Health" });
   const idHandle = screen.getByRole("button", { name: "Reorder Identifier" });
   const titleHandle = screen.getByRole("button", { name: "Reorder Title" });
@@ -3171,6 +3194,72 @@ test("schema authoring field order controls rewrite object property order", () =
   const fieldLabels = [...container.querySelectorAll(".property-heading > span")].map((node) => node.textContent?.trim());
   expect(fieldLabels.slice(0, 3)).toEqual(["Health", "Identifier", "Title"]);
   expect(Object.keys(schemaHost.getRootSchemaSnapshot().properties ?? {})).toEqual(["hp", "id", "title"]);
+});
+
+test("object page key reorder rewrites the document key order even without schema", () => {
+  render(
+    <EditorShell
+      value={{ id: "quest_001", title: "First Quest", hp: 10 }}
+    />,
+  );
+
+  const healthHandle = screen.getByRole("button", { name: "Reorder hp" });
+  const idHandle = screen.getByRole("button", { name: "Reorder id" });
+  const titleHandle = screen.getByRole("button", { name: "Reorder title" });
+
+  (idHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 200,
+    width: 300,
+    height: 72,
+    top: 200,
+    right: 300,
+    bottom: 272,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (healthHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 120,
+    width: 300,
+    height: 72,
+    top: 120,
+    right: 300,
+    bottom: 192,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (titleHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 40,
+    width: 300,
+    height: 72,
+    top: 40,
+    right: 300,
+    bottom: 112,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(healthHandle, { button: 0, clientX: 10, clientY: 150 });
+  fireEvent.mouseMove(window, { clientX: 10, clientY: 60 });
+  fireEvent.mouseUp(window, { clientX: 10, clientY: 60 });
+
+  const fieldLabels = [...document.querySelectorAll(".property-heading > span")].map((node) => node.textContent?.trim());
+  expect(fieldLabels.slice(0, 3)).toEqual(["hp", "id", "title"]);
+
+  fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+  expect(screen.getByRole("textbox")).toHaveValue(`{
+  "hp": 10,
+  "id": "quest_001",
+  "title": "First Quest"
+}`);
 });
 
 test("schema select editors use a popover trigger and keep writing literal values", () => {

@@ -2,9 +2,9 @@
   "id": "wolf-pack",
   "kind": "encounter",
   "enemies": [
-    "marsh-wolf",
-    "alpha-scout"
+    "沼狼",
+    "头狼斥候"
   ],
-  "terrain": "pine-pass",
+  "terrain": "松隘口",
   "threatLevel": 2
 }

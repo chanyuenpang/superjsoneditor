@@ -1,0 +1,24 @@
+{
+  "id": "intro",
+  "kind": "quest",
+  "title": "点亮第一座灯塔",
+  "briefing": "护送车队抵达北境塔楼，修复透镜座，并在午夜浓雾落下前重新打通第一条安全航路。",
+  "steps": [
+    {
+      "id": "travel",
+      "text": "携带首箱航灯燃料前往北境哨站。"
+    },
+    {
+      "id": "repair",
+      "text": "更换破裂的透镜环，并校准火焰导流槽。"
+    },
+    {
+      "id": "light",
+      "text": "点亮灯塔，确认沼泽上空重新出现航路标记。"
+    }
+  ],
+  "reward": {
+    "item": "asset://items/moon-charm.json",
+    "reputation": 120
+  }
+}

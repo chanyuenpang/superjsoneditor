@@ -1,14 +1,14 @@
 {
   "id": "iron-sword",
   "kind": "item",
-  "name": "Iron Sword",
+  "name": "铁铸长剑",
   "tier": "standard",
   "damage": {
     "min": 3,
     "max": 6
   },
   "crafting": {
-    "smith": "Harbor Forge",
-    "material": "brine-steel"
+    "smith": "港湾铁坊",
+    "material": "盐钢"
   }
 }

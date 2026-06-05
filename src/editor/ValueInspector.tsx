@@ -197,6 +197,7 @@ function ObjectPage({
 
   function commitObjectFieldOrder(nextOrder: string[]) {
     setFieldOrder(nextOrder);
+    onApplyValue(reorderObjectKeys(value, nextOrder));
     updateObjectSchema((currentSchema) => reorderSchemaPropertiesToMatch(currentSchema, nextOrder));
   }
 
@@ -204,7 +205,7 @@ function ObjectPage({
     key: string,
     event: { button: number; clientY: number; preventDefault: () => void },
   ) {
-    if (!editMode || !canAuthorObjectSchema || event.button !== 0) return;
+    if (pageReadOnly || fields.length <= 1 || event.button !== 0) return;
     event.preventDefault();
     const startOrder = fields.map(([fieldKey]) => fieldKey);
     const startRect = propertyItemRefs.current[key]?.getBoundingClientRect();
@@ -319,7 +320,7 @@ function ObjectPage({
                           propertyItemRefs.current[key] = element;
                         }}
                       >
-                        {editMode && canAuthorObjectSchema && schema?.properties?.[key] ? (
+                        {!pageReadOnly && fields.length > 1 ? (
                           <button
                             aria-label={`Reorder ${fieldLabel}`}
                             className="detail-property-handle"
@@ -440,71 +441,77 @@ function ObjectPage({
                 ) : null}
                 {Object.keys(value).length === 0 ? <div className="empty-state">This object has no fields.</div> : null}
                 {editMode && !pageReadOnly ? (
-                  <div className="add-object-form">
-                    {usesSchemaPropertyCreation ? (
-                      <div className="add-object-form__fields">
-                        {hasSchemaPropertyChoices ? (
-                          <select className="detail-input" value={newKey} onChange={(event) => setNewKey(event.target.value)}>
-                            <option value="">Select property</option>
-                            {schemaAddablePropertyKeys.map((key) => (
-                              <option key={key} value={key}>
-                                {schema?.properties?.[key]?.title ?? key}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
+                  <div className="detail-property-item detail-property-item--composer">
+                    <div className="detail-property-spacer" aria-hidden="true" />
+                    <section className="property-block add-object-form">
+                      <div className="property-heading">
+                        <span>New property</span>
+                      </div>
+                      {usesSchemaPropertyCreation ? (
+                        <div className="add-object-form__fields">
+                          {hasSchemaPropertyChoices ? (
+                            <select className="detail-input" value={newKey} onChange={(event) => setNewKey(event.target.value)}>
+                              <option value="">Choose property</option>
+                              {schemaAddablePropertyKeys.map((key) => (
+                                <option key={key} value={key}>
+                                  {schema?.properties?.[key]?.title ?? key}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              className="detail-input"
+                              placeholder="New property key"
+                              value={newKey}
+                              onChange={(event) => setNewKey(event.target.value)}
+                            />
+                          )}
+                          <div className="form-hint">
+                            {schemaState?.objectCapabilities?.patternPropertyEntries?.length
+                              ? `动态字段需匹配: ${schemaState.objectCapabilities.patternPropertyEntries.map((entry) => entry.pattern).join(", ")}`
+                              : "新增字段将按 schema 约束生成默认值。"}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="add-object-form__fields">
                           <input
                             className="detail-input"
-                            placeholder="newKey"
+                            placeholder="New property key"
                             value={newKey}
                             onChange={(event) => setNewKey(event.target.value)}
                           />
-                        )}
-                        <div className="form-hint">
-                          {schemaState?.objectCapabilities?.patternPropertyEntries?.length
-                            ? `动态字段需匹配: ${schemaState.objectCapabilities.patternPropertyEntries.map((entry) => entry.pattern).join(", ")}`
-                            : "新增字段将按 schema 约束生成默认值。"}
+                          <select className="detail-input" value={newKeyType} onChange={(event) => setNewKeyType(event.target.value as ObjectDraftType)}>
+                            <option value="string">string</option>
+                            <option value="number">number</option>
+                            <option value="object">object</option>
+                            <option value="array">array</option>
+                          </select>
                         </div>
+                      )}
+                      <div className="add-object-form__actions">
+                        <button
+                          className="primary-button"
+                          aria-label="Add property"
+                          disabled={newKey.trim().length === 0 || keyExists}
+                          type="button"
+                          onPointerDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            const key = newKey.trim();
+                            if (!key || Object.prototype.hasOwnProperty.call(value, key)) return;
+                            setSuppressEditToggleUntil(Date.now() + 300);
+                            onApplyValue({
+                              ...value,
+                              [key]: usesSchemaPropertyCreation ? createDefaultPropertyValue(schema, key) : createDefaultValueForType(newKeyType),
+                            });
+                            setNewKey(usesSchemaPropertyCreation ? getAddablePropertyKeys({ ...value, [key]: true }, schema)[0] ?? "" : "");
+                            setNewKeyType("string");
+                          }}
+                        >
+                          Add property
+                        </button>
                       </div>
-                    ) : (
-                      <div className="add-object-form__fields">
-                        <input
-                          className="detail-input"
-                          placeholder="newKey"
-                          value={newKey}
-                          onChange={(event) => setNewKey(event.target.value)}
-                        />
-                        <select className="detail-input" value={newKeyType} onChange={(event) => setNewKeyType(event.target.value as ObjectDraftType)}>
-                          <option value="string">string</option>
-                          <option value="number">number</option>
-                          <option value="object">object</option>
-                          <option value="array">array</option>
-                        </select>
-                      </div>
-                    )}
-                    <div className="add-object-form__actions">
-                      <button
-                        className="primary-button"
-                        aria-label="Add property"
-                        disabled={newKey.trim().length === 0 || keyExists}
-                        type="button"
-                        onPointerDown={(event) => event.preventDefault()}
-                        onClick={() => {
-                          const key = newKey.trim();
-                          if (!key || Object.prototype.hasOwnProperty.call(value, key)) return;
-                          setSuppressEditToggleUntil(Date.now() + 300);
-                          onApplyValue({
-                            ...value,
-                            [key]: usesSchemaPropertyCreation ? createDefaultPropertyValue(schema, key) : createDefaultValueForType(newKeyType),
-                          });
-                          setNewKey(usesSchemaPropertyCreation ? getAddablePropertyKeys({ ...value, [key]: true }, schema)[0] ?? "" : "");
-                          setNewKeyType("string");
-                        }}
-                      >
-                        Add property
-                      </button>
-                    </div>
-                    {keyExists ? <small className="form-hint form-hint--danger">Key already exists.</small> : null}
+                      {keyExists ? <small className="form-hint form-hint--danger">Key already exists.</small> : null}
+                    </section>
                   </div>
                 ) : null}
               </div>
@@ -1780,6 +1787,7 @@ function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?
       </div>
       <div className="json-editor">
         <textarea
+          aria-invalid={errorMessage ? "true" : "false"}
           aria-label="JSON value editor"
           readOnly={props.readOnly}
           value={draft}
@@ -1791,13 +1799,17 @@ function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?
           }}
         />
         <div className="json-actions">
+          {errorMessage ? (
+            <div className="raw-json-error-banner" role="alert">
+              {errorMessage}
+            </div>
+          ) : null}
           {!props.readOnly ? (
             <button className="primary-button" type="button" onClick={handleApplyJson}>
               Apply JSON
             </button>
           ) : null}
         </div>
-        {errorMessage ? <div className="form-hint form-hint--danger">{errorMessage}</div> : null}
       </div>
     </section>
   );
@@ -3187,6 +3199,15 @@ function getOrderedKeys(value: Record<string, unknown>, schema?: EditorSchema) {
   const prioritized = schemaKeys.filter((key) => currentKeys.includes(key));
   const remaining = currentKeys.filter((key) => !prioritized.includes(key));
   return [...prioritized, ...remaining];
+}
+
+function reorderObjectKeys(value: Record<string, unknown>, orderedKeys: string[]) {
+  const currentKeys = Object.keys(value);
+  const nextKeys = [
+    ...orderedKeys.filter((key) => currentKeys.includes(key)),
+    ...currentKeys.filter((key) => !orderedKeys.includes(key)),
+  ];
+  return Object.fromEntries(nextKeys.map((key) => [key, value[key]]));
 }
 
 function reorderSchemaPropertiesToMatch(schema: EditorSchema, orderedKeys: string[]) {

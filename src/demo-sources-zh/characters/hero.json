@@ -1,17 +1,17 @@
 {
   "id": "hero",
   "profile": {
-    "name": "Lans",
-    "class": "Warden",
+    "name": "兰斯",
+    "class": "守望卫士",
     "activeQuest": "asset://quests/intro.json",
-    "station": "North Lantern Gate"
+    "station": "北灯门岗"
   },
   "stats": {
     "hp": 18,
     "mp": 7,
     "resistances": [
-      "frost",
-      "smoke"
+      "霜雾",
+      "烟尘"
     ]
   },
   "inventory": [
@@ -25,11 +25,11 @@
     }
   ],
   "duty": {
-    "shift": "second-bell",
-    "clearance": "convoy-lead",
+    "shift": "二更",
+    "clearance": "护航领队",
     "watchNotes": [
-      "Confirms beacon fuel seals before departure.",
-      "Carries the first reroute token when the marsh crossing closes."
+      "每次出发前确认灯塔燃料封环是否完好。",
+      "当沼泽水道封闭时，负责携带首枚改道令牌。"
     ]
   }
 }

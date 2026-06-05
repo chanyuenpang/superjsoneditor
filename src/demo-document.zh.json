@@ -1,7 +1,7 @@
 {
   "id": "campaign-lantern-route",
-  "title": "Lantern Route Field Guide",
-  "description": "Operating dossier for the northbound beacon convoy, covering crew assignments, active missions, region threat notes, and the release board used by the archive team.",
+  "title": "北线灯塔航路资料册",
+  "description": "面向北向灯塔护航队的运行档案，涵盖人员编组、当前任务、区域威胁记录，以及档案组日常维护的发布看板。",
   "meta": {
     "kind": "campaign",
     "version": 7,
@@ -12,28 +12,27 @@
     }
   },
   "command": {
-    "leadArchivist": "Pang",
-    "fieldCaptain": "Lans",
+    "leadArchivist": "庞",
+    "fieldCaptain": "兰斯",
     "dispatchWindow": {
       "opensAt": "18:40",
       "closesAt": "23:15",
-      "timezone": "Harbor Standard"
+      "timezone": "港湾标准时"
     }
   },
   "characters": [
     {
       "id": "hero",
       "profile": {
-        "name": "Lans",
-        "class": "Warden",
-        "activeQuest": "asset://quests/intro.json"
+        "name": "兰斯",
+        "class": "守望卫士"
       },
       "stats": {
         "hp": 18,
         "mp": 7,
         "resistances": [
-          "frost",
-          "smoke"
+          "霜雾",
+          "烟尘"
         ]
       },
       "inventory": [
@@ -50,15 +49,14 @@
     {
       "id": "guide",
       "profile": {
-        "name": "Pang",
-        "class": "Archivist",
-        "signatureItem": "asset://items/moon-charm.json"
+        "name": "庞",
+        "class": "档案官"
       },
       "stats": {
         "hp": 11,
         "mp": 16,
         "resistances": [
-          "echo"
+          "回响"
         ]
       }
     }
@@ -70,7 +68,7 @@
         {
           "id": "north-forest",
           "threat": 2,
-          "weather": "cold-mist",
+          "weather": "寒雾",
           "encounters": [
             "asset://encounters/wolf-pack.json"
           ]
@@ -78,7 +76,7 @@
         {
           "id": "sunken-vault",
           "threat": 5,
-          "weather": "ash-rain",
+          "weather": "灰雨",
           "encounters": [
             "asset://encounters/shadow-eye.json"
           ]
@@ -89,7 +87,7 @@
   "releaseBoard": [
     {
       "rowId": "route-001",
-      "entryName": "North Observatory Convoy",
+      "entryName": "北境观测站护航线",
       "status": "active",
       "environment": "production",
       "owner": "field-ops",
@@ -108,18 +106,18 @@
       "releaseChannel": "stable",
       "datasetVersion": "2026.06.04-r2",
       "tags": [
-        "north",
-        "beacon",
-        "night-route"
+        "北线",
+        "灯塔",
+        "夜航"
       ],
       "primaryCharacter": "asset://characters/hero.json",
       "activeQuest": "asset://quests/intro.json",
       "encounterPreset": "asset://encounters/wolf-pack.json",
-      "summary": "Primary convoy route stays healthy, with one aging supply cache still waiting on a handoff review."
+      "summary": "主护航航路整体稳定，仅有一处老旧补给缓存仍在等待交接复核。"
     },
     {
       "rowId": "route-002",
-      "entryName": "Sunken Vault Relay Mirror",
+      "entryName": "沉库中继镜像线",
       "status": "degraded",
       "environment": "staging",
       "owner": "reliability-lab",
@@ -138,18 +136,18 @@
       "releaseChannel": "preview",
       "datasetVersion": "2026.06.04-r2",
       "tags": [
-        "vault",
-        "mirror",
-        "staging"
+        "沉库",
+        "镜像",
+        "预发"
       ],
       "primaryCharacter": "asset://characters/guide.json",
       "activeQuest": "asset://quests/intro.json",
       "encounterPreset": "asset://encounters/shadow-eye.json",
-      "summary": "Mirror relay is noisier by design so the team can watch queue pressure and escalation timings before the next seal-night event."
+      "summary": "这条镜像中继线故意保留更高噪声，用来观察下一次封印夜之前的队列压力和升级节奏。"
     },
     {
       "rowId": "route-003",
-      "entryName": "Western Archive Indexer",
+      "entryName": "西境档案索引器",
       "status": "paused",
       "environment": "development",
       "owner": "content-ops",
@@ -168,14 +166,14 @@
       "releaseChannel": "experimental",
       "datasetVersion": "2026.06.03-r6",
       "tags": [
-        "archive",
-        "index",
-        "beta"
+        "档案",
+        "索引",
+        "试验"
       ],
       "primaryCharacter": "asset://characters/hero.json",
       "activeQuest": "asset://quests/intro.json",
       "encounterPreset": "asset://encounters/shadow-eye.json",
-      "summary": "Paused indexer keeps a long operational summary so wide-row browsing still feels like a real release board instead of sample filler."
+      "summary": "暂停中的索引器保留了较长的运行摘要，用来保证宽表浏览看起来像真实发布看板，而不是示例填充内容。"
     }
   ]
 }

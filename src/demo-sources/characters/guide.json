@@ -3,12 +3,22 @@
   "profile": {
     "name": "Pang",
     "class": "Archivist",
-    "signatureItem": "asset://items/moon-charm.json"
+    "signatureItem": "asset://items/moon-charm.json",
+    "desk": "Vault Annex 3"
   },
   "stats": {
-    "hp": 6,
-    "mp": 12,
-    "resistances": []
+    "hp": 11,
+    "mp": 16,
+    "resistances": [
+      "echo"
+    ]
   },
-  "test": "good"
+  "duty": {
+    "shift": "late-ledger",
+    "clearance": "archive-seal",
+    "watchNotes": [
+      "Approves convoy ledger edits after every completed beacon route.",
+      "Tracks ritual anomalies that appear near sealed vault markers."
+    ]
+  }
 }

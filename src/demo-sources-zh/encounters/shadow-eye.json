@@ -2,7 +2,7 @@
   "id": "shadow-eye",
   "kind": "encounter",
   "enemies": [
-    "shadow-eye"
+    "影目"
   ],
   "hazard": {
     "darkness": 4,
@@ -10,6 +10,6 @@
   },
   "researchNotes": {
     "archivist": "asset://characters/guide.json",
-    "recommendedCountermeasure": "Keep the beacon lens exposed for three breaths before entry."
+    "recommendedCountermeasure": "进入前让灯塔透镜裸露三次呼吸的时间，再继续推进。"
   }
 }

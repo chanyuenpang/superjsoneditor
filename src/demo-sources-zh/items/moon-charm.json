@@ -1,7 +1,7 @@
 {
   "id": "moon-charm",
   "kind": "item",
-  "name": "Moon Charm",
+  "name": "月辉护符",
   "tier": "rare",
   "bonus": {
     "manaRegen": 2,
@@ -9,7 +9,7 @@
   },
   "boundEncounter": "asset://encounters/shadow-eye.json",
   "provenance": {
-    "issuedBy": "Moon Court",
+    "issuedBy": "月廷",
     "registryMark": "mc-44-a"
   }
 }

@@ -2,17 +2,23 @@
   "id": "intro",
   "kind": "quest",
   "title": "Light the First Beacon",
+  "briefing": "Escort the convoy to the northern tower, restore the lens housing, and re-open the first safe harbor route before midnight fog settles.",
   "steps": [
     {
       "id": "travel",
-      "text": "Travel to the northern watch."
+      "text": "Travel to the northern watch with the first lantern crate."
+    },
+    {
+      "id": "repair",
+      "text": "Replace the cracked lens ring and verify the flame channel."
     },
     {
       "id": "light",
-      "text": "Ignite the beacon flame."
+      "text": "Ignite the beacon and confirm that the route marker appears over the marsh."
     }
   ],
   "reward": {
-    "item": "asset://items/moon-charm.json"
+    "item": "asset://items/moon-charm.json",
+    "reputation": 120
   }
 }

@@ -1,15 +1,23 @@
 {
-  "123": "",
-  "1234": "",
-  "id": "campaign-alpha",
-  "title": "Super JSON Editor",
-  "description": "Use the editor to traverse nested objects, arrays, and resolved references. 123",
+  "id": "campaign-lantern-route",
+  "title": "Lantern Route Field Guide",
+  "description": "Operating dossier for the northbound beacon convoy, covering crew assignments, active missions, region threat notes, and the release board used by the archive team.",
   "meta": {
     "kind": "campaign",
-    "version": 3,
+    "version": 7,
+    "season": "moonfall",
     "flags": {
-      "hardcore": false,
-      "featured": true
+      "featured": true,
+      "expeditionLocked": false
+    }
+  },
+  "command": {
+    "leadArchivist": "Pang",
+    "fieldCaptain": "Lans",
+    "dispatchWindow": {
+      "opensAt": "18:40",
+      "closesAt": "23:15",
+      "timezone": "Harbor Standard"
     }
   },
   "characters": [
@@ -20,11 +28,11 @@
         "class": "Warden"
       },
       "stats": {
-        "hp": 10,
-        "mp": 4,
+        "hp": 18,
+        "mp": 7,
         "resistances": [
-          "fire",
-          "ice"
+          "frost",
+          "smoke"
         ]
       },
       "inventory": [
@@ -45,9 +53,11 @@
         "class": "Archivist"
       },
       "stats": {
-        "hp": 6,
-        "mp": 12,
-        "resistances": []
+        "hp": 11,
+        "mp": 16,
+        "resistances": [
+          "echo"
+        ]
       }
     }
   ],
@@ -58,6 +68,7 @@
         {
           "id": "north-forest",
           "threat": 2,
+          "weather": "cold-mist",
           "encounters": [
             "asset://encounters/wolf-pack.json"
           ]
@@ -65,6 +76,7 @@
         {
           "id": "sunken-vault",
           "threat": 5,
+          "weather": "ash-rain",
           "encounters": [
             "asset://encounters/shadow-eye.json"
           ]
@@ -72,15 +84,15 @@
       ]
     }
   },
-  "wideRecords": [
+  "releaseBoard": [
     {
-      "rowId": "telemetry-001",
-      "entityName": "Northern Observatory Node",
+      "rowId": "route-001",
+      "entryName": "North Observatory Convoy",
       "status": "active",
       "environment": "production",
-      "owner": "systems-team",
+      "owner": "field-ops",
       "ownerRegion": "cn-east-1",
-      "category": "telemetry",
+      "category": "convoy",
       "priority": "high",
       "score": 98.4,
       "successRate": 0.998,
@@ -90,22 +102,22 @@
       "retryBudget": 2,
       "alertsOpen": 1,
       "isArchived": false,
-      "lastUpdatedAt": "2026-06-01T09:18:00Z",
+      "lastUpdatedAt": "2026-06-04T21:18:00Z",
       "releaseChannel": "stable",
-      "datasetVersion": "2026.06.01-r4",
+      "datasetVersion": "2026.06.04-r2",
       "tags": [
-        "core",
-        "observatory",
-        "north"
+        "north",
+        "beacon",
+        "night-route"
       ],
       "primaryCharacter": "asset://characters/hero.json",
       "activeQuest": "asset://quests/intro.json",
       "encounterPreset": "asset://encounters/wolf-pack.json",
-      "summary": "Baseline node with low latency and one outstanding alert for an aging cache shard."
+      "summary": "Primary convoy route stays healthy, with one aging supply cache still waiting on a handoff review."
     },
     {
-      "rowId": "telemetry-002",
-      "entityName": "Sunken Vault Relay Mirror",
+      "rowId": "route-002",
+      "entryName": "Sunken Vault Relay Mirror",
       "status": "degraded",
       "environment": "staging",
       "owner": "reliability-lab",
@@ -120,9 +132,9 @@
       "retryBudget": 5,
       "alertsOpen": 4,
       "isArchived": false,
-      "lastUpdatedAt": "2026-06-01T09:21:00Z",
+      "lastUpdatedAt": "2026-06-04T21:31:00Z",
       "releaseChannel": "preview",
-      "datasetVersion": "2026.06.01-r4",
+      "datasetVersion": "2026.06.04-r2",
       "tags": [
         "vault",
         "mirror",
@@ -131,11 +143,11 @@
       "primaryCharacter": "asset://characters/guide.json",
       "activeQuest": "asset://quests/intro.json",
       "encounterPreset": "asset://encounters/shadow-eye.json",
-      "summary": "Mirror relay is intentionally noisy to exercise overflow, sticky identity, and wide-column scanning."
+      "summary": "Mirror relay is noisier by design so the team can watch queue pressure and escalation timings before the next seal-night event."
     },
     {
-      "rowId": "telemetry-003",
-      "entityName": "Western Archive Indexer",
+      "rowId": "route-003",
+      "entryName": "Western Archive Indexer",
       "status": "paused",
       "environment": "development",
       "owner": "content-ops",
@@ -150,9 +162,9 @@
       "retryBudget": 8,
       "alertsOpen": 7,
       "isArchived": true,
-      "lastUpdatedAt": "2026-06-01T09:27:00Z",
+      "lastUpdatedAt": "2026-06-04T21:47:00Z",
       "releaseChannel": "experimental",
-      "datasetVersion": "2026.06.01-r3",
+      "datasetVersion": "2026.06.03-r6",
       "tags": [
         "archive",
         "index",
@@ -161,7 +173,7 @@
       "primaryCharacter": "asset://characters/hero.json",
       "activeQuest": "asset://quests/intro.json",
       "encounterPreset": "asset://encounters/shadow-eye.json",
-      "summary": "Paused indexer keeps intentionally long descriptive text so the table can show aggressive width pressure."
+      "summary": "Paused indexer keeps a long operational summary so wide-row browsing still feels like a real release board instead of sample filler."
     }
   ]
 }
