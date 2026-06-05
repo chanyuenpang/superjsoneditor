@@ -1008,55 +1008,66 @@ export function EditorShell({
                 </div>
               </section>
             ) : null}
-            {stackAnimation?.direction === "push" && stackFlowMotionPlan.rightMotion === "fade-in" && visiblePages.at(-1) ? (
-              <section
-                className={`stack-page stack-page--foreground stack-page--overlay ${
-                  stackFlowSourceVisiblePages?.length === 2 ? "stack-page--push-enter-delayed" : "stack-page--push-enter"
-                } ${
-                  visiblePages.at(-1)?.isReference ? "is-reference" : ""
-                } ${
-                  resolvePageValue(visiblePages.at(-1)) && typeof resolvePageValue(visiblePages.at(-1)) === "object"
-                    ? (Array.isArray(resolvePageValue(visiblePages.at(-1))) ? "stack-page--array" : "stack-page--object")
-                    : "stack-page--primitive"
-                }`}
-                aria-hidden="true"
-                key={`push-enter:${stackAnimation.key}:${(visiblePages.at(-1)?.sourceId ?? rootSourceId)}:${visiblePages.at(-1)?.path.join("/") ?? ""}`}
-                style={getStackPageStyle("stack-page--foreground")}
-              >
-                <ValueInspector
-                  value={resolvePageValue(visiblePages.at(-1))}
-                  savedValue={getValueAtPath(
-                    savedDocumentsBySourceId[visiblePages.at(-1)?.sourceId ?? rootSourceId],
-                    visiblePages.at(-1)?.path ?? [],
-                  )}
-                  sourceId={visiblePages.at(-1)?.sourceId ?? rootSourceId}
-                  path={visiblePages.at(-1)?.path ?? []}
-                  title={getPageTitle(visiblePages.at(-1))}
-                  host={host}
-                  schema={resolvePageSchema(visiblePages.at(-1))}
-                  resolveNamedSchema={resolveNamedSchema}
-                  onUpdateDocumentSchema={handleUpdateDocumentSchema}
-                  onUpdateNamedSchema={handleUpdateNamedSchema}
-                  validationResult={validationResult}
-                  enableRawEditor={enableRawEditor}
-                  toolbarPortalHost={null}
-                  referenceError={visiblePages.at(-1)?.referenceError}
-                  isReference={visiblePages.at(-1)?.isReference}
-                  referenceScopeDepth={getReferenceScopeDepthForPage(pages, visiblePages.at(-1))}
-                  referenceSourceLabel={getReferenceSourceLabel(
-                    visiblePages.at(-1)?.sourceId,
-                    rootSourceId,
-                    getReferenceScopeDepthForPage(pages, visiblePages.at(-1)),
-                  )}
-                  activeReferenceSourceId={undefined}
-                  onClosePage={undefined}
-                  onNavigate={() => undefined}
-                  onApplyValue={() => undefined}
-                  readOnly={readOnly}
-                  onEditModeChange={() => undefined}
-                />
-              </section>
-            ) : null}
+            {(() => {
+              if (!(stackAnimation?.direction === "push" && stackFlowMotionPlan.rightMotion === "fade-in")) {
+                return null;
+              }
+              const overlayPage = visiblePages.at(-1);
+              if (!overlayPage) {
+                return null;
+              }
+              const overlayValue = resolvePageValue(overlayPage);
+              const overlayDepth = getReferenceScopeDepthForPage(pages, overlayPage);
+              return (
+                <section
+                  className={`stack-page stack-page--foreground stack-page--overlay ${
+                    stackFlowSourceVisiblePages?.length === 2 ? "stack-page--push-enter-delayed" : "stack-page--push-enter"
+                  } ${
+                    overlayPage.isReference ? "is-reference" : ""
+                  } ${
+                    overlayValue && typeof overlayValue === "object"
+                      ? (Array.isArray(overlayValue) ? "stack-page--array" : "stack-page--object")
+                      : "stack-page--primitive"
+                  }`}
+                  aria-hidden="true"
+                  key={`push-enter:${stackAnimation.key}:${overlayPage.sourceId ?? rootSourceId}:${overlayPage.path.join("/")}`}
+                  style={getStackPageStyle("stack-page--foreground")}
+                >
+                  <ValueInspector
+                    value={overlayValue}
+                    savedValue={getValueAtPath(
+                      savedDocumentsBySourceId[overlayPage.sourceId ?? rootSourceId],
+                      overlayPage.path,
+                    )}
+                    sourceId={overlayPage.sourceId ?? rootSourceId}
+                    path={overlayPage.path}
+                    title={getPageTitle(overlayPage)}
+                    host={host}
+                    schema={resolvePageSchema(overlayPage)}
+                    resolveNamedSchema={resolveNamedSchema}
+                    onUpdateDocumentSchema={handleUpdateDocumentSchema}
+                    onUpdateNamedSchema={handleUpdateNamedSchema}
+                    validationResult={validationResult}
+                    enableRawEditor={enableRawEditor}
+                    toolbarPortalHost={null}
+                    referenceError={overlayPage.referenceError}
+                    isReference={overlayPage.isReference}
+                    referenceScopeDepth={overlayDepth}
+                    referenceSourceLabel={getReferenceSourceLabel(
+                      overlayPage.sourceId,
+                      rootSourceId,
+                      overlayDepth,
+                    )}
+                    activeReferenceSourceId={undefined}
+                    onClosePage={undefined}
+                    onNavigate={() => undefined}
+                    onApplyValue={() => undefined}
+                    readOnly={readOnly}
+                    onEditModeChange={() => undefined}
+                  />
+                </section>
+              );
+            })()}
             {stackAnimation && stackFlowMotionPlan.rightMotion === "fade-out" && stackAnimation.exitingPage ? (
               <section
                 className={`stack-page stack-page--foreground stack-page--overlay stack-page--pop-exit ${
