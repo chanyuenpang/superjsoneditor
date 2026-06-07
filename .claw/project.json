@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "superjsoneditor",
+  "displayName": "superjsoneditor",
+  "aliases": [],
+  "description": "",
+  "createdAt": "2026-06-05T12:55:13.165Z",
+  "updatedAt": "2026-06-05T12:55:13.165Z",
+  "settings": {
+    "id": "superjsoneditor",
+    "rootPath": "/home/yankeeting/.openclaw/projects/superjsoneditor",
+    "gitnexus": {
+      "enabled": true
+    },
+    "memoryStore": {
+      "path": "/home/yankeeting/.openclaw/.projects/superjsoneditor/memory.sqlite"
+    },
+    "registeredAt": "2026-06-01T09:43:01.019Z",
+    "updatedAt": "2026-06-01T12:43:46.465Z",
+    "sessionLastTasks": {},
+    "name": "superjsoneditor",
+    "contextPaths": [],
+    "memory": {
+      "externalDocPaths": []
+    },
+    "truthSource": {
+      "enabled": false,
+      "visibility": "hidden",
+      "truthVisible": false,
+      "mode": "internal",
+      "autoAdr": true,
+      "adrThreshold": "high",
+      "excludedAgents": [],
+      "maxReportAge": 86400,
+      "truthDoc": {
+        "enabled": false
+      }
+    },
+    "agent": {
+      "files": [],
+      "skills": [],
+      "commands": [],
+      "mcpServers": {}
+    }
+  },
+  "gitnexus": {
+    "repoId": "superjsoneditor",
+    "indexed": false
+  },
+  "memory": {
+    "driver": "sqlite",
+    "path": ".claw/memory.sqlite"
+  },
+  "state": {}
+}
