@@ -400,6 +400,15 @@ test("host reload can replace the in-memory documents", async () => {
   await waitFor(() => expect(screen.getByDisplayValue("reloaded")).toBeInTheDocument());
 });
 
+test("hosts can observe live document changes before save", async () => {
+  const handleChange = vi.fn();
+  render(<EditorShell documents={{ main: { hello: "world" } }} onChange={handleChange} />);
+
+  fireEvent.change(screen.getByLabelText("Field hello"), { target: { value: "galaxy" } });
+
+  await waitFor(() => expect(handleChange).toHaveBeenCalledWith({ main: { hello: "galaxy" } }));
+});
+
 test("read only mode keeps navigation but disables mutation controls", () => {
   render(<EditorShell value={{ hello: "world", nested: { hp: 10 } }} readOnly />);
 

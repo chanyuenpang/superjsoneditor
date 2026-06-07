@@ -25,6 +25,7 @@ export type EditorDocuments = Record<string, unknown>;
 
 export type EditorSaveHandler = (documents: EditorDocuments) => void | EditorDocuments | Promise<void | EditorDocuments>;
 export type EditorReloadHandler = () => void | EditorDocuments | Promise<void | EditorDocuments>;
+export type EditorChangeHandler = (documents: EditorDocuments) => void;
 
 export function resolveCompactStack(
   compactBreakpoint: number,
@@ -140,6 +141,7 @@ export type EditorShellProps = {
   onSave?: EditorSaveHandler;
   onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
+  onChange?: EditorChangeHandler;
   validateDocument?: EditorValidationHandler;
   readOnly?: boolean;
   enableRawEditor?: boolean;
@@ -163,6 +165,7 @@ export function EditorShell({
   onSave,
   onUnavailableSaveAttempt,
   onReload,
+  onChange,
   validateDocument,
   readOnly = false,
   enableRawEditor = true,
@@ -184,6 +187,7 @@ export function EditorShell({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
+  const hasReportedChangeRef = useRef(false);
   const [stackViewportWidth, setStackViewportWidth] = useState(0);
   const [windowViewportWidth, setWindowViewportWidth] = useState(
     typeof window === "undefined" ? 0 : window.innerWidth,
@@ -290,6 +294,15 @@ export function EditorShell({
     setValidationResult(null);
     setIsEditingCurrentPage(false);
   }, [initialDocuments, initialDocumentsSnapshot]);
+
+  useEffect(() => {
+    if (!onChange) return;
+    if (!hasReportedChangeRef.current) {
+      hasReportedChangeRef.current = true;
+      return;
+    }
+    onChange(documentsBySourceId);
+  }, [documentsBySourceId, onChange]);
 
   async function handleSave() {
     if (readOnly || !onSave) return;

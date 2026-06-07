@@ -2,6 +2,7 @@ import "./styles.css";
 
 export { EditorShell } from "./editor/EditorShell";
 export type {
+  EditorChangeHandler,
   EditorDocuments,
   EditorReloadHandler,
   EditorSaveHandler,
