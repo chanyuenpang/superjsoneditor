@@ -49,7 +49,7 @@ export type EditorTableColumn = {
 
 export type EditorSchemaUi = {
   group?: string;
-  fieldType?: "select" | "multi-select";
+  fieldType?: "select" | "multi-select" | "textarea";
   options?: EditorViewOption[];
   optionsSource?: EditorViewOptionsSource;
   reference?: EditorReferenceSchema;
@@ -86,6 +86,7 @@ export type EditorSchema = {
   enum?: unknown[];
   const?: unknown;
   default?: unknown;
+  readOnly?: boolean;
   required?: string[];
   properties?: Record<string, EditorSchema>;
   patternProperties?: Record<string, EditorSchema>;
@@ -242,7 +243,7 @@ export function resolveNode(context: {
       enum: effectiveSchema.enum,
       nullable: isNullableSchema(effectiveSchema),
       additionalProperties: typeof effectiveSchema.additionalProperties === "boolean" ? effectiveSchema.additionalProperties : undefined,
-      readOnly: effectiveSchema.const !== undefined,
+      readOnly: effectiveSchema.readOnly === true || effectiveSchema.const !== undefined,
       minItems: effectiveSchema.minItems,
       maxItems: effectiveSchema.maxItems,
       uniqueItems: effectiveSchema.uniqueItems,

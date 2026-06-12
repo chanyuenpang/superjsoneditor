@@ -421,6 +421,53 @@ test("read only mode keeps navigation but disables mutation controls", () => {
   expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
 });
 
+test("schema readOnly fields stay navigable but disable direct editing", () => {
+  render(
+    <EditorShell
+      value={{ id: "quest_001", title: "First Quest" }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              id: { type: "string", readOnly: true },
+              title: { type: "string" },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("Field id")).toBeDisabled();
+  expect(screen.getByLabelText("Field title")).not.toBeDisabled();
+});
+
+test("schema textarea fields render textarea even for short text", () => {
+  render(
+    <EditorShell
+      value={{ description: "short text" }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              description: {
+                type: "string",
+                "x-editor": {
+                  fieldType: "textarea",
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("Field description").tagName).toBe("TEXTAREA");
+});
+
 test("array pages render a table workspace", () => {
   render(<EditorShell value={{ party: [{ id: "hero", hp: 10 }, { id: "guide", hp: 6 }] }} />);
 

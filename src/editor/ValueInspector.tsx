@@ -1825,7 +1825,7 @@ function renderPrimitiveEditor(props: {
   onUpdateSchema?: (updater: (schema: EditorSchema) => EditorSchema) => void;
   onChange: (nextValue: unknown) => void;
 }) {
-  const readOnly = props.readOnly || props.schema?.const !== undefined;
+  const readOnly = props.readOnly || props.schema?.readOnly === true || props.schema?.const !== undefined;
   const nullableBranch = getNullableBranchSchema(props.schema);
   const nullableLabel = getNullableBranchLabel(nullableBranch);
   const editorOptionsState = resolveEditorOptions(props.schema, props.host);
@@ -2029,6 +2029,21 @@ function renderPrimitiveEditor(props: {
   }
 
   const text = typeof props.value === "string" ? props.value : String(props.value ?? "");
+  if (props.schema?.["x-editor"]?.fieldType === "textarea") {
+    return withNullableControls(
+      <textarea
+        aria-label={props.ariaLabel}
+        className="detail-input detail-textarea"
+        disabled={readOnly}
+        rows={getMultilineEditorRows(text)}
+        value={text}
+        onChange={(event) => props.onChange(event.target.value)}
+      />,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
+    );
+  }
   if (shouldUseMultilineEditor(text)) {
     return withNullableControls(
         <textarea
