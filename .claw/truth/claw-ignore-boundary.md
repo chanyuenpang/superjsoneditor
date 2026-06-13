@@ -52,3 +52,9 @@ git status --short --ignored .claw
 ## 目的
 
 这条规则的目标很明确：仓库只保留 claw 项目配置与 durable truth，避免任务归档、运行日志和本地状态文件持续进入提交历史，影响仓库可读性和后续协作。
+
+## 本轮完成态
+
+本轮任务已经完成清理、索引核对和远端同步，最终提交 SHA 为 `9fd80a22745e853abf1cb58dbb62fac40e842835`。
+
+完成后本地 `git status --short --branch` 保持干净，只剩分支头信息，没有额外的 `.claw` 噪音。
