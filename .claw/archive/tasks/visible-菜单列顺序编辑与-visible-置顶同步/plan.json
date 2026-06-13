@@ -1,0 +1,65 @@
+{
+  "title": "visible 菜单列顺序编辑与 visible 置顶同步",
+  "status": "end.completed",
+  "goal": {
+    "text": "为第一列的 visible 编辑菜单增加拖动排序功能；visible 项置顶并与 column 顺序同步；列设为 visible 后可上下排序；当没有 visible 时按 object 原始 schema 顺序展示。"
+  },
+  "requirements": {
+    "summary": "第一列的 column visibility 菜单需要成为可编辑列顺序的入口：visible 项固定在上方并与当前 table columns 顺序同步，hidden 项在下方并按 object/schema 原始顺序展示；用户将 hidden 列设为 visible 后，该列立即进入 visible 区并可通过拖拽上下排序。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "Column visibility 菜单中的 visible 项显示在顶部，顺序与当前 x-editor.table.columns 顺序一致。",
+      "菜单中的 hidden 项显示在 visible 项之后；当没有 visible 项时，列表按 object/schema 原始顺序展示。",
+      "在菜单中把 hidden 列切换为 visible 后，该列进入 visible 区并可参与后续上下拖拽排序。",
+      "菜单支持拖拽 visible 项来重排 column 顺序，并将结果写回 schema table columns。",
+      "React 测试覆盖 visible 置顶、切换为 visible 后的排序行为，以及菜单内拖拽改写 column 顺序。"
+    ]
+  },
+  "tasks": [
+    {
+      "title": "补充 visibility 菜单排序行为测试",
+      "status": "done",
+      "id": 1
+    },
+    {
+      "title": "实现 visible 菜单分组与拖拽排序",
+      "status": "done",
+      "id": 2
+    },
+    {
+      "title": "运行回归并完成收尾",
+      "status": "done",
+      "id": 3
+    }
+  ],
+  "references": [
+    {
+      "path": "src/editor/ValueInspector.tsx",
+      "why": "array 页面列可见性菜单、column 顺序与 schema 写回逻辑"
+    },
+    {
+      "path": "src/editor/column-dnd.ts",
+      "why": "现有列拖拽算法，可评估是否复用"
+    },
+    {
+      "path": "src/styles.css",
+      "why": "visibility 菜单与拖拽视觉样式"
+    },
+    {
+      "path": "tests/react/editor-shell.test.tsx",
+      "why": "schema authoring / visibility 菜单交互测试"
+    }
+  ],
+  "rules": [
+    "先写测试并确认失败，再写实现。",
+    "保持现有表头拖拽与 visibility 菜单行为兼容，不改动无关交互。",
+    "hidden 项的默认顺序应来自 object/schema 原始字段顺序，而不是临时 UI 排序。"
+  ],
+  "keyDecisions": [
+    "visible 菜单内只允许对 visible 分组做拖拽排序；hidden 分组保持 schema 原始顺序，降低认知成本并保证切 visible 前的基线稳定。",
+    "当 schema 显式声明了空 table columns 时，array 视图仍保留第一列 visibility 入口，使用户能从无 visible 状态恢复可见列。"
+  ],
+  "retrospective": {
+    "summary": "为第一列 visibility 菜单增加了 visible 分组拖拽排序；visible 项固定置顶并与当前 column 顺序同步，hidden 项按 object/schema 原始顺序展示。显式空 columns 现在仍保留 visibility 入口，可从无 visible 状态恢复列。新增 React 测试覆盖 visible-first、无 visible 回退顺序和菜单内拖拽改写 columns，tests/react/editor-shell.test.tsx 全量 111 项通过。"
+  }
+}

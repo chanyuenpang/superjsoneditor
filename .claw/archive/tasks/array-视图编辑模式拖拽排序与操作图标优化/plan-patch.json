@@ -1,0 +1,49 @@
+﻿{
+  "requirements": {
+    "summary": "在 array 页面进入 Edit 模式后，用户可以通过与 object 页面一致的拖拽把手对数组项排序；行内 copy/delete 改为图标按钮并通过 tooltip 呈现语义，保持现有复制、删除、schema 约束与导航行为。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "Array 页面 Edit 模式下可以拖拽重排数组项，释放后写回数组顺序。",
+      "拖拽把手复用 object 页面现有排序图标与视觉风格。",
+      "Copy/Delete 使用图标按钮并提供 tooltip 文案。",
+      "copy 仍在当前行后插入副本，delete 仍遵守 minItems 等禁用逻辑。",
+      "相关 React 测试覆盖拖拽排序与操作按钮语义。"
+    ]
+  },
+  "tasks": [
+    {
+      "title": "补充 array 编辑模式的交互测试",
+      "status": "pending"
+    },
+    {
+      "title": "实现 array 行拖拽排序与图标 tooltip 操作区",
+      "status": "pending"
+    },
+    {
+      "title": "运行针对性验证并完成收尾",
+      "status": "pending"
+    }
+  ],
+  "references": [
+    {
+      "path": "src/editor/ValueInspector.tsx",
+      "why": "array/object 页面交互实现位置"
+    },
+    {
+      "path": "src/styles.css",
+      "why": "object 排序把手与 array 行操作样式"
+    },
+    {
+      "path": "tests/react/editor-shell.test.tsx",
+      "why": "React 交互回归测试"
+    }
+  ],
+  "rules": [
+    "先写测试并确认失败，再写实现。",
+    "保持 object 页面现有拖拽图标风格一致。",
+    "不要改变 copy/delete 既有业务语义，只优化交互与可发现性。"
+  ],
+  "keyDecisions": [
+    "array 行排序只在 Edit 模式下暴露，并通过行级拖拽把手触发，避免影响浏览模式点击导航。"
+  ]
+}

@@ -483,8 +483,8 @@ test("array pages stay in browse mode until Edit is enabled", () => {
 
   fireEvent.click(screen.getByRole("button", { name: "party array 1 items" }));
 
-  expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Copy row 1" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete row 1" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Create row" })).toBeNull();
   expect(getCurrentActionButton("Edit")).toBeInTheDocument();
 });
@@ -2120,7 +2120,81 @@ test("schema array mode disables delete when minItems is reached", async () => {
   fireEvent.click(getCurrentActionButton("Edit"));
   await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
 
-  expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Delete row 1" })).toBeDisabled();
+});
+
+test("array edit mode uses icon action buttons with tooltip labels", async () => {
+  render(<EditorShell value={{ party: ["hero", "guide"] }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "party array 2 items" }));
+  fireEvent.click(getCurrentActionButton("Edit"));
+  await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
+
+  expect(screen.getByRole("button", { name: "Copy row 1" })).toHaveAttribute("title", "Copy row 1");
+  expect(screen.getByRole("button", { name: "Delete row 1" })).toHaveAttribute("title", "Delete row 1");
+  expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
+});
+
+test("array edit mode can drag to reorder rows", async () => {
+  const { container } = render(<EditorShell value={{ party: ["hero", "guide", "mage"] }} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "party array 3 items" }));
+  fireEvent.click(getCurrentActionButton("Edit"));
+  await waitFor(() => expect(getCurrentActionButton("Done")).toBeInTheDocument());
+
+  const firstHandle = screen.getByRole("button", { name: "Reorder row 1" });
+  const secondHandle = screen.getByRole("button", { name: "Reorder row 2" });
+  const thirdHandle = screen.getByRole("button", { name: "Reorder row 3" });
+
+  (firstHandle.closest("tr") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 40,
+    width: 420,
+    height: 48,
+    top: 40,
+    right: 420,
+    bottom: 88,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (secondHandle.closest("tr") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 100,
+    width: 420,
+    height: 48,
+    top: 100,
+    right: 420,
+    bottom: 148,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (thirdHandle.closest("tr") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 160,
+    width: 420,
+    height: 48,
+    top: 160,
+    right: 420,
+    bottom: 208,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(thirdHandle, { button: 0, clientX: 12, clientY: 184 });
+  fireEvent.mouseMove(window, { clientX: 12, clientY: 60 });
+  fireEvent.mouseUp(window, { clientX: 12, clientY: 60 });
+
+  const rowTexts = [...container.querySelectorAll(".stack-page.is-current tbody input[aria-label^='Array item']")]
+    .map((input) => (input as HTMLInputElement).value.trim())
+    .filter(Boolean);
+  expect(rowTexts).toEqual(["mage", "hero", "guide"]);
 });
 
 test("schema array mode disables create when maxItems is reached", async () => {
@@ -2381,6 +2455,176 @@ test("schema authoring columns manager can add hidden object-array columns while
     { key: "title", sortable: true },
     { key: "id", label: "Quest ID" },
     { key: "hp" },
+  ]);
+});
+
+test("column visibility menu keeps visible columns first and hidden columns in schema order", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+        mp: { type: "integer", title: "Mana" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest", hp: 10, mp: 4 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+  const visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  const menuLabels = [...visibilityPanel.querySelectorAll(".hidden-field-toggle")]
+    .map((button) => button.textContent?.trim());
+
+  expect(menuLabels).toEqual(["Title", "Identifier", "Health", "Mana"]);
+});
+
+test("column visibility menu falls back to object schema order when no visible columns remain", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+  let visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  fireEvent.click(within(visibilityPanel).getAllByRole("button", { name: /Title/ }).at(-1) as HTMLElement);
+  fireEvent.click(within(visibilityPanel).getAllByRole("button", { name: /Identifier/ }).at(-1) as HTMLElement);
+
+  visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  const menuLabels = [...visibilityPanel.querySelectorAll(".hidden-field-toggle")]
+    .map((button) => button.textContent?.trim());
+
+  expect(menuLabels).toEqual(["Identifier", "Title", "Health"]);
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([]);
+});
+
+test("column visibility menu can drag visible items to rewrite column order", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+          { key: "id" },
+          { key: "hp" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_001", title: "First Quest", hp: 10 },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Column visibility/ }));
+  const visibilityPanel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  const titleHandle = within(visibilityPanel).getByRole("button", { name: "Reorder Title" });
+  const idHandle = within(visibilityPanel).getByRole("button", { name: "Reorder Identifier" });
+  const hpHandle = within(visibilityPanel).getByRole("button", { name: "Reorder Health" });
+
+  (titleHandle.closest(".hidden-field-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 40,
+    width: 220,
+    height: 36,
+    top: 40,
+    right: 220,
+    bottom: 76,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (idHandle.closest(".hidden-field-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 84,
+    width: 220,
+    height: 36,
+    top: 84,
+    right: 220,
+    bottom: 120,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (hpHandle.closest(".hidden-field-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 128,
+    width: 220,
+    height: 36,
+    top: 128,
+    right: 220,
+    bottom: 164,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(hpHandle, { button: 0, clientX: 10, clientY: 146 });
+  fireEvent.mouseMove(window, { clientX: 10, clientY: 50 });
+  fireEvent.mouseUp(window, { clientX: 10, clientY: 50 });
+
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
+    { key: "hp" },
+    { key: "title" },
+    { key: "id" },
   ]);
 });
 

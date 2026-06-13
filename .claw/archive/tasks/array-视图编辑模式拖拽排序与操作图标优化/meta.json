@@ -1,0 +1,18 @@
+{
+  "name": "array-视图编辑模式拖拽排序与操作图标优化",
+  "description": "",
+  "projectId": "superjsoneditor",
+  "createdAt": "2026-06-13T09:52:52.106Z",
+  "updatedAt": "2026-06-13T10:03:09.743Z",
+  "subagents": [],
+  "status": "completed",
+  "rootPlan": "plan.json",
+  "activePlan": "plan.json",
+  "ownerSessionKey": "019ec064-5210-7922-9d7d-b95985dc4043",
+  "boundAt": "2026-06-13T09:52:52.106Z",
+  "rules": [
+    "先写测试并确认失败，再写实现。",
+    "保持 object 页面现有拖拽图标风格一致。",
+    "不要改变 copy/delete 既有业务语义，只优化交互与可发现性。"
+  ]
+}

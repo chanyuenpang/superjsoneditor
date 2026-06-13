@@ -1,0 +1,23 @@
+﻿{
+  "tasks": [
+    {
+      "title": "补充 array 编辑模式的交互测试",
+      "status": "done"
+    },
+    {
+      "title": "实现 array 行拖拽排序与图标 tooltip 操作区",
+      "status": "done"
+    },
+    {
+      "title": "运行针对性验证并完成收尾",
+      "status": "done"
+    }
+  ],
+  "keyDecisions": [
+    "array 行排序只在 Edit 模式下暴露，并通过行级拖拽把手触发，避免影响浏览模式点击导航。",
+    "array 行 copy/delete 改为仅图标按钮，通过 aria-label 与 title 提供 tooltip 语义，并复用 object 视图的拖拽把手图标风格。"
+  ],
+  "retrospective": {
+    "summary": "为 array 编辑模式补充了行级拖拽排序；copy/delete 改为图标加 tooltip 交互，并保持既有复制、删除和 minItems 约束行为。新增 React 回归测试覆盖按钮语义和拖拽重排，tests/react/editor-shell.test.tsx 全量 108 项通过。"
+  }
+}

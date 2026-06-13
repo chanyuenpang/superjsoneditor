@@ -2,6 +2,7 @@ import {
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
+  IconCopy,
   IconDots,
   IconEye,
   IconEyeOff,
@@ -34,6 +35,7 @@ export const icons = {
   info: IconInfoCircleFilled,
   closeRightPage: IconLayoutSidebarRightCollapse,
   delete: IconTrashFilled,
+  copy: IconCopy,
   addField: IconPlus,
   check: IconCheck,
 } as const;

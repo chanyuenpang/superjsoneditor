@@ -2481,6 +2481,77 @@ th:hover .column-resize-handle::after,
   text-transform: lowercase;
 }
 
+.hidden-fields-group-label {
+  color: #787774;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 6px 10px 2px;
+  text-transform: uppercase;
+}
+
+.hidden-field-stack {
+  display: grid;
+  gap: 6px;
+}
+
+.hidden-field-item {
+  align-items: center;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+
+.hidden-field-item.is-pressed {
+  background: #efeeeb;
+}
+
+.hidden-field-item.is-dragging {
+  opacity: 0.72;
+}
+
+.hidden-field-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  display: flex;
+  font: inherit;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 0 8px 0 0;
+  text-align: left;
+  width: 100%;
+}
+
+.hidden-field-toggle > span {
+  min-width: 0;
+}
+
+.hidden-field-toggle:hover {
+  background: #f6f5f3;
+}
+
+.hidden-field-reorder-handle {
+  height: 28px;
+  margin-top: 0;
+  width: 20px;
+}
+
+.hidden-field-reorder-spacer {
+  width: 20px;
+}
+
+.hidden-field-drop-indicator {
+  background: #2f80ed;
+  border-radius: 999px;
+  height: 3px;
+  margin-left: 24px;
+}
+
 .schema-column-menu__input-row:hover,
 .schema-column-menu__input-row:focus-within {
   background: #fff;
@@ -2642,8 +2713,8 @@ th:hover .column-resize-handle::after,
 
 .array-column--actions {
   left: 0;
-  min-width: 144px;
-  width: 144px;
+  min-width: 136px;
+  width: 136px;
   z-index: 4;
 }
 
@@ -2662,12 +2733,57 @@ th:hover .column-resize-handle::after,
 
 .data-table th.array-column--sticky.array-column--after-actions,
 .data-table td.array-column--sticky.array-column--after-actions {
-  left: 144px;
+  left: 136px;
 }
 
 .row-action-buttons {
+  align-items: center;
   display: flex;
   gap: 6px;
+}
+
+.row-action-buttons--icon-only {
+  justify-content: flex-start;
+}
+
+.row-action-icon-button {
+  min-width: 28px;
+  padding: 0;
+}
+
+.array-row-reorder-handle {
+  margin-top: 0;
+}
+
+.array-row-reorder-spacer {
+  width: 20px;
+}
+
+.array-row--pressed > td {
+  background: #efeeeb;
+}
+
+.array-row--dragging {
+  opacity: 0.72;
+}
+
+.array-drop-indicator-row td {
+  padding: 0;
+}
+
+.array-drop-indicator-cell {
+  background: transparent;
+}
+
+.array-drop-indicator {
+  background: #2f80ed;
+  border-radius: 999px;
+  height: 3px;
+  margin: 0 12px 0 148px;
+}
+
+.array-row-drag-ghost {
+  min-height: 48px;
 }
 
 .row-action-buttons .primary-button {

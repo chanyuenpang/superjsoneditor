@@ -45,11 +45,25 @@
   },
   "gitnexus": {
     "repoId": "superjsoneditor",
-    "indexed": false
+    "indexed": false,
+    "enabled": false
   },
   "memory": {
-    "driver": "sqlite",
-    "path": ".claw/memory.sqlite"
+    "externalDocPaths": [],
+    "embedding": {
+      "provider": "local",
+      "model": "Snowflake/snowflake-arctic-embed-m-v2.0",
+      "store": {
+        "vector": {
+          "enabled": true
+        }
+      }
+    }
   },
-  "state": {}
+  "state": {},
+  "name": "super-json-editor",
+  "maxTasksToKeep": 99,
+  "externalTruthSkill": null,
+  "externalAdrSkill": null,
+  "contextPaths": []
 }

@@ -1,0 +1,23 @@
+﻿{
+  "tasks": [
+    {
+      "title": "补充 visibility 菜单排序行为测试",
+      "status": "done"
+    },
+    {
+      "title": "实现 visible 菜单分组与拖拽排序",
+      "status": "done"
+    },
+    {
+      "title": "运行回归并完成收尾",
+      "status": "done"
+    }
+  ],
+  "keyDecisions": [
+    "visible 菜单内只允许对 visible 分组做拖拽排序；hidden 分组保持 schema 原始顺序，降低认知成本并保证切 visible 前的基线稳定。",
+    "当 schema 显式声明了空 table columns 时，array 视图仍保留第一列 visibility 入口，使用户能从无 visible 状态恢复可见列。"
+  ],
+  "retrospective": {
+    "summary": "为第一列的 visibility 菜单增加了 visible 分组拖拽排序；visible 项固定置顶并与当前 column 顺序同步，hidden 项按 object/schema 原始顺序展示。显式空 columns 现在仍保留 visibility 入口，可从无 visible 状态恢复列。新增 React 测试覆盖 visible-first、无 visible 回退顺序和菜单内拖拽改写 columns，tests/react/editor-shell.test.tsx 全量 111 项通过。"
+  }
+}

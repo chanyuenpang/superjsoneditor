@@ -1,5 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCallback } from "react";
+import { Fragment } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
 import { createPortal } from "react-dom";
 import type { JsonPath } from "../core/path";
@@ -259,7 +260,7 @@ function ObjectPage({
     };
 
     const onPointerUp = () => {
-      finish(dragging ? insertDraggedField(startOrder, key, currentTargetIndex) : null);
+      finish(dragging ? insertDraggedItem(startOrder, key, currentTargetIndex) : null);
     };
 
     window.addEventListener("mousemove", onMouseMove);
@@ -566,6 +567,7 @@ function ArrayPage({
   readOnly = false,
   enableRawEditor = true,
 }: ValueInspectorProps & { value: unknown[] }) {
+  const actionColumnWidth = 136;
   const [rawOpen, setRawOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [suppressEditToggleUntil, setSuppressEditToggleUntil] = useState(0);
@@ -610,6 +612,7 @@ function ArrayPage({
   const showReferenceProjectionTable = referenceViewColumns.length > 0;
   const columnSourceSchema = showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema;
   const tableSchema = getArrayTableSchema(schema, referenceItemSchema);
+  const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema);
   const configuredTableColumns = useMemo(
     () => getConfiguredTableColumns(tableSchema),
     [tableSchema],
@@ -621,6 +624,18 @@ function ArrayPage({
   const [dragPreviewWidths, setDragPreviewWidths] = useState<Record<string, number> | null>(null);
   const [realColumnWidths, setRealColumnWidths] = useState<Record<string, number> | null>(null);
   const [dragGhost, setDragGhost] = useState<{ key: string; label: string; x: number; y: number } | null>(null);
+  const rowItemRefs = useRef<Record<number, HTMLTableRowElement | null>>({});
+  const [pressedRowIndex, setPressedRowIndex] = useState<number | null>(null);
+  const [rowDragState, setRowDragState] = useState<{
+    sourceIndex: number;
+    orderedSourceIndexes: number[];
+    targetIndex: number;
+    ghostTop: number;
+    ghostLeft: number;
+    ghostWidth: number;
+    ghostHeight: number;
+    ghostLabel: string;
+  } | null>(null);
   const dragPreviewKeysRef = useRef<string[] | null>(null);
   const dragStateRef = useRef<{
     key: string;
@@ -641,16 +656,16 @@ function ArrayPage({
     !pageReadOnly && sourceId && onUpdateDocumentSchema,
   );
   const columns = useMemo(
-    () => getArrayColumns(value, host, schema?.items, referenceViewColumns, configuredTableColumns),
-    [value, host, schema?.items, referenceViewColumns, configuredTableColumns],
+    () => getArrayColumns(value, host, schema?.items, referenceViewColumns, configuredTableColumns, hasExplicitTableColumns),
+    [value, host, schema?.items, referenceViewColumns, configuredTableColumns, hasExplicitTableColumns],
   );
   const columnSetSignature = useMemo(
     () => [...columns].sort().join("|"),
     [columns],
   );
   const managedColumns = useMemo(
-    () => getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns),
-    [availableSchemaColumns, columns, configuredTableColumns],
+    () => getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns, hasExplicitTableColumns),
+    [availableSchemaColumns, columns, configuredTableColumns, hasExplicitTableColumns],
   );
   const orderedColumns = useMemo(
     () => dragPreviewKeys ? ["#", ...dragPreviewKeys] : columns,
@@ -709,7 +724,7 @@ function ArrayPage({
     () => orderedColumns.reduce((total, column) => total + (renderedColumnWidths[column] ?? 140), 0),
     [orderedColumns, renderedColumnWidths],
   );
-  const tableWidth = tableMinWidth + (editMode ? 144 : 0);
+  const tableWidth = tableMinWidth + (editMode ? actionColumnWidth : 0);
   const resolvedTableWidth = tableWidth;
   useEffect(() => {
     setRawOpen(false);
@@ -724,6 +739,8 @@ function ArrayPage({
     setDragPreviewWidths(null);
     setRealColumnWidths(null);
     setDragGhost(null);
+    setPressedRowIndex(null);
+    setRowDragState(null);
     setHiddenFieldsOpen(false);
   }, [pathKey, schemaItemsSignature]);
 
@@ -805,10 +822,12 @@ function ArrayPage({
 
   const updateTableSchemaColumns = useCallback((updater: (columns: EditorTableColumn[]) => EditorTableColumn[]) => {
     if (!canAuthorTableSchema) return;
-    const currentColumns = getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns);
+    const currentColumns = hasExplicitTableColumns
+      ? configuredTableColumns
+      : getManagedTableColumns(configuredTableColumns, columns, availableSchemaColumns, hasExplicitTableColumns);
     const applyUpdate = (targetSchema: EditorSchema) => setSchemaTableColumns(targetSchema, updater(currentColumns));
     void onUpdateDocumentSchema?.(sourceId as string, path, "self", applyUpdate);
-  }, [availableSchemaColumns, canAuthorTableSchema, columns, configuredTableColumns, onUpdateDocumentSchema, path, sourceId]);
+  }, [availableSchemaColumns, canAuthorTableSchema, columns, configuredTableColumns, hasExplicitTableColumns, onUpdateDocumentSchema, path, sourceId]);
 
   function updateSingleColumn(
     key: string,
@@ -839,6 +858,153 @@ function ArrayPage({
     if (hiddenEntry) {
       unhideColumn(hiddenEntry);
     }
+  }
+
+  function reorderVisibleColumns(orderedVisibleKeys: string[]) {
+    updateTableSchemaColumns((current) => reorderColumnsByKeys(current, orderedVisibleKeys));
+  }
+
+  function commitArrayRowOrder(orderedSourceIndexes: number[]) {
+    onApplyValue(orderedSourceIndexes.map((index) => value[index]));
+  }
+
+  function handleRowHandlePointerDown(
+    sourceIndex: number,
+    displayIndex: number,
+    item: unknown,
+    event: { button: number; clientY: number; preventDefault: () => void; stopPropagation: () => void },
+  ) {
+    if (pageReadOnly || value.length <= 1 || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startOrder = displayRows.map((row) => row.sourceIndex);
+    const startRect = rowItemRefs.current[sourceIndex]?.getBoundingClientRect();
+    if (!startRect) return;
+    const startY = event.clientY;
+    let dragging = false;
+    let currentTargetIndex = startOrder.indexOf(sourceIndex);
+    const ghostLabel = previewValue(item, host) || `Row ${displayIndex + 1}`;
+    setPressedRowIndex(sourceIndex);
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      if (!dragging && Math.abs(deltaY) <= 4) return;
+      if (!dragging) {
+        dragging = true;
+        document.body.classList.add("is-dragging-detail-property");
+      }
+      const restOrder = startOrder.filter((index) => index !== sourceIndex);
+      const slots = restOrder.map((index) => {
+        const element = rowItemRefs.current[index];
+        const rect = element?.getBoundingClientRect();
+        return rect ? { index, center: rect.top + rect.height / 2 } : null;
+      }).filter((entry): entry is { index: number; center: number } => Boolean(entry));
+      currentTargetIndex = slots.length;
+      for (let index = 0; index < slots.length; index += 1) {
+        if (moveEvent.clientY <= slots[index].center) {
+          currentTargetIndex = index;
+          break;
+        }
+      }
+      setRowDragState({
+        sourceIndex,
+        orderedSourceIndexes: startOrder,
+        targetIndex: currentTargetIndex,
+        ghostTop: moveEvent.clientY - (startY - startRect.top),
+        ghostLeft: startRect.left,
+        ghostWidth: startRect.width,
+        ghostHeight: startRect.height,
+        ghostLabel,
+      });
+    };
+
+    const finish = (nextOrder: number[] | null) => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onPointerUp);
+      document.body.classList.remove("is-dragging-detail-property");
+      setPressedRowIndex(null);
+      setRowDragState(null);
+      if (nextOrder && !nextOrder.every((index, orderIndex) => index === startOrder[orderIndex])) {
+        commitArrayRowOrder(nextOrder);
+      }
+    };
+
+    const onPointerUp = () => {
+      finish(dragging ? insertDraggedItem(startOrder, sourceIndex, currentTargetIndex) : null);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onPointerUp);
+  }
+
+  function renderArrayDropIndicator(displayIndex: number) {
+    if (!rowDragState || rowDragState.targetIndex !== displayIndex) return null;
+    return (
+      <tr className="array-drop-indicator-row" aria-hidden="true">
+        <td
+          className="array-drop-indicator-cell"
+          colSpan={orderedColumns.length + (showStructuralRowActions ? 1 : 0)}
+        >
+          <div className="array-drop-indicator" />
+        </td>
+      </tr>
+    );
+  }
+
+  function renderRowActions(sourceIndex: number, displayIndex: number, item: unknown) {
+    const copyLabel = `Copy row ${displayIndex + 1}`;
+    const deleteLabel = `Delete row ${displayIndex + 1}`;
+    const reorderLabel = `Reorder row ${displayIndex + 1}`;
+    return (
+      <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
+        <div className="row-action-buttons row-action-buttons--icon-only">
+          {value.length > 1 ? (
+            <button
+              aria-label={reorderLabel}
+              className="detail-property-handle array-row-reorder-handle"
+              title={reorderLabel}
+              type="button"
+              onMouseDown={(event) => handleRowHandlePointerDown(sourceIndex, displayIndex, item, event)}
+            >
+              <icons.dragHandle size={16} />
+            </button>
+          ) : (
+            <div className="detail-property-spacer array-row-reorder-spacer" aria-hidden="true" />
+          )}
+          <button
+            aria-label={copyLabel}
+            className="ghost-button compact-button row-action-icon-button"
+            disabled={Date.now() < suppressRowActionsUntil}
+            title={copyLabel}
+            type="button"
+            onPointerDown={(event) => event.preventDefault()}
+            onPointerUp={(event) => {
+              event.stopPropagation();
+              const next = [...value];
+              next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
+              onApplyValue(next);
+            }}
+          >
+            <icons.copy size={14} />
+          </button>
+          <button
+            aria-label={deleteLabel}
+            className="danger-icon-button row-action-icon-button"
+            disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
+            title={deleteLabel}
+            type="button"
+            onPointerDown={(event) => event.preventDefault()}
+            onPointerUp={(event) => {
+              event.stopPropagation();
+              if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
+              onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
+            }}
+          >
+            <icons.delete size={14} />
+          </button>
+        </div>
+      </td>
+    );
   }
 
   return (
@@ -884,7 +1050,7 @@ function ArrayPage({
                 }}
               >
                 <colgroup>
-                  {showStructuralRowActions ? <col data-column="__edit__" style={{ width: "144px" }} /> : null}
+                  {showStructuralRowActions ? <col data-column="__edit__" style={{ width: `${actionColumnWidth}px` }} /> : null}
                   {orderedColumns.map((column) => (
                     <col
                       data-column={column}
@@ -939,6 +1105,7 @@ function ArrayPage({
                               isOpen={hiddenFieldsOpen}
                               onToggle={() => setHiddenFieldsOpen((current) => !current)}
                               onToggleColumn={toggleColumnVisibility}
+                              onReorderVisible={reorderVisibleColumns}
                               triggerClassName="array-column-visibility-trigger"
                               triggerIconOnly
                             />
@@ -1064,49 +1231,24 @@ function ArrayPage({
                     const isActiveReferenceRow = activeReferenceSourceId != null && inferReferenceSourceId(item, host) === activeReferenceSourceId;
                     if (showReferenceProjectionTable) {
                       return (
-                        <tr
-                          className={[
-                            clickable ? "is-clickable" : "",
-                            activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
-                          ].filter(Boolean).join(" ")}
-                          data-row-index={sourceIndex}
-                          key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
-                          onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
-                        >
-                          {showStructuralRowActions ? (
-                            <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
-                              <div className="row-action-buttons">
-                                <button
-                                  className="ghost-button compact-button"
-                                  disabled={Date.now() < suppressRowActionsUntil}
-                                  type="button"
-                                  onPointerDown={(event) => event.preventDefault()}
-                                  onPointerUp={(event) => {
-                                    event.stopPropagation();
-                                    const next = [...value];
-                                    next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
-                                    onApplyValue(next);
-                                  }}
-                                >
-                                  Copy
-                                </button>
-                                <button
-                                  className="danger-icon-button"
-                                  disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
-                                  type="button"
-                                  onPointerDown={(event) => event.preventDefault()}
-                                  onPointerUp={(event) => {
-                                    event.stopPropagation();
-                                    if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                    onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </td>
-                          ) : null}
-                          {orderedColumns.map((column, columnIndex) => {
+                        <Fragment key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}>
+                          {renderArrayDropIndicator(displayIndex)}
+                          <tr
+                            className={[
+                              clickable ? "is-clickable" : "",
+                              activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
+                              pressedRowIndex === sourceIndex ? "array-row--pressed" : "",
+                              rowDragState?.sourceIndex === sourceIndex ? "array-row--dragging" : "",
+                            ].filter(Boolean).join(" ")}
+                            data-row-index={sourceIndex}
+                            key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
+                            onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
+                            ref={(element) => {
+                              rowItemRefs.current[sourceIndex] = element;
+                            }}
+                          >
+                            {showStructuralRowActions ? renderRowActions(sourceIndex, displayIndex, item) : null}
+                            {orderedColumns.map((column, columnIndex) => {
                             if (column === "#") {
                               return (
                                 <td
@@ -1140,8 +1282,9 @@ function ArrayPage({
                                 {renderReferenceTableCell(item, referenceColumn, schema?.items, resolveNamedSchema, host)}
                               </td>
                             );
-                          })}
-                        </tr>
+                            })}
+                          </tr>
+                        </Fragment>
                       );
                     }
                     if (objectRows) {
@@ -1149,113 +1292,64 @@ function ArrayPage({
                       if (!objectRow) {
                         const mixedPreview = previewValue(item, host);
                         return (
-                          <tr
-                            className={[
-                              "array-row--mixed",
-                              clickable ? "is-clickable" : "",
-                              activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
-                            ].filter(Boolean).join(" ")}
-                            data-row-index={sourceIndex}
-                            key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
-                            onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
-                          >
-                            {showStructuralRowActions ? (
-                              <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
-                                <div className="row-action-buttons">
-                                  <button
-                                    className="ghost-button compact-button"
-                                    disabled={Date.now() < suppressRowActionsUntil}
-                                    type="button"
-                                    onPointerDown={(event) => event.preventDefault()}
-                                    onPointerUp={(event) => {
-                                      event.stopPropagation();
-                                      const next = [...value];
-                                      next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
-                                      onApplyValue(next);
-                                    }}
-                                  >
-                                    Copy
-                                  </button>
-                                  <button
-                                    className="danger-icon-button"
-                                    disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
-                                    type="button"
-                                    onPointerDown={(event) => event.preventDefault()}
-                                    onPointerUp={(event) => {
-                                      event.stopPropagation();
-                                      if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                      onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
-                                    }}
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              </td>
-                            ) : null}
-                            {columns.length > 0 ? (
-                              <td className="array-column--sticky array-cell--mixed array-cell--mixed-primary">
-                                <span className="array-cell-summary array-cell-summary--mixed-type">{columns[0] === "#" ? String(displayIndex + 1) : describeType(item, host)}</span>
-                              </td>
-                            ) : null}
-                            {columns.length > 1 ? (
-                              <td className="array-cell--mixed array-cell--mixed-secondary">
-                                <span className="array-cell-summary array-cell-summary--mixed-count">{mixedPreview}</span>
-                              </td>
-                            ) : null}
-                            {columns.length > 2 ? (
-                              <td className="array-cell--mixed array-cell--mixed-merged" colSpan={columns.length - 2}>
-                                <span className="array-cell-merged-placeholder" aria-hidden="true" />
-                              </td>
-                            ) : null}
-                          </tr>
+                          <Fragment key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}>
+                            {renderArrayDropIndicator(displayIndex)}
+                            <tr
+                              className={[
+                                "array-row--mixed",
+                                clickable ? "is-clickable" : "",
+                                activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
+                                pressedRowIndex === sourceIndex ? "array-row--pressed" : "",
+                                rowDragState?.sourceIndex === sourceIndex ? "array-row--dragging" : "",
+                              ].filter(Boolean).join(" ")}
+                              data-row-index={sourceIndex}
+                              key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
+                              onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
+                              ref={(element) => {
+                                rowItemRefs.current[sourceIndex] = element;
+                              }}
+                            >
+                              {showStructuralRowActions ? renderRowActions(sourceIndex, displayIndex, item) : null}
+                              {columns.length > 0 ? (
+                                <td className="array-column--sticky array-cell--mixed array-cell--mixed-primary">
+                                  <span className="array-cell-summary array-cell-summary--mixed-type">{columns[0] === "#" ? String(displayIndex + 1) : describeType(item, host)}</span>
+                                </td>
+                              ) : null}
+                              {columns.length > 1 ? (
+                                <td className="array-cell--mixed array-cell--mixed-secondary">
+                                  <span className="array-cell-summary array-cell-summary--mixed-count">{mixedPreview}</span>
+                                </td>
+                              ) : null}
+                              {columns.length > 2 ? (
+                                <td className="array-cell--mixed array-cell--mixed-merged" colSpan={columns.length - 2}>
+                                  <span className="array-cell-merged-placeholder" aria-hidden="true" />
+                                </td>
+                              ) : null}
+                            </tr>
+                          </Fragment>
                         );
                       }
 
                       const record = item as Record<string, unknown>;
                       return (
-                        <tr
-                          className={[
-                            clickable ? "is-clickable" : "",
-                            activeChildSegment === sourceIndex ? "is-active-row" : "",
-                          ].filter(Boolean).join(" ")}
-                          data-row-index={sourceIndex}
-                          key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
-                          onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
-                      >
-                        {showStructuralRowActions ? (
-                          <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
-                            <div className="row-action-buttons">
-                                  <button
-                                    className="ghost-button compact-button"
-                                    disabled={Date.now() < suppressRowActionsUntil}
-                                    type="button"
-                                onPointerDown={(event) => event.preventDefault()}
-                                onPointerUp={(event) => {
-                                  event.stopPropagation();
-                                  const next = [...value];
-                                  next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
-                                  onApplyValue(next);
-                                }}
-                              >
-                                Copy
-                              </button>
-                              <button
-                                className="danger-icon-button"
-                                disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
-                                type="button"
-                                onPointerDown={(event) => event.preventDefault()}
-                                onPointerUp={(event) => {
-                                  event.stopPropagation();
-                                  if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
-                                }}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </td>
-                        ) : null}
-                          {orderedColumns.map((column, columnIndex) => {
+                        <Fragment key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}>
+                          {renderArrayDropIndicator(displayIndex)}
+                          <tr
+                            className={[
+                              clickable ? "is-clickable" : "",
+                              activeChildSegment === sourceIndex ? "is-active-row" : "",
+                              pressedRowIndex === sourceIndex ? "array-row--pressed" : "",
+                              rowDragState?.sourceIndex === sourceIndex ? "array-row--dragging" : "",
+                            ].filter(Boolean).join(" ")}
+                            data-row-index={sourceIndex}
+                            key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}
+                            onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
+                            ref={(element) => {
+                              rowItemRefs.current[sourceIndex] = element;
+                            }}
+                          >
+                            {showStructuralRowActions ? renderRowActions(sourceIndex, displayIndex, item) : null}
+                            {orderedColumns.map((column, columnIndex) => {
                             if (column === "#") {
                               return (
                                 <td
@@ -1300,88 +1394,66 @@ function ArrayPage({
                               </span>
                             </td>
                             );
-                          })}
-                        </tr>
+                            })}
+                          </tr>
+                        </Fragment>
                       );
                     }
 
                     return (
+                      <Fragment key={`${sourceIndex}:${String(item)}`}>
+                        {renderArrayDropIndicator(displayIndex)}
                         <tr
                           className={[
                             clickable ? "is-clickable" : "",
                             activeChildSegment === sourceIndex || isActiveReferenceRow ? "is-active-row" : "",
+                            pressedRowIndex === sourceIndex ? "array-row--pressed" : "",
+                            rowDragState?.sourceIndex === sourceIndex ? "array-row--dragging" : "",
                           ].filter(Boolean).join(" ")}
-                        data-row-index={sourceIndex}
-                        key={`${sourceIndex}:${String(item)}`}
-                        onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
-                      >
-                        {showStructuralRowActions ? (
-                          <td className="array-column--sticky array-column--actions" onClick={(event) => event.stopPropagation()}>
-                            <div className="row-action-buttons">
-                              <button
-                                className="ghost-button compact-button"
-                                disabled={Date.now() < suppressRowActionsUntil}
-                                type="button"
-                                onPointerDown={(event) => event.preventDefault()}
-                                onPointerUp={(event) => {
-                                  event.stopPropagation();
-                                  const next = [...value];
-                                  next.splice(sourceIndex + 1, 0, cloneJsonValue(item));
-                                  onApplyValue(next);
-                                }}
-                              >
-                                Copy
-                              </button>
-                              <button
-                                className="danger-icon-button"
-                                disabled={Date.now() < suppressRowActionsUntil || minItemsReached}
-                                type="button"
-                                onPointerDown={(event) => event.preventDefault()}
-                                onPointerUp={(event) => {
-                                  event.stopPropagation();
-                                  if ((schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length) return;
-                                  onApplyValue(value.filter((_, rowIndex) => rowIndex !== sourceIndex));
-                                }}
-                              >
-                                Delete
-                              </button>
-                            </div>
+                          data-row-index={sourceIndex}
+                          key={`${sourceIndex}:${String(item)}`}
+                          onClick={clickable ? () => onNavigate([...path, sourceIndex]) : undefined}
+                          ref={(element) => {
+                            rowItemRefs.current[sourceIndex] = element;
+                          }}
+                        >
+                          {showStructuralRowActions ? renderRowActions(sourceIndex, displayIndex, item) : null}
+                          <td className={["array-column--sticky", "array-column--index", showStructuralRowActions ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>
+                            <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
                           </td>
-                        ) : null}
-                        <td className={["array-column--sticky", "array-column--index", showStructuralRowActions ? "array-column--after-actions" : ""].filter(Boolean).join(" ")}>
-                          <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
-                        </td>
-                        <td>
-                          {isNavigable(item) ? (
-                            <button
-                              className={["nested-entry-button", "inline", getTypeToneClass(item, host)].filter(Boolean).join(" ")}
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onNavigate([...path, sourceIndex]);
-                              }}
-                            >
-                              <span className="nested-entry-icon" aria-hidden="true">
-                                {getStructureIcon(item, host)}
-                              </span>
-                              {renderNestedEntryContent(item, schema?.items, host, resolveNamedSchema, summarizeRowIdentity(item, sourceIndex, path, host))}
-                            </button>
-                          ) : (
-                            renderPrimitiveEditor({
-                              value: item,
-                              ariaLabel: `Array item ${sourceIndex}`,
-                              path: [...path, sourceIndex],
-                              host,
-                              readOnly: pageReadOnly,
-                              onChange(nextValue) {
-                                onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
-                              },
-                            })
-                          )}
-                        </td>
-                      </tr>
+                          <td>
+                            {isNavigable(item) ? (
+                              <button
+                                className={["nested-entry-button", "inline", getTypeToneClass(item, host)].filter(Boolean).join(" ")}
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onNavigate([...path, sourceIndex]);
+                                }}
+                              >
+                                <span className="nested-entry-icon" aria-hidden="true">
+                                  {getStructureIcon(item, host)}
+                                </span>
+                                {renderNestedEntryContent(item, schema?.items, host, resolveNamedSchema, summarizeRowIdentity(item, sourceIndex, path, host))}
+                              </button>
+                            ) : (
+                              renderPrimitiveEditor({
+                                value: item,
+                                ariaLabel: `Array item ${sourceIndex}`,
+                                path: [...path, sourceIndex],
+                                host,
+                                readOnly: pageReadOnly,
+                                onChange(nextValue) {
+                                  onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
+                                },
+                              })
+                            )}
+                          </td>
+                        </tr>
+                      </Fragment>
                     );
                   })}
+                    {rowDragState && rowDragState.targetIndex === rowDragState.orderedSourceIndexes.length ? renderArrayDropIndicator(rowDragState.targetIndex) : null}
                     {showStructuralRowActions && showReferenceProjectionTable ? (
                       renderReferenceCreateRow({
                         columns: orderedColumns,
@@ -1432,12 +1504,27 @@ function ArrayPage({
                 ) : null}
               </div>
             </section>
-            {dragGhost && typeof document !== "undefined" ? createPortal(
+            {typeof document !== "undefined" && dragGhost ? createPortal(
               <div
                 className="column-drag-ghost"
                 style={{ left: dragGhost.x, top: dragGhost.y }}
               >
                 <div className="column-drag-ghost-name">{dragGhost.label}</div>
+              </div>,
+              document.body,
+            ) : null}
+            {typeof document !== "undefined" && rowDragState ? createPortal(
+              <div
+                className="detail-property-ghost array-row-drag-ghost"
+                style={{
+                  top: rowDragState.ghostTop,
+                  left: rowDragState.ghostLeft,
+                  width: rowDragState.ghostWidth,
+                  minHeight: rowDragState.ghostHeight,
+                }}
+              >
+                <icons.dragHandle size={16} />
+                <span className="detail-property-ghost-label">{rowDragState.ghostLabel}</span>
               </div>,
               document.body,
             ) : null}
@@ -1453,6 +1540,7 @@ function HiddenFieldsToolbarAction({
   isOpen,
   onToggle,
   onToggleColumn,
+  onReorderVisible,
   triggerClassName,
   triggerIconOnly = false,
 }: {
@@ -1460,12 +1548,28 @@ function HiddenFieldsToolbarAction({
   isOpen: boolean;
   onToggle: () => void;
   onToggleColumn: (columnKey: string) => void;
+  onReorderVisible?: (orderedVisibleKeys: string[]) => void;
   triggerClassName?: string;
   triggerIconOnly?: boolean;
 }) {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Record<string, HTMLElement | null>>({});
   const [panelPosition, setPanelPosition] = useState<{ right: number; top: number } | null>(null);
+  const [pressedKey, setPressedKey] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<{
+    key: string;
+    visibleKeys: string[];
+    targetIndex: number;
+    ghostTop: number;
+    ghostLeft: number;
+    ghostWidth: number;
+    ghostHeight: number;
+    ghostLabel: string;
+  } | null>(null);
+
+  const visibleColumns = columns.filter((column) => column.visible);
+  const hiddenColumns = columns.filter((column) => !column.visible);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -1495,6 +1599,79 @@ function HiddenFieldsToolbarAction({
     };
   }, [isOpen, onToggle]);
 
+  function handleVisibleDragStart(
+    key: string,
+    label: string,
+    event: { button: number; clientY: number; preventDefault: () => void; stopPropagation: () => void },
+  ) {
+    if (visibleColumns.length <= 1) return;
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const startOrder = visibleColumns.map((column) => column.key);
+    const startRect = itemRefs.current[key]?.getBoundingClientRect();
+    if (!startRect) return;
+    const startY = event.clientY;
+    let dragging = false;
+    let currentTargetIndex = startOrder.indexOf(key);
+    setPressedKey(key);
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      if (!dragging && Math.abs(deltaY) <= 4) return;
+      if (!dragging) {
+        dragging = true;
+        document.body.classList.add("is-dragging-detail-property");
+      }
+      const restOrder = startOrder.filter((entry) => entry !== key);
+      const slots = restOrder.map((entry) => {
+        const element = itemRefs.current[entry];
+        const rect = element?.getBoundingClientRect();
+        return rect ? { key: entry, center: rect.top + rect.height / 2 } : null;
+      }).filter((entry): entry is { key: string; center: number } => Boolean(entry));
+      currentTargetIndex = slots.length;
+      for (let index = 0; index < slots.length; index += 1) {
+        if (moveEvent.clientY <= slots[index].center) {
+          currentTargetIndex = index;
+          break;
+        }
+      }
+      setDragState({
+        key,
+        visibleKeys: startOrder,
+        targetIndex: currentTargetIndex,
+        ghostTop: moveEvent.clientY - (startY - startRect.top),
+        ghostLeft: startRect.left,
+        ghostWidth: startRect.width,
+        ghostHeight: startRect.height,
+        ghostLabel: label,
+      });
+    };
+
+    const finish = (nextOrder: string[] | null) => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.classList.remove("is-dragging-detail-property");
+      setPressedKey(null);
+      setDragState(null);
+      if (nextOrder && !nextOrder.every((entry, index) => entry === startOrder[index])) {
+        onReorderVisible?.(nextOrder);
+      }
+    };
+
+    const onMouseUp = () => {
+      finish(dragging ? insertDraggedItem(startOrder, key, currentTargetIndex) : null);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }
+
+  function renderDropIndicator(index: number) {
+    if (!dragState || dragState.targetIndex !== index) return null;
+    return <div className="hidden-field-drop-indicator" aria-hidden="true" />;
+  }
+
   return (
     <div className="toolbar-hidden-fields">
       <button
@@ -1514,11 +1691,51 @@ function HiddenFieldsToolbarAction({
           style={{ right: `${panelPosition.right}px`, top: `${panelPosition.top}px` }}
         >
           <div className="hidden-fields-list">
-            {columns.map((column) => (
-              <button className="hidden-field-item" key={column.key} type="button" onClick={() => onToggleColumn(column.key)}>
-                <span>{column.label}</span>
-                {column.visible ? <icons.visible size={15} /> : <icons.hidden size={15} />}
-              </button>
+            {visibleColumns.length > 0 ? <div className="hidden-fields-group-label">Visible</div> : null}
+            {visibleColumns.map((column, index) => (
+              <div className="hidden-field-stack" key={column.key}>
+                {renderDropIndicator(index)}
+                <div
+                  className={[
+                    "hidden-field-item",
+                    "hidden-field-item--visible",
+                    pressedKey === column.key ? "is-pressed" : "",
+                    dragState?.key === column.key ? "is-dragging" : "",
+                  ].filter(Boolean).join(" ")}
+                  ref={(element) => {
+                    itemRefs.current[column.key] = element;
+                  }}
+                >
+                  {visibleColumns.length > 1 ? (
+                    <button
+                      aria-label={`Reorder ${column.label}`}
+                      className="detail-property-handle hidden-field-reorder-handle"
+                      title={`Reorder ${column.label}`}
+                      type="button"
+                      onMouseDown={(event) => handleVisibleDragStart(column.key, column.label, event)}
+                    >
+                      <icons.dragHandle size={14} />
+                    </button>
+                  ) : (
+                    <div className="detail-property-spacer hidden-field-reorder-spacer" aria-hidden="true" />
+                  )}
+                  <button className="hidden-field-toggle" type="button" onClick={() => onToggleColumn(column.key)}>
+                    <span>{column.label}</span>
+                    <icons.visible size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {dragState && dragState.targetIndex === visibleColumns.length ? renderDropIndicator(visibleColumns.length) : null}
+            {hiddenColumns.length > 0 ? <div className="hidden-fields-group-label">Hidden</div> : null}
+            {hiddenColumns.map((column) => (
+              <div className="hidden-field-item hidden-field-item--hidden" key={column.key}>
+                <div className="detail-property-spacer hidden-field-reorder-spacer" aria-hidden="true" />
+                <button className="hidden-field-toggle" type="button" onClick={() => onToggleColumn(column.key)}>
+                  <span>{column.label}</span>
+                  <icons.hidden size={15} />
+                </button>
+              </div>
             ))}
           </div>
         </div>,
@@ -2157,8 +2374,9 @@ function getArrayColumns(
   itemSchema?: EditorSchema,
   referenceViewColumns: ReferenceViewColumn[] = [],
   configuredColumns: EditorTableColumn[] = [],
+  hasExplicitConfiguredColumns = false,
 ) {
-  if (configuredColumns.length > 0) {
+  if (hasExplicitConfiguredColumns) {
     return ["#", ...configuredColumns.map((column) => getTableColumnId(column))];
   }
   if (referenceViewColumns.length > 0) {
@@ -2312,6 +2530,10 @@ function getConfiguredTableColumns(schema: EditorSchema | undefined) {
   return schema?.["x-editor"]?.table?.columns ?? [];
 }
 
+function hasSchemaTableColumns(schema: EditorSchema | undefined) {
+  return Array.isArray(schema?.["x-editor"]?.table?.columns);
+}
+
 function getArrayTableSchema(arraySchema: EditorSchema | undefined, itemSchema: EditorSchema | undefined) {
   if (arraySchema?.["x-editor"]?.table) {
     return arraySchema;
@@ -2335,8 +2557,9 @@ function getManagedTableColumns(
   configuredColumns: EditorTableColumn[],
   renderedColumns: string[],
   availableColumns: AvailableSchemaColumn[],
+  hasExplicitConfiguredColumns = false,
 ) {
-  if (configuredColumns.length > 0) {
+  if (hasExplicitConfiguredColumns) {
     return configuredColumns;
   }
   return renderedColumns
@@ -3242,11 +3465,11 @@ function reorderSchemaPropertiesToMatch(schema: EditorSchema, orderedKeys: strin
   };
 }
 
-function insertDraggedField(order: string[], field: string, targetIndex: number) {
-  const restOrder = order.filter((entry) => entry !== field);
+function insertDraggedItem<T>(order: T[], item: T, targetIndex: number) {
+  const restOrder = order.filter((entry) => entry !== item);
   const next = [...restOrder];
   const clampedIndex = Math.max(0, Math.min(targetIndex, next.length));
-  next.splice(clampedIndex, 0, field);
+  next.splice(clampedIndex, 0, item);
   return next;
 }
 
