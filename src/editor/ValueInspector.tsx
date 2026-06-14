@@ -84,6 +84,259 @@ export function ValueInspector(props: ValueInspectorProps) {
   return <PrimitivePage {...props} value={props.value} />;
 }
 
+function getSchemaClassNames(schema: EditorSchema | undefined): string[] {
+  const raw = schema?.["x-editor"]?.className;
+  if (!raw) {
+    return [];
+  }
+  return (Array.isArray(raw) ? raw : [raw])
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
+function getObjectValueProjectionConfig(schema: EditorSchema | undefined) {
+  const table = schema?.["x-editor"]?.table;
+  if (!table?.objectValueSchema || table.columns.length === 0) {
+    return null;
+  }
+  return {
+    columns: table.columns,
+    objectValueSchema: table.objectValueSchema,
+    objectValueMetadataByKey: table.objectValueMetadataByKey,
+    metadataSchema: schema,
+  };
+}
+
+function getObjectFieldProjectionConfig(
+  pageSchema: EditorSchema | undefined,
+  fieldSchema: EditorSchema | undefined,
+) {
+  return getObjectValueProjectionConfig(fieldSchema) ?? getObjectValueProjectionConfig(pageSchema);
+}
+
+function resolveObjectProjectionConfig(props: {
+  path: JsonPath;
+  value: Record<string, unknown>;
+  parentValue?: unknown;
+  schema?: EditorSchema;
+  host?: EditorHost;
+}) {
+  const hostProjection = props.host?.getObjectProjectionConfig?.({
+    path: props.path,
+    value: props.value,
+    parentValue: props.parentValue,
+    schema: props.schema,
+  });
+  if (hostProjection) {
+    return {
+      columns: hostProjection.columns,
+      objectValueSchema: hostProjection.objectValueSchema,
+      objectValueMetadataByKey: hostProjection.objectValueMetadataByKey,
+      metadataSchema: props.schema,
+    };
+  }
+  return getObjectValueProjectionConfig(props.schema);
+}
+
+function resolveObjectValueMetadataByKey(props: {
+  path: JsonPath;
+  value: Record<string, unknown>;
+  parentValue?: unknown;
+  schema?: EditorSchema;
+  host?: EditorHost;
+}) {
+  const staticMetadata = props.schema?.["x-editor"]?.table?.objectValueMetadataByKey;
+  const dynamicMetadata = props.host?.getObjectValueMetadata?.({
+    path: props.path,
+    value: props.value,
+    parentValue: props.parentValue,
+    schema: props.schema,
+  });
+  if (!staticMetadata) {
+    return dynamicMetadata;
+  }
+  if (!dynamicMetadata) {
+    return staticMetadata;
+  }
+  const merged: Record<string, Record<string, unknown>> = {};
+  for (const key of new Set([...Object.keys(staticMetadata), ...Object.keys(dynamicMetadata)])) {
+    merged[key] = {
+      ...(staticMetadata[key] ?? {}),
+      ...(dynamicMetadata[key] ?? {}),
+    };
+  }
+  return merged;
+}
+
+function renderInlineObjectProjection(props: {
+  fieldKey: string;
+  fieldValue: Record<string, unknown>;
+  fieldLabel: string;
+  path: JsonPath;
+  host?: EditorHost;
+  parentValue?: unknown;
+  readOnly: boolean;
+  projectionColumns: EditorTableColumn[];
+  projectionSchema: EditorSchema;
+  projectionMetadataByKey?: Record<string, Record<string, unknown>>;
+  projectionMetadataSchema?: EditorSchema;
+  onNavigate: (path: JsonPath) => void;
+  onChange: (nextValue: Record<string, unknown>) => void;
+}) {
+  const {
+    fieldKey,
+    fieldValue,
+    fieldLabel,
+    path,
+    host,
+    parentValue,
+    readOnly,
+    projectionColumns,
+    projectionSchema,
+    projectionMetadataByKey,
+    projectionMetadataSchema,
+    onNavigate,
+    onChange,
+  } = props;
+
+  const resolvedProjectionMetadataByKey = projectionMetadataByKey
+    ?? resolveObjectValueMetadataByKey({ path, value: fieldValue, parentValue, schema: projectionMetadataSchema ?? projectionSchema, host });
+  const isMapProjection = isObjectMapProjectionValue(fieldValue, projectionColumns)
+    || hasProjectedMapMetadataRows(resolvedProjectionMetadataByKey, projectionColumns);
+
+  return (
+    <div
+      className="array-cell-inline-projection"
+      onClick={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+    >
+      {isMapProjection
+        ? renderProjectedObjectMapFieldEditor({
+          rowKey: fieldKey,
+          rowValue: fieldValue,
+          rowLabel: fieldLabel,
+          path,
+          host,
+          readOnly,
+          projectionColumns,
+          projectionSchema,
+          projectionMetadataByKey: resolvedProjectionMetadataByKey,
+          projectionMetadataSchema,
+          onNavigate,
+          onChange,
+        })
+        : renderProjectedObjectFieldEditor({
+          rowKey: fieldKey,
+          rowValue: fieldValue,
+          rowLabel: fieldLabel,
+          path,
+          host,
+          readOnly,
+          projectionColumns,
+          projectionSchema,
+          onNavigate,
+          onChange,
+        })}
+    </div>
+  );
+}
+
+function isObjectMapProjectionValue(
+  value: Record<string, unknown>,
+  projectionColumns: EditorTableColumn[],
+) {
+  const entries = Object.entries(value);
+  if (entries.length === 0) {
+    return false;
+  }
+
+  const directFieldKeys = projectionColumns
+    .map((column) => getTableColumnPath(column))
+    .filter((fieldPath) => fieldPath.length === 1 && typeof fieldPath[0] === "string")
+    .map((fieldPath) => fieldPath[0] as string);
+  if (directFieldKeys.length > 0 && entries.every(([key]) => directFieldKeys.includes(key))) {
+    return false;
+  }
+
+  return entries.every(([, item]) => {
+    if (!isPlainObject(item)) {
+      return true;
+    }
+    return projectionColumns.some((column) => {
+      const fieldPath = getTableColumnPath(column);
+      return fieldPath.length > 0 && getValueAtPath(item, fieldPath) !== undefined;
+    });
+  });
+}
+
+function normalizeProjectedMapEntry(
+  entryValue: unknown,
+  projectionColumns: EditorTableColumn[],
+): Record<string, unknown> | null {
+  if (entryValue === undefined) {
+    return {};
+  }
+  if (!isPlainObject(entryValue)) {
+    return { default: entryValue };
+  }
+
+  const hasProjectedField = projectionColumns.some((column) => {
+    const fieldPath = getTableColumnPath(column);
+    return fieldPath.length > 0 && getValueAtPath(entryValue, fieldPath) !== undefined;
+  });
+
+  if (hasProjectedField) {
+    return entryValue;
+  }
+
+  return { default: entryValue };
+}
+
+function updateProjectedMapEntry(
+  originalEntryValue: unknown,
+  normalizedEntryValue: Record<string, unknown>,
+  fieldPath: JsonPath,
+  nextValue: unknown,
+) {
+  if (!isPlainObject(originalEntryValue) && fieldPath.length === 1 && fieldPath[0] === "default") {
+    return nextValue;
+  }
+  return setValueAtPath(normalizedEntryValue, fieldPath, nextValue);
+}
+
+function getProjectedMapEntryKeys(
+  rowValue: Record<string, unknown>,
+  projectionMetadataByKey?: Record<string, Record<string, unknown>>,
+) {
+  const keys = new Set<string>(Object.keys(rowValue));
+  for (const key of Object.keys(projectionMetadataByKey ?? {})) {
+    keys.add(key);
+  }
+  return [...keys];
+}
+
+function getDirectProjectionFieldKeys(projectionColumns: EditorTableColumn[]) {
+  return projectionColumns
+    .map((column) => getTableColumnPath(column))
+    .filter((fieldPath) => fieldPath.length === 1 && typeof fieldPath[0] === "string")
+    .map((fieldPath) => fieldPath[0] as string);
+}
+
+function hasProjectedMapMetadataRows(
+  projectionMetadataByKey?: Record<string, Record<string, unknown>>,
+  projectionColumns?: EditorTableColumn[],
+) {
+  const metadataKeys = Object.keys(projectionMetadataByKey ?? {});
+  if (metadataKeys.length === 0) {
+    return false;
+  }
+  const directFieldKeys = projectionColumns ? getDirectProjectionFieldKeys(projectionColumns) : [];
+  if (directFieldKeys.length > 0 && metadataKeys.every((key) => directFieldKeys.includes(key))) {
+    return false;
+  }
+  return true;
+}
+
 function ObjectPage({
   value,
   savedValue,
@@ -197,8 +450,8 @@ function ObjectPage({
   }
 
   function commitObjectFieldOrder(nextOrder: string[]) {
+    if (!canAuthorObjectSchema) return;
     setFieldOrder(nextOrder);
-    onApplyValue(reorderObjectKeys(value, nextOrder));
     updateObjectSchema((currentSchema) => reorderSchemaPropertiesToMatch(currentSchema, nextOrder));
   }
 
@@ -267,8 +520,10 @@ function ObjectPage({
     window.addEventListener("mouseup", onPointerUp);
   }
 
+  const pageClassNames = getSchemaClassNames(schema);
+
   return (
-    <section className="node-page node-page--object">
+    <section className={["node-page", "node-page--object", ...pageClassNames].join(" ")}>
       <PageHeader
         path={path}
         title={title}
@@ -313,6 +568,7 @@ function ObjectPage({
                         className={[
                           "detail-property-item",
                           "object-field-row",
+                          ...getSchemaClassNames(schema?.properties?.[key]),
                           pressedField === key ? "is-pressed" : "",
                           isDragged ? "is-dragging" : "",
                           isFieldDirty(fieldValue, isPlainObject(savedValue) ? savedValue[key] : undefined) ? "object-field-row--dirty" : "",
@@ -321,7 +577,7 @@ function ObjectPage({
                           propertyItemRefs.current[key] = element;
                         }}
                       >
-                        {!pageReadOnly && fields.length > 1 ? (
+                        {!pageReadOnly && canAuthorObjectSchema && fields.length > 1 ? (
                           <button
                             aria-label={`Reorder ${fieldLabel}`}
                             className="detail-property-handle"
@@ -339,7 +595,7 @@ function ObjectPage({
                             style={{ minHeight: dragState?.ghostHeight ?? 72 }}
                           />
                         ) : (
-                          <section className="property-block">
+                          <section className={["property-block", ...getSchemaClassNames(schema?.properties?.[key])].join(" ")}>
                             <div className="property-heading">
                               <span>{fieldLabel}</span>
                               <div className="property-heading__actions">
@@ -384,36 +640,102 @@ function ObjectPage({
                                   });
                                 },
                               })
-                            ) : isNavigable(fieldValue) ? (
-                              <button
-                                aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
-                                className={["nested-entry-button", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}
-                                type="button"
-                                onClick={() => onNavigate([...path, key])}
-                              >
-                                <span className="nested-entry-icon" aria-hidden="true">
-                                  {getStructureIcon(fieldValue, host)}
-                                </span>
-                                {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
-                              </button>
-                            ) : (
-                              renderPrimitiveEditor({
-                                value: fieldValue,
-                                ariaLabel: `Field ${fieldLabel}`,
-                                schema: schema?.properties?.[key],
+                            ) : (() => {
+                              if (!isPlainObject(fieldValue)) {
+                                return null;
+                              }
+                              const projection = resolveObjectProjectionConfig({
                                 path: [...path, key],
+                                value: fieldValue,
+                                parentValue: value,
+                                schema: schema?.properties?.[key],
+                                host,
+                              }) ?? getObjectFieldProjectionConfig(schema, schema?.properties?.[key]);
+                              if (!projection) {
+                                return null;
+                              }
+                              const resolvedProjectionMetadataByKey = projection.objectValueMetadataByKey
+                                ?? resolveObjectValueMetadataByKey({
+                                  path: [...path, key],
+                                  value: fieldValue,
+                                  parentValue: value,
+                                  schema: projection.metadataSchema ?? projection.objectValueSchema,
+                                  host,
+                                });
+                              if (
+                                isObjectMapProjectionValue(fieldValue, projection.columns)
+                                || hasProjectedMapMetadataRows(resolvedProjectionMetadataByKey, projection.columns)
+                              ) {
+                                return renderProjectedObjectMapFieldEditor({
+                                  rowKey: key,
+                                  rowValue: fieldValue,
+                                  rowLabel: fieldLabel,
+                                  path,
+                                  host,
+                                  parentValue: value,
+                                  readOnly: pageReadOnly,
+                                  projectionColumns: projection.columns,
+                                  projectionSchema: projection.objectValueSchema,
+                                  projectionMetadataSchema: projection.metadataSchema,
+                                  projectionMetadataByKey: resolvedProjectionMetadataByKey,
+                                  onNavigate,
+                                  onChange(nextRowValue) {
+                                    onApplyValue({
+                                      ...value,
+                                      [key]: nextRowValue,
+                                    });
+                                  },
+                                });
+                              }
+                              return renderProjectedObjectFieldEditor({
+                                rowKey: key,
+                                rowValue: fieldValue,
+                                rowLabel: fieldLabel,
+                                path,
                                 host,
                                 readOnly: pageReadOnly,
-                                onUpdateSchema: canAuthorObjectSchema
-                                  ? (updater) => updateObjectSchema((currentSchema) => updatePropertySchema(currentSchema, key, updater))
-                                  : undefined,
-                                onChange(nextValue) {
+                                projectionColumns: projection.columns,
+                                projectionSchema: projection.objectValueSchema,
+                                onNavigate,
+                                onChange(nextRowValue) {
                                   onApplyValue({
                                     ...value,
-                                    [key]: nextValue,
+                                    [key]: nextRowValue,
                                   });
                                 },
-                              })
+                              });
+                            })() ?? (
+                              isNavigable(fieldValue) ? (
+                                <button
+                                  aria-label={`${key} ${describeType(fieldValue, host)} ${previewValue(fieldValue, host)}`}
+                                  className={["nested-entry-button", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}
+                                  type="button"
+                                  onClick={() => onNavigate([...path, key])}
+                                >
+                                  <span className="nested-entry-icon" aria-hidden="true">
+                                    {getStructureIcon(fieldValue, host)}
+                                  </span>
+                                  {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
+                                </button>
+                              ) : (
+                                renderPrimitiveEditor({
+                                  value: fieldValue,
+                                  ariaLabel: `Field ${fieldLabel}`,
+                                  schema: schema?.properties?.[key],
+                                  path: [...path, key],
+                                  host,
+                                  readOnly: pageReadOnly,
+                                  onUpdateSchema: canAuthorObjectSchema
+                                    ? (updater) => updateObjectSchema((currentSchema) => updatePropertySchema(currentSchema, key, updater))
+                                    : undefined,
+                                  onChange(nextValue) {
+                                    onApplyValue({
+                                      ...value,
+                                      [key]: nextValue,
+                                    });
+                                  },
+                                })
+                              )
                             )}
                             {getFieldError(validationResult, sourceId, [...path, key]) ? (
                               <div className="form-hint form-hint--danger">{getFieldError(validationResult, sourceId, [...path, key])?.message}</div>
@@ -1007,8 +1329,10 @@ function ArrayPage({
     );
   }
 
+  const pageClassNames = getSchemaClassNames(schema);
+
   return (
-    <section className="node-page node-page--array">
+    <section className={["node-page", "node-page--array", ...pageClassNames].join(" ")}>
       <PageHeader
         path={path}
         title={title}
@@ -1040,7 +1364,7 @@ function ArrayPage({
           <div className="array-page-body">
             {arrayError ? <div className="form-hint form-hint--danger">{arrayError}</div> : null}
             {hostActionError ? <div className="form-hint form-hint--danger">{hostActionError}</div> : null}
-            <div className="table-shell">
+            <div className={["table-shell", ...pageClassNames].join(" ")}>
               <div className="table-scroll" ref={tableScrollRef}>
               <table
                 className="data-table array-workspace"
@@ -1331,6 +1655,7 @@ function ArrayPage({
                       }
 
                       const record = item as Record<string, unknown>;
+                      const rowLabel = summarizeRowIdentity(item, sourceIndex, path, host);
                       return (
                         <Fragment key={`${sourceIndex}:${summarizeRowIdentity(item, sourceIndex, path, host)}`}>
                           {renderArrayDropIndicator(displayIndex)}
@@ -1368,9 +1693,20 @@ function ArrayPage({
                             const fieldPath = configuredColumn ? getTableColumnPath(configuredColumn) : [column];
                             const isDirectProperty = fieldPath.length === 1 && typeof fieldPath[0] === "string";
                             const cellValue = fieldPath.length > 0 ? getValueAtPath(record, fieldPath) : record[column];
+                            const cellSchema = resolveSchemaAtPath(schema?.items, fieldPath, record);
+                            const cellProjectionConfig = isPlainObject(cellValue)
+                              ? resolveObjectProjectionConfig({
+                                path: [...path, sourceIndex, ...fieldPath],
+                                value: cellValue,
+                                parentValue: item,
+                                schema: cellSchema,
+                                host,
+                              })
+                              : null;
                             const hasColumn = isDirectProperty
                               ? Object.prototype.hasOwnProperty.call(record, fieldPath[0] as string)
                               : cellValue !== undefined;
+                            const showInlineProjection = hasColumn && cellProjectionConfig && isPlainObject(cellValue);
                             return (
                             <td
                               className={
@@ -1383,15 +1719,43 @@ function ArrayPage({
                               }
                               key={`${sourceIndex}:${column}`}
                             >
-                              <span
-                                className={[
-                                  "array-cell-summary",
-                                  columnIndex === 0 ? "array-cell-summary--identity" : "",
-                                  !hasColumn ? "array-cell-summary--missing" : "",
-                                ].filter(Boolean).join(" ")}
-                              >
-                                {hasColumn ? previewValue(cellValue, host) : "-"}
-                              </span>
+                              {!showInlineProjection ? (
+                                <span
+                                  className={[
+                                    "array-cell-summary",
+                                    columnIndex === 0 ? "array-cell-summary--identity" : "",
+                                    !hasColumn ? "array-cell-summary--missing" : "",
+                                  ].filter(Boolean).join(" ")}
+                                >
+                                  {hasColumn ? previewValue(cellValue, host) : "-"}
+                                </span>
+                              ) : null}
+                              {showInlineProjection
+                                ? renderInlineObjectProjection({
+                                  fieldKey: column,
+                                  fieldValue: cellValue,
+                                  fieldLabel: configuredColumn?.label ?? column,
+                                  path: [...path, sourceIndex, ...fieldPath],
+                                  host,
+                                  parentValue: item,
+                                  readOnly: pageReadOnly,
+                                  projectionColumns: cellProjectionConfig.columns,
+                                  projectionSchema: cellProjectionConfig.objectValueSchema,
+                                  projectionMetadataSchema: cellProjectionConfig.metadataSchema,
+                                  projectionMetadataByKey: cellProjectionConfig.objectValueMetadataByKey
+                                    ?? resolveObjectValueMetadataByKey({
+                                      path: [...path, sourceIndex, ...fieldPath],
+                                      value: cellValue,
+                                      parentValue: item,
+                                      schema: cellProjectionConfig.metadataSchema ?? cellProjectionConfig.objectValueSchema,
+                                      host,
+                                    }),
+                                  onNavigate,
+                                  onChange(nextValue) {
+                                    onApplyValue(setValueAtPath(value, [sourceIndex, ...fieldPath], nextValue));
+                                  },
+                                })
+                                : null}
                             </td>
                             );
                             })}
@@ -1783,7 +2147,7 @@ function PrimitivePage({
   }, [pathKey, value]);
 
   return (
-    <section className="node-page node-page--primitive">
+    <section className={["node-page", "node-page--primitive", ...getSchemaClassNames(schema)].join(" ")}>
       <PageHeader
         path={path}
         title={title}
@@ -1815,7 +2179,7 @@ function PrimitivePage({
           <div className="object-page-body">
             <div className="object-scroll">
               <div className="property-list">
-                <section className={["property-block", "object-field-row", isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
+                <section className={["property-block", "object-field-row", ...getSchemaClassNames(schema), isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
                   <div className="property-heading">
                     <span>{schema?.title ?? (path.at(-1) == null ? "value" : String(path.at(-1)))}</span>
                     <small className={["field-type", getTypeToneClass(value)].filter(Boolean).join(" ")}>{describeType(value)}</small>
@@ -1855,6 +2219,7 @@ function PrimitivePage({
 function ReferenceErrorPage({
   path,
   title,
+  schema,
   referenceError,
   referenceScopeDepth,
   referenceSourceLabel,
@@ -1862,7 +2227,7 @@ function ReferenceErrorPage({
   onClosePage,
 }: ValueInspectorProps & { referenceError: ReferenceErrorInfo }) {
   return (
-    <section className="node-page node-page--primitive">
+    <section className={["node-page", "node-page--primitive", ...getSchemaClassNames(schema)].join(" ")}>
       <PageHeader
         path={path}
         title={title ?? "Reference Error"}
@@ -1876,7 +2241,7 @@ function ReferenceErrorPage({
         <div className="object-page-body">
           <div className="object-scroll">
             <div className="property-list">
-              <section className="property-block object-field-row">
+              <section className={["property-block", "object-field-row", ...getSchemaClassNames(schema)].join(" ")}>
                 <div className="property-heading">
                   <span>Reference Error</span>
                   <small className="field-type tone-reference">reference</small>
@@ -1944,7 +2309,7 @@ function SchemaControlBar(props: {
   const activeOption = unionCapabilities.activeOptionIndex;
   return (
     <div className="property-list" style={{ paddingTop: 10, paddingBottom: 0 }}>
-      <section className="property-block object-field-row">
+      <section className={["property-block", "object-field-row", ...getSchemaClassNames(props.schema)].join(" ")}>
         <div className="property-heading">
           <span>Schema branch</span>
           <small className="field-type">{unionCapabilities.kind}</small>
@@ -2246,6 +2611,30 @@ function renderPrimitiveEditor(props: {
   }
 
   const text = typeof props.value === "string" ? props.value : String(props.value ?? "");
+  if (typeof props.value === "string" && props.schema?.["x-editor"]?.display?.kind === "image") {
+    return withNullableControls(
+      <div className={["image-field-editor", ...getSchemaClassNames(props.schema)].join(" ")}>
+        {text.trim().length > 0 ? (
+          <ImagePreview value={text} schema={props.schema} host={props.host} />
+        ) : (
+          <span className="image-field-editor__empty">未设置图片</span>
+        )}
+        <input
+          aria-label={props.ariaLabel}
+          className="detail-input"
+          disabled={readOnly}
+          maxLength={props.schema?.maxLength}
+          minLength={props.schema?.minLength}
+          pattern={props.schema?.pattern}
+          value={text}
+          onChange={(event) => props.onChange(event.target.value)}
+        />
+      </div>,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
+    );
+  }
   if (props.schema?.["x-editor"]?.fieldType === "textarea") {
     return withNullableControls(
       <textarea
@@ -2780,7 +3169,11 @@ function inferValueTitle(value: unknown): string | null {
 }
 
 function inferReferenceSourceId(value: unknown, host?: EditorHost): string | null {
-  return getReferenceUri(value);
+  const uri = getReferenceUri(value);
+  if (!uri) {
+    return null;
+  }
+  return host?.resolveReferenceSourceId?.(uri) ?? uri;
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
@@ -3439,15 +3832,6 @@ function getOrderedKeys(value: Record<string, unknown>, schema?: EditorSchema) {
   return [...prioritized, ...remaining];
 }
 
-function reorderObjectKeys(value: Record<string, unknown>, orderedKeys: string[]) {
-  const currentKeys = Object.keys(value);
-  const nextKeys = [
-    ...orderedKeys.filter((key) => currentKeys.includes(key)),
-    ...currentKeys.filter((key) => !orderedKeys.includes(key)),
-  ];
-  return Object.fromEntries(nextKeys.map((key) => [key, value[key]]));
-}
-
 function reorderSchemaPropertiesToMatch(schema: EditorSchema, orderedKeys: string[]) {
   if (!schema.properties) return schema;
   const rank = new Map(orderedKeys.map((key, index) => [key, index]));
@@ -3471,6 +3855,226 @@ function insertDraggedItem<T>(order: T[], item: T, targetIndex: number) {
   const clampedIndex = Math.max(0, Math.min(targetIndex, next.length));
   next.splice(clampedIndex, 0, item);
   return next;
+}
+
+function renderProjectedObjectFieldEditor(props: {
+  rowKey: string;
+  rowValue: Record<string, unknown>;
+  rowLabel: string;
+  path: JsonPath;
+  host?: EditorHost;
+  readOnly: boolean;
+  projectionColumns: EditorTableColumn[];
+  projectionSchema: EditorSchema;
+  onNavigate: (path: JsonPath) => void;
+  onChange: (nextValue: Record<string, unknown>) => void;
+}) {
+  const {
+    rowKey,
+    rowValue,
+    rowLabel,
+    path,
+    host,
+    readOnly,
+    projectionColumns,
+    projectionSchema,
+    onNavigate,
+    onChange,
+  } = props;
+
+  return (
+    <div className="object-field-projection">
+      {projectionColumns.map((column) => {
+        const columnId = getTableColumnId(column);
+        const fieldPath = getTableColumnPath(column);
+        const cellValue = fieldPath.length > 0 ? getValueAtPath(rowValue, fieldPath) : rowValue[columnId];
+        const cellSchema = resolveSchemaAtPath(projectionSchema, fieldPath, rowValue);
+        const cellLabel = column.label ?? column.key ?? formatPath(fieldPath) ?? columnId;
+        const hasValue = fieldPath.length > 0 ? cellValue !== undefined : Object.prototype.hasOwnProperty.call(rowValue, columnId);
+
+        return (
+          <div className={["object-field-projection__cell", column.wrap ? "is-wrapped" : ""].filter(Boolean).join(" ")} key={`${rowKey}:${columnId}`}>
+            <span className="object-field-projection__label">{cellLabel}</span>
+            <div className="object-field-projection__value">
+              {hasValue && isNavigable(cellValue) ? (
+                <button
+                  className={["nested-entry-button", "inline", getTypeToneClass(cellValue, host)].filter(Boolean).join(" ")}
+                  type="button"
+                  onClick={() => onNavigate([...path, rowKey, ...fieldPath])}
+                >
+                  <span className="nested-entry-icon" aria-hidden="true">
+                    {getStructureIcon(cellValue, host)}
+                  </span>
+                  {renderNestedEntryContent(cellValue, cellSchema, host, undefined, rowLabel)}
+                </button>
+              ) : (
+                renderPrimitiveEditor({
+                  value: cellValue,
+                  ariaLabel: `${rowLabel} ${cellLabel}`,
+                  schema: cellSchema,
+                  path: [...path, rowKey, ...fieldPath],
+                  host,
+                  readOnly,
+                  onChange(nextValue) {
+                    onChange(setValueAtPath(rowValue, fieldPath, nextValue) as Record<string, unknown>);
+                  },
+                })
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function renderProjectedObjectMapFieldEditor(props: {
+  rowKey: string;
+  rowValue: Record<string, unknown>;
+  rowLabel: string;
+  path: JsonPath;
+  host?: EditorHost;
+  parentValue?: unknown;
+  readOnly: boolean;
+  projectionColumns: EditorTableColumn[];
+  projectionSchema: EditorSchema;
+  projectionMetadataByKey?: Record<string, Record<string, unknown>>;
+  projectionMetadataSchema?: EditorSchema;
+  onNavigate: (path: JsonPath) => void;
+  onChange: (nextValue: Record<string, unknown>) => void;
+}) {
+  const {
+    rowKey,
+    rowValue,
+    rowLabel,
+    path,
+    host,
+    parentValue,
+    readOnly,
+    projectionColumns,
+    projectionSchema,
+    projectionMetadataByKey,
+    projectionMetadataSchema,
+    onNavigate,
+    onChange,
+  } = props;
+  const entryRows = getProjectedMapEntryKeys(rowValue, projectionMetadataByKey).map((entryKey) => [
+    entryKey,
+    rowValue[entryKey],
+  ] as const);
+
+  return (
+    <div className="object-field-projection object-field-projection--map">
+      {entryRows.map(([entryKey, entryValue]) => {
+        const entryLabel = host?.getFieldLabel?.([...path, rowKey, entryKey], entryKey, entryValue) ?? entryKey;
+        const normalizedEntryValue = normalizeProjectedMapEntry(entryValue, projectionColumns);
+        const entryMetadata = projectionMetadataByKey?.[entryKey]
+          ?? resolveObjectValueMetadataByKey({
+            path: [...path, rowKey],
+            value: rowValue,
+            parentValue,
+            schema: projectionMetadataSchema ?? projectionSchema,
+            host,
+          })?.[entryKey];
+        if (!normalizedEntryValue) {
+          return null;
+        }
+
+        return (
+          <div className="object-field-projection__row" key={`${rowKey}:${entryKey}`}>
+            <span className="object-field-projection__row-label">{entryLabel}</span>
+            <div className="object-field-projection__row-cells">
+              {projectionColumns.map((column) => {
+                const columnId = getTableColumnId(column);
+                const fieldPath = getTableColumnPath(column);
+                const cellPath = [...path, rowKey, entryKey, ...fieldPath];
+                const documentCellValue = fieldPath.length > 0
+                  ? getValueAtPath(normalizedEntryValue, fieldPath)
+                  : normalizedEntryValue[columnId];
+                const metadataCellValue = entryMetadata
+                  ? fieldPath.length > 0
+                    ? getValueAtPath(entryMetadata, fieldPath)
+                    : entryMetadata[columnId]
+                  : undefined;
+                const cellValue = documentCellValue ?? metadataCellValue;
+                const cellSchema = resolveSchemaAtPath(projectionSchema, fieldPath, normalizedEntryValue);
+                const cellLabel = column.label ?? column.key ?? formatPath(fieldPath) ?? columnId;
+                const hasValue = fieldPath.length > 0
+                  ? documentCellValue !== undefined || metadataCellValue !== undefined
+                  : Object.prototype.hasOwnProperty.call(normalizedEntryValue, columnId)
+                    || Boolean(entryMetadata && Object.prototype.hasOwnProperty.call(entryMetadata, columnId));
+                const inlineProjection = isPlainObject(cellValue)
+                  ? resolveObjectProjectionConfig({
+                    path: cellPath,
+                    value: cellValue,
+                    parentValue,
+                    schema: cellSchema,
+                    host,
+                  })
+                  : null;
+
+                return (
+                  <div className={["object-field-projection__cell", column.wrap ? "is-wrapped" : ""].filter(Boolean).join(" ")} key={`${rowKey}:${entryKey}:${columnId}`}>
+                    <span className="object-field-projection__label">{cellLabel}</span>
+                    <div className="object-field-projection__value">
+                      {hasValue && inlineProjection && isPlainObject(cellValue) ? (
+                        renderInlineObjectProjection({
+                          fieldKey: entryKey,
+                          fieldValue: cellValue,
+                          fieldLabel: `${rowLabel} ${entryLabel}`,
+                          path: [...path, rowKey],
+                          host,
+                          parentValue,
+                          readOnly,
+                          projectionColumns: inlineProjection.columns,
+                          projectionSchema: inlineProjection.objectValueSchema,
+                          projectionMetadataByKey: inlineProjection.objectValueMetadataByKey,
+                          projectionMetadataSchema: inlineProjection.metadataSchema,
+                          onNavigate,
+                          onChange(nextValue) {
+                            onChange({
+                              ...rowValue,
+                              [entryKey]: updateProjectedMapEntry(entryValue, normalizedEntryValue, fieldPath, nextValue),
+                            });
+                          },
+                        })
+                      ) : hasValue && isNavigable(cellValue) ? (
+                        <button
+                          className={["nested-entry-button", "inline", getTypeToneClass(cellValue, host)].filter(Boolean).join(" ")}
+                          type="button"
+                          onClick={() => onNavigate(cellPath)}
+                        >
+                          <span className="nested-entry-icon" aria-hidden="true">
+                            {getStructureIcon(cellValue, host)}
+                          </span>
+                          {renderNestedEntryContent(cellValue, cellSchema, host, undefined, `${rowLabel} ${entryLabel}`)}
+                        </button>
+                      ) : (
+                        renderPrimitiveEditor({
+                          value: cellValue,
+                          ariaLabel: `${rowLabel} ${entryLabel} ${cellLabel}`,
+                          schema: cellSchema,
+                          path: [...path, rowKey, entryKey, ...fieldPath],
+                          host,
+                          readOnly,
+                          onChange(nextValue) {
+                            onChange({
+                              ...rowValue,
+                              [entryKey]: updateProjectedMapEntry(entryValue, normalizedEntryValue, fieldPath, nextValue),
+                            });
+                          },
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function updatePropertySchema(schema: EditorSchema, key: string, updater: (propertySchema: EditorSchema) => EditorSchema) {

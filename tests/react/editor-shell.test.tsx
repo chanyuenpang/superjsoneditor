@@ -3428,7 +3428,7 @@ test("reference column manager offers target schema fields even when projection 
   expect(screen.getByRole("button", { name: /Description/ })).toBeInTheDocument();
 });
 
-test("schema authoring field order controls rewrite object property order", () => {
+test("schema authoring field order only rewrites schema property order", () => {
   const schemaHost = createMutableSchemaHost({
     type: "object",
     properties: {
@@ -3438,10 +3438,12 @@ test("schema authoring field order controls rewrite object property order", () =
     },
   });
 
+  const handleChange = vi.fn();
   const { container } = render(
     <EditorShell
       value={{ id: "quest_001", title: "First Quest", hp: 10 }}
       schemaHost={schemaHost}
+      onChange={handleChange}
     />,
   );
 
@@ -3494,71 +3496,31 @@ test("schema authoring field order controls rewrite object property order", () =
   const fieldLabels = [...container.querySelectorAll(".property-heading > span")].map((node) => node.textContent?.trim());
   expect(fieldLabels.slice(0, 3)).toEqual(["Health", "Identifier", "Title"]);
   expect(Object.keys(schemaHost.getRootSchemaSnapshot().properties ?? {})).toEqual(["hp", "id", "title"]);
+  expect(handleChange).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+  expect(screen.getByRole("textbox")).toHaveValue(`{
+  "id": "quest_001",
+  "title": "First Quest",
+  "hp": 10
+}`);
 });
 
-test("object page key reorder rewrites the document key order even without schema", () => {
+test("object page field reorder requires schema authoring support", () => {
   render(
     <EditorShell
       value={{ id: "quest_001", title: "First Quest", hp: 10 }}
     />,
   );
-
-  const healthHandle = screen.getByRole("button", { name: "Reorder hp" });
-  const idHandle = screen.getByRole("button", { name: "Reorder id" });
-  const titleHandle = screen.getByRole("button", { name: "Reorder title" });
-
-  (idHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
-    x: 0,
-    y: 200,
-    width: 300,
-    height: 72,
-    top: 200,
-    right: 300,
-    bottom: 272,
-    left: 0,
-    toJSON() {
-      return {};
-    },
-  } as DOMRect);
-  (healthHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
-    x: 0,
-    y: 120,
-    width: 300,
-    height: 72,
-    top: 120,
-    right: 300,
-    bottom: 192,
-    left: 0,
-    toJSON() {
-      return {};
-    },
-  } as DOMRect);
-  (titleHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
-    x: 0,
-    y: 40,
-    width: 300,
-    height: 72,
-    top: 40,
-    right: 300,
-    bottom: 112,
-    left: 0,
-    toJSON() {
-      return {};
-    },
-  } as DOMRect);
-
-  fireEvent.mouseDown(healthHandle, { button: 0, clientX: 10, clientY: 150 });
-  fireEvent.mouseMove(window, { clientX: 10, clientY: 60 });
-  fireEvent.mouseUp(window, { clientX: 10, clientY: 60 });
-
-  const fieldLabels = [...document.querySelectorAll(".property-heading > span")].map((node) => node.textContent?.trim());
-  expect(fieldLabels.slice(0, 3)).toEqual(["hp", "id", "title"]);
+  expect(screen.queryByRole("button", { name: "Reorder hp" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reorder id" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reorder title" })).not.toBeInTheDocument();
 
   fireEvent.click(screen.getByRole("button", { name: "Raw" }));
   expect(screen.getByRole("textbox")).toHaveValue(`{
-  "hp": 10,
   "id": "quest_001",
-  "title": "First Quest"
+  "title": "First Quest",
+  "hp": 10
 }`);
 });
 
@@ -3695,4 +3657,850 @@ test("schema option authoring can reorder inline options", async () => {
       { value: "elite", label: "Elite", color: "blue" },
     ]);
   });
+});
+
+test("object pages render image display fields with preview and path input", () => {
+  render(
+    <EditorShell
+      value={{ icon: "res://assets/icons/monster/htj_bully.png" }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              icon: {
+                type: "string",
+                title: "Icon",
+                "x-editor": {
+                  display: {
+                    kind: "image",
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        resolveDisplayUrl(value) {
+          return value.replace("res://", "http://localhost/");
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("Field Icon")).toHaveValue("res://assets/icons/monster/htj_bully.png");
+  expect(screen.getByRole("img", { name: "Icon" })).toHaveAttribute(
+    "src",
+    "http://localhost/assets/icons/monster/htj_bully.png",
+  );
+});
+
+test("object pages honor field-level object projection schemas", () => {
+  render(
+    <EditorShell
+      value={{
+        component_name: "CombatComponent",
+        config: {
+          max_health: {
+            default: 100,
+            type: "float",
+            tooltip: "最大生命值",
+          },
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              component_name: {
+                type: "string",
+                title: "组件",
+              },
+              config: {
+                type: "object",
+                title: "配置",
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { field: ["default"], label: "值" },
+                      { field: ["type"], label: "类型" },
+                      { field: ["tooltip"], label: "说明", wrap: true },
+                    ],
+                    objectValueSchema: {
+                      type: "object",
+                      properties: {
+                        default: {},
+                        type: { type: "string", readOnly: true },
+                        tooltip: { type: "string", readOnly: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("值")).toBeInTheDocument();
+  expect(screen.getByText("类型")).toBeInTheDocument();
+  expect(screen.getByText("说明")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("100")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("float")).toBeDisabled();
+  expect(screen.getByDisplayValue("最大生命值")).toBeDisabled();
+});
+
+test("array tables honor field-level object projection schemas and allow editing inline", () => {
+  render(
+    <EditorShell
+      value={[
+        {
+          component_name: "CombatComponent",
+          config: {
+            max_health: {
+              default: 100,
+              type: "float",
+              tooltip: "最大生命值",
+            },
+          },
+        },
+      ]}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                columns: [
+                  { key: "component_name", label: "组件" },
+                  { key: "config", label: "配置", width: 320, wrap: true },
+                ],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                component_name: {
+                  type: "string",
+                  title: "组件",
+                },
+                config: {
+                  type: "object",
+                  title: "配置",
+                  "x-editor": {
+                    table: {
+                      columns: [
+                        { field: ["default"], label: "值" },
+                        { field: ["type"], label: "类型" },
+                        { field: ["tooltip"], label: "说明", wrap: true },
+                      ],
+                      objectValueSchema: {
+                        type: "object",
+                        properties: {
+                          default: {},
+                          type: { type: "string", readOnly: true },
+                          tooltip: { type: "string", readOnly: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("值")).toBeInTheDocument();
+  expect(screen.getByText("类型")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("100")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("float")).toBeDisabled();
+
+  fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "120" } });
+
+  expect(screen.getByDisplayValue("120")).toBeInTheDocument();
+});
+
+test("array tables keep object projection editable during mixed wrapper migration", () => {
+  let lastDocuments: Record<string, unknown> | null = null;
+  render(
+    <EditorShell
+      value={[
+        {
+          component_name: "HealthComponent",
+          config: {
+            max_health: {
+              default: 100,
+              type: "float",
+              tooltip: "最大生命值",
+            },
+            regeneration: 5,
+          },
+        },
+      ]}
+      onChange={(documents) => {
+        lastDocuments = documents;
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                columns: [
+                  { key: "component_name", label: "组件" },
+                  { key: "config", label: "配置", width: 320, wrap: true },
+                ],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                component_name: {
+                  type: "string",
+                  title: "组件",
+                },
+                config: {
+                  type: "object",
+                  title: "配置",
+                  "x-editor": {
+                    table: {
+                      columns: [
+                        { field: ["default"], label: "值" },
+                        { field: ["type"], label: "类型" },
+                        { field: ["tooltip"], label: "说明", wrap: true },
+                      ],
+                      objectValueSchema: {
+                        type: "object",
+                        properties: {
+                          default: {},
+                          type: { type: "string", readOnly: true },
+                          tooltip: { type: "string", readOnly: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByDisplayValue("100")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("5")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByDisplayValue("5"), { target: { value: "8" } });
+
+  expect(screen.getByDisplayValue("8")).toBeInTheDocument();
+  expect(lastDocuments).toMatchObject({
+    main: [
+      {
+        config: {
+          regeneration: 8,
+        },
+      },
+    ],
+  });
+});
+
+test("projected object maps can inline nested object projections from host config", () => {
+  let lastDocuments: Record<string, unknown> | null = null;
+  render(
+    <EditorShell
+      value={[
+        {
+          component_name: "ScenarioComponent",
+          config: {
+            map: {
+              scene: "res://scenes/entities/templates/map_base.tscn",
+              outfit: "res://scenes/entities/outfits/player_outfit.tscn",
+            },
+          },
+        },
+      ]}
+      onChange={(documents) => {
+        lastDocuments = documents;
+      }}
+      host={{
+        getObjectProjectionConfig(context) {
+          const parent = context.parentValue;
+          if (!parent || typeof parent !== "object" || (parent as { component_name?: string }).component_name !== "ScenarioComponent") {
+            return undefined;
+          }
+          return {
+            columns: [
+              { field: ["scene"], label: "场景" },
+              { field: ["outfit"], label: "外观" },
+            ],
+            objectValueSchema: {
+              type: "object",
+              properties: {
+                scene: { type: "string" },
+                outfit: { type: "string" },
+              },
+            },
+          };
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                columns: [
+                  { key: "component_name", label: "组件" },
+                  { key: "config", label: "配置", width: 320, wrap: true },
+                ],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                component_name: {
+                  type: "string",
+                  title: "组件",
+                },
+                config: {
+                  type: "object",
+                  title: "配置",
+                  "x-editor": {
+                    table: {
+                      columns: [
+                        { field: ["default"], label: "值" },
+                      ],
+                      objectValueSchema: {
+                        type: "object",
+                        properties: {
+                          default: {},
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("场景")).toBeInTheDocument();
+  expect(screen.getByText("外观")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("res://scenes/entities/templates/map_base.tscn")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByDisplayValue("res://scenes/entities/templates/map_base.tscn"), {
+    target: { value: "res://scenes/entities/templates/map_variant.tscn" },
+  });
+
+  expect(lastDocuments).toMatchObject({
+    main: [
+      {
+        component_name: "ScenarioComponent",
+        config: {
+          map: {
+            scene: "res://scenes/entities/templates/map_variant.tscn",
+            outfit: "res://scenes/entities/outfits/player_outfit.tscn",
+          },
+        },
+      },
+    ],
+  });
+});
+
+test("projected object fields render editable controls even when the projected keys are currently missing", () => {
+  let lastDocuments: Record<string, unknown> | null = null;
+  render(
+    <EditorShell
+      value={[
+        {
+          component_name: "ScenarioComponent",
+          config: {},
+        },
+      ]}
+      onChange={(documents) => {
+        lastDocuments = documents;
+      }}
+      host={{
+        getObjectProjectionConfig(context) {
+          const parent = context.parentValue;
+          if (!parent || typeof parent !== "object" || (parent as { component_name?: string }).component_name !== "ScenarioComponent") {
+            return undefined;
+          }
+          return {
+            columns: [
+              { field: ["scene"], label: "场景" },
+              { field: ["outfit"], label: "外观" },
+            ],
+            objectValueSchema: {
+              type: "object",
+              properties: {
+                scene: { type: "string" },
+                outfit: { type: "string" },
+              },
+            },
+          };
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                columns: [
+                  { key: "component_name", label: "组件" },
+                  { key: "config", label: "配置", width: 320, wrap: true },
+                ],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                component_name: {
+                  type: "string",
+                  title: "组件",
+                },
+                config: {
+                  type: "object",
+                  title: "配置",
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  const sceneInput = screen.getByLabelText("配置 场景");
+  const outfitInput = screen.getByLabelText("配置 外观");
+  expect(sceneInput).toHaveValue("");
+  expect(outfitInput).toHaveValue("");
+
+  fireEvent.change(sceneInput, {
+    target: { value: "res://scenes/entities/templates/map_variant.tscn" },
+  });
+
+  expect(lastDocuments).toMatchObject({
+    main: [
+      {
+        component_name: "ScenarioComponent",
+        config: {
+          scene: "res://scenes/entities/templates/map_variant.tscn",
+        },
+      },
+    ],
+  });
+});
+
+test("object map projection 可以显示 host 注入的静态元数据列而不污染文档值", () => {
+  render(
+    <EditorShell
+      value={{
+        config: {
+          regeneration: 8,
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              config: {
+                type: "object",
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { field: ["default"], label: "值" },
+                      { field: ["type"], label: "类型" },
+                      { field: ["tooltip"], label: "说明", wrap: true },
+                    ],
+                    objectValueSchema: {
+                      type: "object",
+                      properties: {
+                        default: { type: "number" },
+                        type: { type: "string", readOnly: true },
+                        tooltip: { type: "string", readOnly: true },
+                      },
+                    },
+                    objectValueMetadataByKey: {
+                      regeneration: {
+                        type: "float",
+                        tooltip: "每秒恢复生命值",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("config regeneration 值")).toHaveValue(8);
+  expect(screen.getByLabelText("config regeneration 类型")).toHaveValue("float");
+  expect(screen.getByLabelText("config regeneration 类型")).toBeDisabled();
+  expect(screen.getByLabelText("config regeneration 说明")).toHaveValue("每秒恢复生命值");
+  expect(screen.getByLabelText("config regeneration 说明")).toBeDisabled();
+});
+
+test("object map projection 支持 host 按父级上下文动态提供元数据", () => {
+  render(
+    <EditorShell
+      value={{
+        component_name: "HealthComponent",
+        config: {
+          regeneration: 8,
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              component_name: { type: "string" },
+              config: {
+                type: "object",
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { field: ["default"], label: "值" },
+                      { field: ["type"], label: "类型" },
+                      { field: ["tooltip"], label: "说明", wrap: true },
+                    ],
+                    objectValueSchema: {
+                      type: "object",
+                      properties: {
+                        default: { type: "number" },
+                        type: { type: "string", readOnly: true },
+                        tooltip: { type: "string", readOnly: true },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        getObjectValueMetadata(context) {
+          const parent = context.parentValue as { component_name?: string } | undefined;
+          if (parent?.component_name !== "HealthComponent") {
+            return undefined;
+          }
+          return {
+            regeneration: {
+              type: "float",
+              tooltip: "每秒恢复生命值",
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("config regeneration 类型")).toHaveValue("float");
+  expect(screen.getByLabelText("config regeneration 说明")).toHaveValue("每秒恢复生命值");
+});
+
+test("object map projection 会为 metadata-only 行渲染可编辑默认值控件", () => {
+  let lastDocuments: Record<string, unknown> | null = null;
+  render(
+    <EditorShell
+      value={{
+        config: {},
+      }}
+      onChange={(documents) => {
+        lastDocuments = documents;
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              config: {
+                type: "object",
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { field: ["default"], label: "值" },
+                      { field: ["type"], label: "类型" },
+                      { field: ["tooltip"], label: "说明", wrap: true },
+                    ],
+                    objectValueSchema: {
+                      type: "object",
+                      properties: {
+                        default: {},
+                        type: { type: "string", readOnly: true },
+                        tooltip: { type: "string", readOnly: true },
+                      },
+                    },
+                    objectValueMetadataByKey: {
+                      regeneration: {
+                        type: "float",
+                        tooltip: "每秒恢复生命值",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  const valueInput = screen.getByLabelText("config regeneration 值");
+  expect(valueInput).toHaveValue("");
+  expect(screen.getByLabelText("config regeneration 类型")).toHaveValue("float");
+  expect(screen.getByLabelText("config regeneration 说明")).toHaveValue("每秒恢复生命值");
+
+  fireEvent.change(valueInput, {
+    target: { value: "12" },
+  });
+
+  expect(lastDocuments).toMatchObject({
+    main: {
+      config: {
+        regeneration: "12",
+      },
+    },
+  });
+});
+
+test("array tables 支持 host 按父级上下文动态提供对象投影配置", () => {
+  render(
+    <EditorShell
+      value={[
+        {
+          component_name: "ScenarioComponent",
+          config: {
+            map: {
+              scene: "res://map.tscn",
+              outfit: "res://map_outfit.tscn",
+            },
+          },
+        },
+      ]}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                columns: [
+                  { key: "component_name", label: "组件" },
+                  { key: "config", label: "配置", width: 320, wrap: true },
+                ],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                component_name: {
+                  type: "string",
+                },
+                config: {
+                  type: "object",
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        getObjectProjectionConfig(context) {
+          const parent = context.parentValue as { component_name?: string } | undefined;
+          if (parent?.component_name !== "ScenarioComponent") {
+            return undefined;
+          }
+          return {
+            columns: [
+              { field: ["scene"], label: "场景" },
+              { field: ["outfit"], label: "外观" },
+            ],
+            objectValueSchema: {
+              type: "object",
+              properties: {
+                scene: { type: "string" },
+                outfit: { type: "string" },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByLabelText("配置 map 场景")).toHaveValue("res://map.tscn");
+  expect(screen.getByLabelText("配置 map 外观")).toHaveValue("res://map_outfit.tscn");
+});
+
+test("projected object map rows honor host field labels for inline editing", () => {
+  render(
+    <EditorShell
+      value={[
+        {
+          component_name: "ScenarioComponent",
+          config: {
+            map: {
+              scene: "res://map.tscn",
+              outfit: "res://map_outfit.tscn",
+            },
+          },
+        },
+      ]}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                columns: [
+                  { key: "component_name", label: "组件" },
+                  { key: "config", label: "配置", width: 320, wrap: true },
+                ],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                component_name: {
+                  type: "string",
+                },
+                config: {
+                  type: "object",
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        getObjectProjectionConfig(context) {
+          const parent = context.parentValue as { component_name?: string } | undefined;
+          if (parent?.component_name !== "ScenarioComponent") {
+            return undefined;
+          }
+          return {
+            columns: [
+              { field: ["scene"], label: "场景" },
+              { field: ["outfit"], label: "外观" },
+            ],
+            objectValueSchema: {
+              type: "object",
+              properties: {
+                scene: { type: "string" },
+                outfit: { type: "string" },
+              },
+            },
+          };
+        },
+        getFieldLabel(path, fieldName) {
+          if (path.at(-1) === "map" && fieldName === "map") {
+            return "大地图";
+          }
+          return fieldName;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("大地图")).toBeInTheDocument();
+  expect(screen.getByLabelText("配置 大地图 场景")).toHaveValue("res://map.tscn");
+  expect(screen.getByLabelText("配置 大地图 外观")).toHaveValue("res://map_outfit.tscn");
+});
+
+test("reference object pages会沿用映射后的 sourceId schema，正确显示 icon 预览并禁用只读 id", () => {
+  const rootSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      companion: {
+        type: "string",
+      },
+    },
+  };
+  const referenceSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      id: {
+        type: "string",
+        readOnly: true,
+      },
+      icon: {
+        type: "string",
+        title: "Icon",
+        "x-editor": {
+          display: {
+            kind: "image",
+          },
+        },
+      },
+    },
+  };
+
+  render(
+    <EditorShell
+      documents={{
+        main: { companion: "asset://characters/hero.json" },
+        "resource/characters/hero": {
+          id: "hero",
+          icon: "res://assets/icons/hero.png",
+        },
+      }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://characters/hero.json"
+            ? {
+              id: "hero",
+              icon: "res://assets/icons/hero.png",
+            }
+            : undefined;
+        },
+        resolveReferenceSourceId(uri) {
+          return uri === "asset://characters/hero.json" ? "resource/characters/hero" : undefined;
+        },
+        resolveDisplayUrl(value) {
+          return value.replace("res://", "http://localhost/");
+        },
+      }}
+      rootSourceId="main"
+      schemaHost={{
+        getSchema(context) {
+          if (context.sourceId === "main") {
+            return rootSchema;
+          }
+          if (context.sourceId === "resource/characters/hero") {
+            return referenceSchema;
+          }
+          return undefined;
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
+
+  expect(screen.getAllByLabelText("Field id").some((element) => (element as HTMLInputElement).disabled)).toBe(true);
+  expect(screen.getAllByLabelText("Field Icon").some((element) => (element as HTMLInputElement).value === "res://assets/icons/hero.png")).toBe(true);
+  expect(screen.getAllByRole("img", { name: "Icon" }).some((element) => element.getAttribute("src") === "http://localhost/assets/icons/hero.png")).toBe(true);
+  expect(screen.getAllByRole("img", { name: "Icon" })[0]).toHaveAttribute(
+    "src",
+    "http://localhost/assets/icons/hero.png",
+  );
 });

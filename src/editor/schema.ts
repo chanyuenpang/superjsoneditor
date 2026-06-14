@@ -48,6 +48,7 @@ export type EditorTableColumn = {
 };
 
 export type EditorSchemaUi = {
+  className?: string | string[];
   group?: string;
   fieldType?: "select" | "multi-select" | "textarea";
   options?: EditorViewOption[];
@@ -72,6 +73,8 @@ export type EditorSchemaUi = {
   };
   table?: {
     columns: EditorTableColumn[];
+    objectValueSchema?: EditorSchema;
+    objectValueMetadataByKey?: Record<string, Record<string, unknown>>;
   };
 };
 

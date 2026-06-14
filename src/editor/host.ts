@@ -1,5 +1,5 @@
 import type { JsonPath } from "../core/path";
-import type { EditorReferenceSchema, EditorSchema } from "./schema";
+import type { EditorReferenceSchema, EditorSchema, EditorTableColumn } from "./schema";
 
 export type EditorReferenceOption = {
   value: string;
@@ -11,6 +11,22 @@ export type EditorHost = {
   loadReferenceSource?: (uri: string) => unknown;
   resolveReferenceSourceId?: (uri: string) => string | undefined;
   resolveDisplayUrl?: (value: string, schema?: EditorSchema) => string | undefined;
+  getObjectProjectionConfig?: (context: {
+    path: JsonPath;
+    value: Record<string, unknown>;
+    parentValue?: unknown;
+    schema?: EditorSchema;
+  }) => {
+    columns: EditorTableColumn[];
+    objectValueSchema: EditorSchema;
+    objectValueMetadataByKey?: Record<string, Record<string, unknown>>;
+  } | undefined;
+  getObjectValueMetadata?: (context: {
+    path: JsonPath;
+    value: Record<string, unknown>;
+    parentValue?: unknown;
+    schema?: EditorSchema;
+  }) => Record<string, Record<string, unknown>> | undefined;
   createReferenceRow?: (context: {
     path: JsonPath;
     value: unknown[];
