@@ -104,6 +104,7 @@ export function SchemaOptionFieldEditor({
     return normalizedOptions.filter((option) => option.label.toLowerCase().includes(needle) || String(option.value).toLowerCase().includes(needle));
   }, [draft, normalizedOptions]);
   const canCreate = allowAuthoring && draft.trim().length > 0 && !normalizedOptions.some((option) => String(option.value).toLowerCase() === draft.trim().toLowerCase());
+  const canManageOption = Boolean(onRenameOption || onDeleteOption || onMoveOption || onSetOptionColor);
 
   function commit(nextValues: SchemaOptionValue[]) {
     onEdit(nextValues);
@@ -228,7 +229,7 @@ export function SchemaOptionFieldEditor({
                     <icons.dragHandle size={14} />
                     <span className="chip" style={chipStyleForValue(option.color)}>{option.label}</span>
                   </button>
-                  {allowAuthoring && !readOnly ? (
+                  {canManageOption && !readOnly ? (
                     <Popover.Root open={editing?.value === String(option.value)} onOpenChange={(nextOpen) => setEditing(nextOpen ? { value: String(option.value), label: option.label } : null)}>
                       <Popover.Trigger asChild>
                         <button
@@ -246,31 +247,37 @@ export function SchemaOptionFieldEditor({
                       <Popover.Portal>
                         <Popover.Content className="multi-select-option-editor" align="start" collisionPadding={12} side="right" sideOffset={10}>
                           <div className="multi-select-option-editor-header">
-                            <input
-                              className="multi-select-option-name-input"
-                              ref={renameInputRef}
-                              value={editing?.value === String(option.value) ? editing.label : option.label}
-                              onChange={(event) => setEditing({ value: String(option.value), label: event.target.value })}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.preventDefault();
-                                  applyRename();
-                                }
-                              }}
-                            />
+                            {onRenameOption ? (
+                              <input
+                                className="multi-select-option-name-input"
+                                ref={renameInputRef}
+                                value={editing?.value === String(option.value) ? editing.label : option.label}
+                                onChange={(event) => setEditing({ value: String(option.value), label: event.target.value })}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    event.preventDefault();
+                                    applyRename();
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <span className="multi-select-option-name-input">{option.label}</span>
+                            )}
                             <icons.info size={16} />
                           </div>
-                          <button
-                            className="multi-select-option-action danger"
-                            onPointerDown={(event) => {
-                              event.preventDefault();
-                              removeOption(option.value);
-                            }}
-                            type="button"
-                          >
-                            <icons.delete size={16} />
-                            <span>Delete</span>
-                          </button>
+                          {onDeleteOption ? (
+                            <button
+                              className="multi-select-option-action danger"
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                removeOption(option.value);
+                              }}
+                              type="button"
+                            >
+                              <icons.delete size={16} />
+                              <span>Delete</span>
+                            </button>
+                          ) : null}
                           {onMoveOption ? (
                             <>
                               <button
@@ -297,29 +304,33 @@ export function SchemaOptionFieldEditor({
                               </button>
                             </>
                           ) : null}
-                          <div className="multi-select-option-divider" />
-                          <div className="multi-select-option-section-title">Color</div>
-                          <div className="multi-select-color-list">
-                            {colorChoices.map((choice) => {
-                              const active = (option.color ?? "default") === choice.value;
-                              const palette = namedChipPalette[choice.value];
-                              return (
-                                <button
-                                  className={`multi-select-color-item ${active ? "active" : ""}`}
-                                  key={choice.value}
-                                  onPointerDown={(event) => {
-                                    event.preventDefault();
-                                    applyColor(option.value, choice.value);
-                                  }}
-                                  type="button"
-                                >
-                                  <span className="multi-select-color-swatch" style={{ background: palette.background, borderColor: palette.color }} />
-                                  <span>{choice.label}</span>
-                                  {active ? <icons.check size={16} /> : <span className="multi-select-color-check-placeholder" />}
-                                </button>
-                              );
-                            })}
-                          </div>
+                          {onSetOptionColor ? (
+                            <>
+                              <div className="multi-select-option-divider" />
+                              <div className="multi-select-option-section-title">Color</div>
+                              <div className="multi-select-color-list">
+                                {colorChoices.map((choice) => {
+                                  const active = (option.color ?? "default") === choice.value;
+                                  const palette = namedChipPalette[choice.value];
+                                  return (
+                                    <button
+                                      className={`multi-select-color-item ${active ? "active" : ""}`}
+                                      key={choice.value}
+                                      onPointerDown={(event) => {
+                                        event.preventDefault();
+                                        applyColor(option.value, choice.value);
+                                      }}
+                                      type="button"
+                                    >
+                                      <span className="multi-select-color-swatch" style={{ background: palette.background, borderColor: palette.color }} />
+                                      <span>{choice.label}</span>
+                                      {active ? <icons.check size={16} /> : <span className="multi-select-color-check-placeholder" />}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          ) : null}
                         </Popover.Content>
                       </Popover.Portal>
                     </Popover.Root>

@@ -34,6 +34,8 @@ import { SchemaColumnHeader } from "./SchemaColumnHeader";
 import { SchemaOptionFieldEditor } from "./SchemaOptionFieldEditor";
 import { icons } from "./icons";
 
+const MAX_INLINE_ARRAY_PREVIEW_COLUMNS = 3;
+
 type ValueInspectorProps = {
   value: unknown;
   savedValue?: unknown;
@@ -126,6 +128,10 @@ const OBJECT_PRESET_FIELDS: Record<EditorObjectPreset, string[]> = {
   xyz: ["x", "y", "z"],
   rgba: ["r", "g", "b", "a"],
 };
+
+function isCompactInlineObjectPreset(preset: EditorObjectPreset | null | undefined) {
+  return preset === "xy" || preset === "xyz" || preset === "rgba";
+}
 
 function resolveImageDisplayConfig(
   schema: EditorSchema | undefined,
@@ -506,7 +512,7 @@ function getInlineArrayPreviewConfig(
     referenceViewColumns,
     configuredTableColumns,
     hasExplicitTableColumns,
-  ).filter((column) => column !== "#");
+  ).filter((column) => column !== "#").slice(0, MAX_INLINE_ARRAY_PREVIEW_COLUMNS);
   if (columns.length === 0) {
     return null;
   }
@@ -550,15 +556,17 @@ function renderInlineArrayFieldPreview(props: {
           Showing {preview.rows.length} of {preview.totalCount} items
         </span>
         <button
-          className="ghost-button compact-button"
+          aria-label={`Open ${props.rowLabel}`}
+          className="ghost-button compact-button object-array-preview__open-array"
           type="button"
           onClick={() => props.onNavigate(arrayPath)}
         >
-          Open array
+          <icons.next size={16} />
         </button>
       </div>
-      <div className="object-array-preview__table-shell">
-        <table className="object-array-preview__table">
+      <div className="table-shell object-array-preview__table-shell">
+        <div className="table-scroll">
+        <table className="data-table array-workspace object-array-preview__table">
           <thead>
             <tr>
               <th>#</th>
@@ -610,6 +618,7 @@ function renderInlineArrayFieldPreview(props: {
                       const record = item as Record<string, unknown>;
                       const configuredColumn = findConfiguredTableColumn(preview.configuredTableColumns, column);
                       const fieldPath = configuredColumn ? getTableColumnPath(configuredColumn) : [column];
+                      const cellLabel = configuredColumn?.label ?? column;
                       const cellValue = fieldPath.length > 0 ? getValueAtPath(record, fieldPath) : record[column];
                       const cellSchema = resolveSchemaAtPath(preview.itemSchema, fieldPath, record);
                       const inlineProjection = isPlainObject(cellValue)
@@ -625,29 +634,42 @@ function renderInlineArrayFieldPreview(props: {
                       return (
                         <td key={`${props.rowKey}:${sourceIndex}:${column}`}>
                           {inlineProjection && isPlainObject(cellValue)
-                            ? renderInlineObjectProjection({
-                              fieldKey: String(fieldPath[0] ?? column),
-                              fieldValue: cellValue,
-                              fieldLabel: `${props.rowLabel} ${rowLabel}`,
-                              path: [...arrayPath, sourceIndex],
-                              host: props.host,
-                              resolveNamedSchema: props.resolveNamedSchema,
-                              parentValue: record,
-                              readOnly: props.readOnly,
-                              projectionColumns: inlineProjection.columns,
-                              projectionSchema: inlineProjection.objectValueSchema,
-                              objectPreset: inlineProjection.objectPreset,
-                              projectionMetadataByKey: inlineProjection.objectValueMetadataByKey,
-                              projectionMetadataSchema: inlineProjection.metadataSchema,
-                              onNavigate: props.onNavigate,
-                              onChange(nextValue) {
-                                props.onChange(updateArrayItemAtIndex(
-                                  props.rowValue,
-                                  sourceIndex,
-                                  setValueAtPath(record, fieldPath, nextValue),
-                                ));
-                              },
-                            })
+                            ? isCompactInlineObjectPreset(inlineProjection.objectPreset)
+                              ? renderInlineObjectProjection({
+                                fieldKey: String(fieldPath.at(-1) ?? column),
+                                fieldValue: cellValue,
+                                fieldLabel: cellLabel,
+                                path: [...arrayPath, sourceIndex],
+                                host: props.host,
+                                resolveNamedSchema: props.resolveNamedSchema,
+                                parentValue: record,
+                                readOnly: props.readOnly,
+                                projectionColumns: inlineProjection.columns,
+                                projectionSchema: inlineProjection.objectValueSchema,
+                                objectPreset: inlineProjection.objectPreset,
+                                projectionMetadataByKey: inlineProjection.objectValueMetadataByKey,
+                                projectionMetadataSchema: inlineProjection.metadataSchema,
+                                onNavigate: props.onNavigate,
+                                onChange(nextValue) {
+                                  props.onChange(updateArrayItemAtIndex(
+                                    props.rowValue,
+                                    sourceIndex,
+                                    setValueAtPath(record, fieldPath, nextValue),
+                                  ));
+                                },
+                              })
+                              : (
+                              <button
+                                className={["nested-entry-button", "inline", getTypeToneClass(cellValue, props.host)].filter(Boolean).join(" ")}
+                                  type="button"
+                                  onClick={() => props.onNavigate([...arrayPath, sourceIndex, ...fieldPath])}
+                                >
+                                  <span className="nested-entry-icon" aria-hidden="true">
+                                    {getStructureIcon(cellValue, props.host)}
+                                  </span>
+                                  {renderNestedEntryContent(cellValue, cellSchema, props.host, props.resolveNamedSchema, undefined, "compact")}
+                                </button>
+                              )
                             : isNavigable(cellValue)
                               ? (
                                 <button
@@ -658,41 +680,17 @@ function renderInlineArrayFieldPreview(props: {
                                   <span className="nested-entry-icon" aria-hidden="true">
                                     {getStructureIcon(cellValue, props.host)}
                                   </span>
-                                  {renderNestedEntryContent(cellValue, cellSchema, props.host, props.resolveNamedSchema, rowLabel)}
+                                  {renderNestedEntryContent(cellValue, cellSchema, props.host, props.resolveNamedSchema, undefined, "compact")}
                                 </button>
                               )
-                              : renderPrimitiveEditor({
-                                value: cellValue,
-                                ariaLabel: `${props.rowLabel} ${rowLabel} ${column}`,
-                                schema: cellSchema,
-                                path: [...arrayPath, sourceIndex, ...fieldPath],
-                                host: props.host,
-                                readOnly: props.readOnly,
-                                onChange(nextValue) {
-                                  props.onChange(updateArrayItemAtIndex(
-                                    props.rowValue,
-                                    sourceIndex,
-                                    setValueAtPath(record, fieldPath, nextValue),
-                                  ));
-                                },
-                              })}
+                              : renderInlineArrayPreviewSummary(cellValue, cellSchema, props.host, [...arrayPath, sourceIndex, ...fieldPath])}
                         </td>
                       );
                     }
 
                     return (
                       <td key={`${props.rowKey}:${sourceIndex}:${column}`}>
-                        {renderPrimitiveEditor({
-                          value: item,
-                          ariaLabel: `${props.rowLabel} ${rowLabel} ${column}`,
-                          schema: preview.itemSchema,
-                          path: [...arrayPath, sourceIndex],
-                          host: props.host,
-                          readOnly: props.readOnly,
-                          onChange(nextValue) {
-                            props.onChange(updateArrayItemAtIndex(props.rowValue, sourceIndex, nextValue));
-                          },
-                        })}
+                        {renderInlineArrayPreviewSummary(item, preview.itemSchema, props.host, [...arrayPath, sourceIndex])}
                       </td>
                     );
                   })}
@@ -701,6 +699,7 @@ function renderInlineArrayFieldPreview(props: {
             })}
           </tbody>
         </table>
+        </div>
       </div>
       {preview.totalCount > preview.rows.length ? (
         <div className="object-array-preview__overflow-hint">
@@ -709,6 +708,19 @@ function renderInlineArrayFieldPreview(props: {
       ) : null}
     </div>
   );
+}
+
+function renderInlineArrayPreviewSummary(
+  value: unknown,
+  schema: EditorSchema | undefined,
+  host?: EditorHost,
+  path?: JsonPath,
+) {
+  const rendered = renderReferenceFieldValue(value, schema, host, path);
+  if (typeof rendered === "string") {
+    return <span className="array-cell-summary">{rendered}</span>;
+  }
+  return <span className="array-cell-summary array-cell-summary--projection">{rendered}</span>;
 }
 
 function isObjectMapProjectionValue(
@@ -1028,7 +1040,8 @@ function ObjectPage({
                 {fields.map(([key, fieldValue], index) => {
                   const isDragged = dragState?.field === key;
                   const visibleIndex = dragState ? dragState.restOrder.indexOf(key) : index;
-                  const fieldLabel = schema?.properties?.[key]?.title ?? host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key;
+                  const fieldSchema = resolveSchemaAtPath(schema, [key], value);
+                  const fieldLabel = fieldSchema?.title ?? host?.getFieldLabel?.([...path, key], key, fieldValue) ?? key;
                   return (
                     <div className="detail-property-stack" key={key}>
                       {!isDragged && dragState && dragState.targetIndex === visibleIndex ? (
@@ -1038,7 +1051,7 @@ function ObjectPage({
                         className={[
                           "detail-property-item",
                           "object-field-row",
-                          ...getSchemaClassNames(schema?.properties?.[key]),
+                          ...getSchemaClassNames(fieldSchema),
                           pressedField === key ? "is-pressed" : "",
                           isDragged ? "is-dragging" : "",
                           isFieldDirty(fieldValue, isPlainObject(savedValue) ? savedValue[key] : undefined) ? "object-field-row--dirty" : "",
@@ -1065,14 +1078,14 @@ function ObjectPage({
                             style={{ minHeight: dragState?.ghostHeight ?? 72 }}
                           />
                         ) : (
-                          <section className={["property-block", ...getSchemaClassNames(schema?.properties?.[key])].join(" ")}>
+                          <section className={["property-block", ...getSchemaClassNames(fieldSchema)].join(" ")}>
                             <div className="property-heading">
                               <span>{fieldLabel}</span>
                               <div className="property-heading__actions">
                                 {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
                                 {renderNullableTypeButton({
                                   value: fieldValue,
-                                  schema: schema?.properties?.[key],
+                                  schema: fieldSchema,
                                   readOnly: pageReadOnly,
                                   onSetNull: () => {
                                     onApplyValue({
@@ -1099,15 +1112,15 @@ function ObjectPage({
                                 ) : null}
                               </div>
                             </div>
-                            {schema?.properties?.[key]?.description ? <div className="form-hint">{schema.properties[key]?.description}</div> : null}
+                            {fieldSchema?.description ? <div className="form-hint">{fieldSchema.description}</div> : null}
                             {editMode && isRequiredField(schema, key) ? (
                               <div className="form-hint">必填字段不能删除。</div>
                             ) : null}
-                            {isInlineSchemaEditor(fieldValue, schema?.properties?.[key]) ? (
+                            {isInlineSchemaEditor(fieldValue, fieldSchema) ? (
                               renderPrimitiveEditor({
                                 value: fieldValue,
                                 ariaLabel: `Field ${fieldLabel}`,
-                                schema: schema?.properties?.[key],
+                                schema: fieldSchema,
                                 path: [...path, key],
                                 host,
                                 readOnly: pageReadOnly,
@@ -1129,9 +1142,9 @@ function ObjectPage({
                                 path: [...path, key],
                                 value: fieldValue,
                                 parentValue: value,
-                                schema: schema?.properties?.[key],
+                                schema: fieldSchema,
                                 host,
-                              }) ?? getObjectFieldProjectionConfig(schema, schema?.properties?.[key]);
+                              }) ?? getObjectFieldProjectionConfig(schema, fieldSchema);
                               if (!projection) {
                                 return null;
                               }
@@ -1196,7 +1209,7 @@ function ObjectPage({
                                   rowValue: fieldValue,
                                   path,
                                   host,
-                                  schema: schema?.properties?.[key],
+                                  schema: fieldSchema,
                                   resolveNamedSchema,
                                   readOnly: pageReadOnly,
                                   onNavigate,
@@ -1216,7 +1229,7 @@ function ObjectPage({
                                     <span className="nested-entry-icon" aria-hidden="true">
                                       {getStructureIcon(fieldValue, host)}
                                     </span>
-                                    {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
+                                    {renderNestedEntryContent(fieldValue, fieldSchema, host, resolveNamedSchema)}
                                   </button>
                                 )
                               ) : isNavigable(fieldValue) ? (
@@ -1229,13 +1242,13 @@ function ObjectPage({
                                   <span className="nested-entry-icon" aria-hidden="true">
                                     {getStructureIcon(fieldValue, host)}
                                   </span>
-                                  {renderNestedEntryContent(fieldValue, schema?.properties?.[key], host, resolveNamedSchema)}
+                                  {renderNestedEntryContent(fieldValue, fieldSchema, host, resolveNamedSchema)}
                                 </button>
                               ) : (
                                 renderPrimitiveEditor({
                                   value: fieldValue,
                                   ariaLabel: `Field ${fieldLabel}`,
-                                  schema: schema?.properties?.[key],
+                                  schema: fieldSchema,
                                   path: [...path, key],
                                   host,
                                   readOnly: pageReadOnly,
@@ -2221,6 +2234,8 @@ function ArrayPage({
                               ? Object.prototype.hasOwnProperty.call(record, fieldPath[0] as string)
                               : cellValue !== undefined;
                             const showInlineProjection = hasColumn && cellProjectionConfig && isPlainObject(cellValue);
+                            const cellLabel = configuredColumn?.label ?? column;
+                            const showInlineEditor = hasColumn && !showInlineProjection && isInlineSchemaEditor(cellValue, cellSchema);
                             return (
                             <td
                               className={
@@ -2233,7 +2248,7 @@ function ArrayPage({
                               }
                               key={`${sourceIndex}:${column}`}
                             >
-                              {!showInlineProjection ? (
+                              {!showInlineProjection && !showInlineEditor ? (
                                 <span
                                   className={[
                                     "array-cell-summary",
@@ -2244,11 +2259,29 @@ function ArrayPage({
                                   {hasColumn ? previewValue(cellValue, host) : "-"}
                                 </span>
                               ) : null}
+                              {showInlineEditor ? (
+                                <div
+                                  onClick={(event) => event.stopPropagation()}
+                                  onPointerDown={(event) => event.stopPropagation()}
+                                >
+                                  {renderPrimitiveEditor({
+                                    value: cellValue,
+                                    ariaLabel: `Array item ${sourceIndex} ${cellLabel}`,
+                                    schema: cellSchema,
+                                    path: [...path, sourceIndex, ...fieldPath],
+                                    host,
+                                    readOnly: pageReadOnly,
+                                    onChange(nextValue) {
+                                      onApplyValue(setValueAtPath(value, [sourceIndex, ...fieldPath], nextValue));
+                                    },
+                                  })}
+                                </div>
+                              ) : null}
                               {showInlineProjection
                                 ? renderInlineObjectProjection({
                                   fieldKey: column,
                                   fieldValue: cellValue,
-                                  fieldLabel: configuredColumn?.label ?? column,
+                                  fieldLabel: cellLabel,
                                   path: [...path, sourceIndex, ...fieldPath],
                                   host,
                                   resolveNamedSchema,
@@ -2959,7 +2992,11 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (props.schema?.["x-editor"]?.fieldType === "multi-select" && Array.isArray(props.value)) {
+  if (props.schema?.["x-editor"]?.fieldType === "multi-select" && (props.value == null || Array.isArray(props.value))) {
+    const supportsOptionsSourceColorEditing = Boolean(
+      props.schema?.["x-editor"]?.optionsSource?.colorField
+      && props.host?.setOptionsSourceOptionColor,
+    );
     return withNullableControls(
       <SchemaOptionFieldEditor
         allowAuthoring={Boolean(props.onUpdateSchema && props.schema?.["x-editor"]?.options)}
@@ -2967,7 +3004,7 @@ function renderPrimitiveEditor(props: {
         mode="multi"
         options={editorOptionsState.options}
         readOnly={readOnly}
-        value={props.value as Array<string | number>}
+        value={Array.isArray(props.value) ? props.value as Array<string | number> : []}
         onEdit={(nextValue) => props.onChange(nextValue)}
         onCreateOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
           ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
@@ -2981,9 +3018,17 @@ function renderPrimitiveEditor(props: {
         onRenameOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
           ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
           : undefined}
-        onSetOptionColor={props.onUpdateSchema && props.schema?.["x-editor"]?.options
-          ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
-          : undefined}
+        onSetOptionColor={
+          props.onUpdateSchema && props.schema?.["x-editor"]?.options
+            ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
+            : supportsOptionsSourceColorEditing
+            ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
+              uri: props.schema?.["x-editor"]?.optionsSource?.uri ?? "",
+              optionValue,
+              color,
+            })
+            : undefined
+        }
         placeholder="Select or create options"
       />,
       nullableBranch,
@@ -2993,6 +3038,10 @@ function renderPrimitiveEditor(props: {
   }
 
   if (editorOptionsState.options.length > 0 && props.schema?.["x-editor"]?.fieldType === "select") {
+    const supportsOptionsSourceColorEditing = Boolean(
+      props.schema?.["x-editor"]?.optionsSource?.colorField
+      && props.host?.setOptionsSourceOptionColor,
+    );
     return withNullableControls(
       <SchemaOptionFieldEditor
         allowAuthoring={Boolean(props.onUpdateSchema && props.schema?.["x-editor"]?.options)}
@@ -3014,9 +3063,17 @@ function renderPrimitiveEditor(props: {
         onRenameOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
           ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
           : undefined}
-        onSetOptionColor={props.onUpdateSchema && props.schema?.["x-editor"]?.options
-          ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
-          : undefined}
+        onSetOptionColor={
+          props.onUpdateSchema && props.schema?.["x-editor"]?.options
+            ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
+            : supportsOptionsSourceColorEditing
+            ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
+              uri: props.schema?.["x-editor"]?.optionsSource?.uri ?? "",
+              optionValue,
+              color,
+            })
+            : undefined
+        }
         placeholder="Select an option"
       />,
       nullableBranch,
@@ -3965,6 +4022,7 @@ function renderNestedEntryContent(
   host?: EditorHost,
   resolveNamedSchema?: (name: string) => EditorSchema | undefined,
   fallbackLabel?: string,
+  mode: "full" | "compact" = "full",
 ) {
   if (!isReferenceValue(value)) {
     return <span className="entry-key">{fallbackLabel ?? previewValue(value, host)}</span>;
@@ -3989,10 +4047,61 @@ function renderNestedEntryContent(
     return <span className="entry-key">{fallbackLabel ?? previewValue(value, host)}</span>;
   }
 
+  if (mode === "compact") {
+    return renderCompactReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host);
+  }
+
   return (
     <div className={`reference-preview reference-preview--${referenceSchema?.view?.layout ?? "inline"}`.trim()}>
       {renderReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host)}
     </div>
+  );
+}
+
+function renderCompactReferenceProjection(
+  targetValue: unknown,
+  targetSchema: EditorSchema,
+  columns: ReferenceViewColumn[],
+  host?: EditorHost,
+) {
+  const entries = columns
+    .map((column) => {
+      const fieldValue = getValueAtPath(targetValue, column.path);
+      const fieldSchema = mergeProjectedFieldSchema(
+        resolveSchemaAtPath(targetSchema, column.path, targetValue),
+        column.columnSchema,
+      );
+      if (fieldValue == null || fieldValue === "") {
+        return null;
+      }
+      return {
+        key: column.key,
+        value: renderReferenceFieldValue(fieldValue, fieldSchema, host),
+      };
+    })
+    .filter((entry): entry is { key: string; value: ReactNode } => entry != null);
+
+  if (entries.length === 0) {
+    return <span className="entry-key">{previewValue(targetValue, host)}</span>;
+  }
+
+  const entryMap = new Map(entries.map((entry) => [entry.key, entry.value]));
+  const iconValue = entryMap.get("icon");
+  const primaryValue = entryMap.get("name")
+    ?? entryMap.get("title")
+    ?? entryMap.get("id")
+    ?? entries.find((entry) => entry.key !== "icon" && entry.key !== "description")?.value
+    ?? entries[0]?.value;
+  const secondaryValue = primaryValue !== entryMap.get("id") ? entryMap.get("id") : null;
+
+  return (
+    <span className="reference-preview__compact">
+      {iconValue ? <span className="reference-preview__compact-icon">{iconValue}</span> : null}
+      <span className="reference-preview__compact-text">
+        {primaryValue ? <span className="reference-preview__compact-main">{primaryValue}</span> : null}
+        {secondaryValue ? <span className="reference-preview__compact-meta">{secondaryValue}</span> : null}
+      </span>
+    </span>
   );
 }
 
@@ -4223,13 +4332,29 @@ function isEditorOptionColor(value: unknown): value is EditorViewOptionColor {
   return ["red", "orange", "yellow", "green", "blue", "gray", "gold"].includes(String(value));
 }
 
+function chipStyleForSummaryColor(color: EditorViewOptionColor | null): React.CSSProperties | undefined {
+  if (!color) {
+    return undefined;
+  }
+  const palette: Record<EditorViewOptionColor, { background: string; color: string }> = {
+    gray: { background: "#eceff3", color: "#556270" },
+    orange: { background: "#fff0de", color: "#9f580a" },
+    yellow: { background: "#fff5cb", color: "#876300" },
+    green: { background: "#e5f6ea", color: "#1f6b3a" },
+    blue: { background: "#e4f0ff", color: "#1e5eb8" },
+    gold: { background: "#fff2c6", color: "#7a5b00" },
+    red: { background: "#ffe4e1", color: "#8f3123" },
+  };
+  return palette[color];
+}
+
 function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) {
   const fieldType = schema?.["x-editor"]?.fieldType;
   if (fieldType === "select") {
     return value == null || typeof value === "string" || typeof value === "number";
   }
   if (fieldType === "multi-select") {
-    return Array.isArray(value);
+    return value == null || Array.isArray(value);
   }
   return false;
 }
@@ -4240,6 +4365,16 @@ function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefi
   if (typeof value === "string" && imageDisplay.kind === "image") {
     return <ImagePreview value={value} schema={schema} host={host} context="inline" path={path} />;
   }
+  if ((typeof value === "string" || typeof value === "number") && schema?.["x-editor"]?.fieldType === "select") {
+    const editorOptionsState = resolveEditorOptions(schema, host);
+    const option = editorOptionsState.options.find((entry) => String(entry.value) === String(value));
+    if (option) {
+      if (option.color) {
+        return <span className="chip" style={chipStyleForSummaryColor(option.color)}>{option.label}</span>;
+      }
+      return option.label;
+    }
+  }
   if (typeof value === "string" && (display?.text?.sentenceLimit ?? 0) > 0) {
     return extractLeadingSentences(value, display?.text?.sentenceLimit ?? 1);
   }
@@ -4247,6 +4382,22 @@ function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefi
     return <span className="reference-preview__icon-path">{value}</span>;
   }
   if (Array.isArray(value)) {
+    if (schema?.["x-editor"]?.fieldType === "multi-select") {
+      const editorOptionsState = resolveEditorOptions(schema, host);
+      const optionMap = new Map(editorOptionsState.options.map((option) => [String(option.value), option]));
+      return (
+        <span className="chips-cell">
+          {value.map((item, index) => {
+            const option = optionMap.get(String(item));
+            return (
+              <span className="chip" key={`${String(item)}-${index}`} style={chipStyleForSummaryColor(option?.color ?? null)}>
+                {option?.label ?? previewValue(item, host)}
+              </span>
+            );
+          })}
+        </span>
+      );
+    }
     const previewItems = value.slice(0, 3).map((item) => previewValue(item, host));
     const suffix = value.length > 3 ? ` +${value.length - 3}` : "";
     return `${previewItems.join(", ")}${suffix}`;
@@ -4487,7 +4638,7 @@ function renderProjectedObjectFieldEditor(props: {
                     <span className="nested-entry-icon" aria-hidden="true">
                       {getStructureIcon(cellValue, host)}
                     </span>
-                    {renderNestedEntryContent(cellValue, cellSchema, host, resolveNamedSchema, rowLabel)}
+                    {renderNestedEntryContent(cellValue, cellSchema, host, resolveNamedSchema)}
                   </button>
                 )
               ) : hasValue && isNavigable(cellValue) ? (
@@ -4499,7 +4650,7 @@ function renderProjectedObjectFieldEditor(props: {
                   <span className="nested-entry-icon" aria-hidden="true">
                     {getStructureIcon(cellValue, host)}
                   </span>
-                  {renderNestedEntryContent(cellValue, cellSchema, host, undefined, rowLabel)}
+                  {renderNestedEntryContent(cellValue, cellSchema, host, undefined)}
                 </button>
               ) : (
                 renderPrimitiveEditor({
@@ -4662,7 +4813,7 @@ function renderProjectedObjectMapFieldEditor(props: {
                             <span className="nested-entry-icon" aria-hidden="true">
                               {getStructureIcon(cellValue, host)}
                             </span>
-                            {renderNestedEntryContent(cellValue, cellSchema, host, undefined, `${rowLabel} ${entryLabel}`)}
+                            {renderNestedEntryContent(cellValue, cellSchema, host, undefined)}
                           </button>
                         )
                       ) : hasValue && isNavigable(cellValue) ? (
@@ -4674,7 +4825,7 @@ function renderProjectedObjectMapFieldEditor(props: {
                           <span className="nested-entry-icon" aria-hidden="true">
                             {getStructureIcon(cellValue, host)}
                           </span>
-                          {renderNestedEntryContent(cellValue, cellSchema, host, undefined, `${rowLabel} ${entryLabel}`)}
+                          {renderNestedEntryContent(cellValue, cellSchema, host, undefined)}
                         </button>
                       ) : (
                         renderPrimitiveEditor({

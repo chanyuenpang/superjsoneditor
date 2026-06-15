@@ -1328,6 +1328,173 @@ test("reference projection renders configured fields in root array view", () => 
   expect(iconPreview).toHaveStyle({ width: "40px", height: "40px", objectFit: "contain" });
 });
 
+test("reference projection renders multi-select tag labels in root array view", () => {
+  const buffSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      id: { type: "string", title: "ID" },
+      tags: {
+        type: "array",
+        title: "Tags",
+        items: { type: "string" },
+        "x-editor": {
+          fieldType: "multi-select",
+          options: [
+            { value: "fire", label: "Fire", color: "red" },
+            { value: "boss", label: "Boss", color: "gold" },
+          ],
+        },
+      },
+    },
+  };
+  const buffRootRowSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      id: {
+        type: "string",
+        title: "ID",
+        "x-editor": {
+          projection: { path: ["id"] },
+        },
+      },
+      tags: {
+        type: "array",
+        title: "Tags",
+        "x-editor": {
+          projection: { path: ["tags"] },
+        },
+      },
+    },
+  };
+  const schemaHost: EditorSchemaHost = {
+    getSchema({ path }) {
+      if (path.length === 0) {
+        return {
+          type: "array",
+          items: {
+            type: "string",
+            "x-editor": {
+              reference: {
+                target: { schemaRef: "buff" },
+                view: {
+                  layout: "inline",
+                  schemaRef: "buff_root_row",
+                },
+              },
+            },
+          },
+        };
+      }
+      return undefined;
+    },
+    getNamedSchema(name) {
+      if (name === "buff") return buffSchema;
+      if (name === "buff_root_row") return buffRootRowSchema;
+      return undefined;
+    },
+  };
+
+  render(
+    <EditorShell
+      value={["asset://buff/flame_shield.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://buff/flame_shield.json"
+            ? {
+              id: "flame_shield",
+              tags: ["fire", "boss"],
+            }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Fire")).toBeInTheDocument();
+  expect(screen.getByText("Boss")).toBeInTheDocument();
+  expect(screen.queryByText("fire, boss")).toBeNull();
+});
+
+test("reference projection renders select labels in root array view", () => {
+  const consumableSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      rarity: {
+        type: "string",
+        title: "稀有度",
+        "x-editor": {
+          fieldType: "select",
+          options: [
+            { value: "common", label: "普通", color: "gray" },
+            { value: "rare", label: "稀有", color: "blue" },
+          ],
+        },
+      },
+    },
+  };
+  const consumableRootRowSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      rarity: {
+        type: "string",
+        title: "稀有度",
+        "x-editor": {
+          projection: { path: ["rarity"] },
+        },
+      },
+    },
+  };
+  const schemaHost: EditorSchemaHost = {
+    getSchema({ path }) {
+      if (path.length === 0) {
+        return {
+          type: "array",
+          items: {
+            type: "string",
+            "x-editor": {
+              reference: {
+                target: { schemaRef: "consumable" },
+                view: {
+                  layout: "inline",
+                  schemaRef: "consumable_root_row",
+                },
+              },
+            },
+          },
+        };
+      }
+      return undefined;
+    },
+    getNamedSchema(name) {
+      if (name === "consumable") return consumableSchema;
+      if (name === "consumable_root_row") return consumableRootRowSchema;
+      return undefined;
+    },
+  };
+
+  render(
+    <EditorShell
+      value={["asset://consumable/healing_pill.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://consumable/healing_pill.json"
+            ? {
+              rarity: "common",
+            }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("columnheader", { name: "稀有度" })).toBeInTheDocument();
+  const rarityCell = screen.getByText("普通").closest("td");
+  expect(rarityCell).not.toBeNull();
+  expect(within(rarityCell as HTMLElement).getByText("普通")).toHaveClass("chip");
+});
+
 test("reference projection image display respects configured preview size", () => {
   const itemSchema: EditorSchema = {
     type: "object",
@@ -1852,6 +2019,105 @@ test("inline multi-select options render chip labels and persist literal values"
   expect(screen.queryByText("fire")).toBeNull();
 });
 
+test("inline multi-select still renders in object view when field value is null", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            "x-editor": {
+              fieldType: "multi-select",
+              options: [
+                { value: "fire", label: "Fire", color: "red" },
+                { value: "boss", label: "Boss", color: "gold" },
+              ],
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={{ tags: null }} schemaHost={schemaHost} />);
+
+  expect(screen.getByRole("button", { name: /Field Tags/i })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /tags array/i })).toBeNull();
+});
+
+test("object view materializes child schema before deciding whether tags stays navigable", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          tags: {
+            title: "Tags",
+            allOf: [
+              {
+                type: "array",
+                items: { type: "string" },
+                "x-editor": {
+                  fieldType: "multi-select",
+                },
+              },
+            ],
+            "x-editor": {
+              options: [
+                { value: "herb", label: "Herb", color: "green" },
+                { value: "year_2", label: "Year 2", color: "blue" },
+              ],
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={{ tags: ["herb", "year_2"] }} schemaHost={schemaHost} />);
+
+  expect(screen.getByRole("button", { name: /Field Tags/i })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /tags array/i })).toBeNull();
+});
+
+test("array object rows render inner multi-select fields as inline editors by default", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", title: "ID" },
+            tags: {
+              type: "array",
+              title: "Tags",
+              items: { type: "string" },
+              "x-editor": {
+                fieldType: "multi-select",
+                options: [
+                  { value: "fire", label: "Fire", color: "red" },
+                  { value: "boss", label: "Boss", color: "gold" },
+                ],
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={[{ id: "hero", tags: ["fire", "boss"] }]} schemaHost={schemaHost} />);
+
+  expect(screen.getByRole("button", { name: /Array item 0 Tags/i })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /tags array/i })).toBeNull();
+  const selectedValues = within(screen.getByLabelText(/Array item 0 Tags selected values/i));
+  expect(selectedValues.getByText("Fire")).toBeInTheDocument();
+  expect(selectedValues.getByText("Boss")).toBeInTheDocument();
+});
+
 test("json-backed select options validate and render labels while preserving literal values", async () => {
   const schemaHost: EditorSchemaHost = {
     getSchema() {
@@ -1896,6 +2162,104 @@ test("json-backed select options validate and render labels while preserving lit
   fireEvent.pointerDown(screen.getByRole("button", { name: /Ice/i }));
 
   await waitFor(() => expect(screen.getByRole("button", { name: /Field tag/i })).toHaveTextContent("Ice"));
+});
+
+test("optionsSource multi-select color edits route back to the source when colorField is declared", async () => {
+  const setOptionsSourceOptionColor = vi.fn();
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            "x-editor": {
+              fieldType: "multi-select",
+              optionsSource: {
+                kind: "json-file",
+                uri: "asset://schema-data/tags.json",
+                valueField: "id",
+                labelField: "name",
+                colorField: "color",
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(
+    <EditorShell
+      value={{ tags: ["fire"] }}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://schema-data/tags.json"
+            ? [{ id: "fire", name: "Fire", color: "red" }, { id: "ice", name: "Ice", color: "blue" }]
+            : undefined;
+        },
+        setOptionsSourceOptionColor,
+      } as any}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Field tags/i }));
+  const menuTrigger = document.querySelector(".option-menu-trigger") as HTMLButtonElement | null;
+  expect(menuTrigger).not.toBeNull();
+  fireEvent.click(menuTrigger!);
+  fireEvent.pointerDown(screen.getByRole("button", { name: /Gold/i }));
+
+  await waitFor(() => {
+    expect(setOptionsSourceOptionColor).toHaveBeenCalledWith({
+      uri: "asset://schema-data/tags.json",
+      optionValue: "fire",
+      color: "gold",
+    });
+  });
+});
+
+test("optionsSource multi-select without colorField does not expose color editing", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            "x-editor": {
+              fieldType: "multi-select",
+              optionsSource: {
+                kind: "json-file",
+                uri: "asset://schema-data/tags.json",
+                valueField: "id",
+                labelField: "name",
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(
+    <EditorShell
+      value={{ tags: ["fire"] }}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://schema-data/tags.json"
+            ? [{ id: "fire", name: "Fire" }, { id: "ice", name: "Ice" }]
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /Field tags/i }));
+  expect(document.querySelector(".option-menu-trigger")).toBeNull();
 });
 
 test("invalid schema options configuration surfaces a schema error", () => {
@@ -3893,16 +4257,229 @@ test("object pages render structured array fields as inline previews with direct
   );
 
   expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Open array" })).toBeInTheDocument();
-  expect(screen.getByDisplayValue("ScenarioComponent")).toBeInTheDocument();
-  expect(screen.getByText("大地图场景")).toBeInTheDocument();
-  expect(screen.getByText("战斗场景")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open Components" })).toBeInTheDocument();
+  expect(screen.queryByText("Open array")).toBeNull();
+  expect(screen.getByText("ScenarioComponent")).toBeInTheDocument();
+  expect(document.querySelector(".object-array-preview .nested-entry-button")).not.toBeNull();
+  expect(screen.queryByText("大地图场景")).toBeNull();
+  expect(screen.queryByText("战斗场景")).toBeNull();
+});
 
-  fireEvent.change(screen.getByDisplayValue("res://scenes/world/player.tscn"), {
-    target: { value: "res://scenes/world/player_v2.tscn" },
-  });
+test("object inline array previews keep reference cells as compact summaries instead of expanding full reference rows", () => {
+  render(
+    <EditorShell
+      value={{
+        shop_items: [
+          {
+            item_path: "asset://material/copper_ore.json",
+            buy_price: 100,
+            sell_price: 50,
+          },
+        ],
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              shop_items: {
+                type: "array",
+                title: "商品",
+                items: {
+                  type: "object",
+                  properties: {
+                    item_path: {
+                      type: "string",
+                      title: "物品路径",
+                      "x-editor": {
+                        reference: {
+                          kind: "resource",
+                          target: {
+                            schemaRef: "resource_reference_target",
+                          },
+                          view: {
+                            layout: "inline",
+                            schemaRef: "resource_reference_row",
+                          },
+                        },
+                      },
+                    },
+                    buy_price: { type: "number", title: "买入价" },
+                    sell_price: { type: "number", title: "卖出价" },
+                  },
+                },
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { key: "item_path", label: "物品路径", wrap: true },
+                      { key: "buy_price", label: "买入价" },
+                      { key: "sell_price", label: "卖出价" },
+                    ],
+                  },
+                },
+              },
+            },
+          };
+        },
+        getNamedSchema(name) {
+          if (name === "resource_reference_target") {
+            return {
+              type: "object",
+              properties: {
+                id: { type: "string", title: "ID" },
+                icon: {
+                  type: "string",
+                  title: "图标",
+                  "x-editor": {
+                    display: {
+                      kind: "image",
+                      preset: "icon",
+                    },
+                  },
+                },
+                name: { type: "string", title: "名称" },
+                description: { type: "string", title: "说明" },
+              },
+            };
+          }
+          if (name === "resource_reference_row") {
+            return {
+              type: "object",
+              properties: {
+                icon: {
+                  type: "string",
+                  title: "图标",
+                  "x-editor": {
+                    display: {
+                      kind: "image",
+                      preset: "icon",
+                    },
+                    projection: { path: ["icon"] },
+                  },
+                },
+                id: {
+                  type: "string",
+                  title: "ID",
+                  "x-editor": {
+                    projection: { path: ["id"] },
+                  },
+                },
+                name: {
+                  type: "string",
+                  title: "名称",
+                  "x-editor": {
+                    projection: { path: ["name"] },
+                  },
+                },
+                description: {
+                  type: "string",
+                  title: "说明",
+                  "x-editor": {
+                    projection: { path: ["description"] },
+                  },
+                },
+              },
+            };
+          }
+          return undefined;
+        },
+      }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://material/copper_ore.json"
+            ? {
+              id: "copper_ore",
+              icon: "res://assets/icons/materials/ores/copper_ore.png",
+              name: "铜矿石",
+              description: "产地：矿山 用途：冶炼铜器",
+            }
+            : undefined;
+        },
+      }}
+    />,
+  );
 
-  expect(screen.getByDisplayValue("res://scenes/world/player_v2.tscn")).toBeInTheDocument();
+  expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
+  expect(screen.getByText("铜矿石")).toBeInTheDocument();
+  expect(screen.getByText("copper_ore")).toBeInTheDocument();
+  expect(screen.queryByText("说明")).toBeNull();
+  expect(screen.queryByText("产地：矿山 用途：冶炼铜器")).toBeNull();
+});
+
+test("object inline array previews render rgba preset objects as inline compact projections", () => {
+  render(
+    <EditorShell
+      value={{
+        labels: [
+          {
+            id: "attack",
+            name: "攻击",
+            color: {
+              r: 0.91,
+              g: 0.3,
+              b: 0.24,
+              a: 1,
+            },
+          },
+        ],
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              labels: {
+                type: "array",
+                title: "属性标签",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string", title: "标签ID" },
+                    name: { type: "string", title: "标签名" },
+                    color: {
+                      type: "object",
+                      title: "颜色",
+                      "x-editor": {
+                        object: {
+                          preset: "rgba",
+                        },
+                      },
+                      properties: {
+                        r: { type: "number", title: "R" },
+                        g: { type: "number", title: "G" },
+                        b: { type: "number", title: "B" },
+                        a: { type: "number", title: "A" },
+                      },
+                    },
+                  },
+                },
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { key: "id", label: "标签ID" },
+                      { key: "name", label: "标签名" },
+                      { key: "color", label: "颜色" },
+                    ],
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
+  expect(screen.getByText("R")).toBeInTheDocument();
+  expect(screen.getByText("G")).toBeInTheDocument();
+  expect(screen.getByText("B")).toBeInTheDocument();
+  expect(screen.getByText("A")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.91")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.3")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.24")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("1")).toBeInTheDocument();
+  expect(screen.queryByText("4 items")).toBeNull();
 });
 
 test("object pages keep plain arrays as navigable entries when schema does not declare table or reference preview", () => {
@@ -4029,9 +4606,64 @@ test("projected object fields render declared table arrays as inline previews", 
 
   expect(screen.getByText("地图列表")).toBeInTheDocument();
   expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
-  expect(screen.getByLabelText("world 入口地图")).toHaveValue("mortal_realm_early_world");
-  expect(screen.getByLabelText("地图列表 0 map_id")).toHaveValue("mortal_realm_early_world");
-  expect(screen.getByLabelText("地图列表 0 map_name")).toHaveValue("凡人界初期世界");
+  expect(screen.getByRole("button", { name: "Open 地图列表" })).toBeInTheDocument();
+  expect(screen.getByText("mortal_realm_early_world")).toBeInTheDocument();
+  expect(screen.getByText("凡人界初期世界")).toBeInTheDocument();
+});
+
+test("inline array previews follow schema visible-column order and cap object-view columns", () => {
+  render(
+    <EditorShell
+      value={{
+        effects: [
+          {
+            effect_type: "heal",
+            value: 10,
+            duration: 5,
+            target: "asset://buff/consumable_heal.json",
+          },
+        ],
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              effects: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    effect_type: { type: "string", title: "效果类型" },
+                    value: { type: "number", title: "数值" },
+                    duration: { type: "number", title: "持续时间" },
+                    target: { type: "string", title: "目标" },
+                  },
+                },
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { key: "effect_type", label: "效果类型" },
+                      { key: "value", label: "数值" },
+                      { key: "duration", label: "持续时间" },
+                      { key: "target", label: "目标" },
+                    ],
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("columnheader", { name: "效果类型" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "数值" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "持续时间" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "目标" })).toBeNull();
+  expect(screen.queryByDisplayValue("heal")).toBeNull();
+  expect(screen.getByText("heal")).toBeInTheDocument();
 });
 
 test("object pages render rgba preset objects as compact inline editors", () => {

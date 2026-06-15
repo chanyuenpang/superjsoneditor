@@ -1,5 +1,5 @@
 import type { JsonPath } from "../core/path";
-import type { EditorReferenceSchema, EditorSchema, EditorTableColumn } from "./schema";
+import type { EditorReferenceSchema, EditorSchema, EditorTableColumn, EditorViewOptionColor } from "./schema";
 
 export type EditorReferenceOption = {
   value: string;
@@ -41,6 +41,11 @@ export type EditorHost = {
     schema?: EditorSchema;
     reference?: EditorReferenceSchema;
   }) => EditorReferenceOption[];
+  setOptionsSourceOptionColor?: (context: {
+    uri: string;
+    optionValue: string | number;
+    color: EditorViewOptionColor | null;
+  }) => void | Promise<void>;
 };
 
 export type ReferenceErrorInfo = {
