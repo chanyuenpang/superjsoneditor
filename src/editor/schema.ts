@@ -47,6 +47,9 @@ export type EditorTableColumn = {
   wrap?: boolean;
 };
 
+export type EditorImageDisplayPreset = "icon" | "large-icon" | "portrait" | "banner" | "image";
+export type EditorObjectPreset = "xy" | "xyz" | "rgba";
+
 export type EditorSchemaUi = {
   className?: string | string[];
   group?: string;
@@ -59,6 +62,7 @@ export type EditorSchemaUi = {
   };
   display?: {
     kind?: "image";
+    preset?: EditorImageDisplayPreset;
     preview?: {
       width?: number;
       height?: number;
@@ -67,6 +71,9 @@ export type EditorSchemaUi = {
     text?: {
       sentenceLimit?: number;
     };
+  };
+  object?: {
+    preset?: EditorObjectPreset;
   };
   column?: {
     sortable?: boolean;

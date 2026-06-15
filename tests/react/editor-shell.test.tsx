@@ -2371,8 +2371,13 @@ test("nullable schema fields expose an explicit null toggle", () => {
 
   expect(screen.getByRole("button", { name: "Set string value" })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Set string value" }));
-  expect(screen.getByLabelText("Field note")).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Set null" })).toBeInTheDocument();
+  const input = screen.getByLabelText("Field note");
+  expect(input).toHaveValue("");
+  const fieldRow = input.closest(".property-block") as HTMLElement;
+  const headingActions = fieldRow.querySelector(".property-heading__actions") as HTMLElement;
+  const setNullButton = within(headingActions).getByRole("button", { name: "Set null" });
+  expect(setNullButton).toHaveTextContent("null");
+  expect(fieldRow.querySelector(".nullable-editor")).toBeNull();
 });
 
 test("raw mode can be disabled by host", () => {
@@ -3696,6 +3701,437 @@ test("object pages render image display fields with preview and path input", () 
   );
 });
 
+test("object pages render icon preset with larger detail preview than list thumbnails", () => {
+  render(
+    <EditorShell
+      value={{ icon: "res://assets/icons/material/iron_ore.png" }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              icon: {
+                type: "string",
+                title: "Icon",
+                "x-editor": {
+                  display: {
+                    kind: "image",
+                    preset: "icon",
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("img", { name: "Icon" })).toHaveStyle({ width: "72px", height: "72px" });
+});
+
+test("object pages render large-icon preset with larger featured preview", () => {
+  render(
+    <EditorShell
+      value={{ icon: "res://assets/icons/role/player_default.png" }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              icon: {
+                type: "string",
+                title: "Icon",
+                "x-editor": {
+                  display: {
+                    kind: "image",
+                    preset: "large-icon",
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  const iconPreview = screen.getByRole("img", { name: "Icon" });
+  expect(iconPreview).toHaveStyle({ width: "128px", height: "128px" });
+  expect(iconPreview).toHaveClass("reference-preview__image--large-icon", "reference-preview__image--field-editor");
+  expect(iconPreview.closest(".image-field-editor")).toHaveClass("image-field-editor--large-icon");
+});
+
+test("object pages render structured array fields as inline previews with direct cell editing", () => {
+  render(
+    <EditorShell
+      value={{
+        components_config: [
+          {
+            component_name: "ScenarioComponent",
+            config: {
+              map: {
+                scene: "res://scenes/world/player.tscn",
+                outfit: "player_world",
+              },
+              combat: {
+                scene: "res://scenes/combat/player.tscn",
+                outfit: "player_combat",
+              },
+            },
+          },
+        ],
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              components_config: {
+                type: "array",
+                title: "Components",
+                items: {
+                  type: "object",
+                  properties: {
+                    component_name: {
+                      type: "string",
+                      title: "组件",
+                    },
+                    config: {
+                      type: "object",
+                      title: "配置",
+                    },
+                  },
+                },
+                "x-editor": {
+                  table: {
+                    columns: [
+                      { key: "component_name", label: "组件" },
+                      { key: "config", label: "配置", width: 320, wrap: true },
+                    ],
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        getObjectProjectionConfig(context) {
+          if (context.path.at(-1) !== "config") {
+            return undefined;
+          }
+          return {
+            columns: [
+              { field: ["map", "scene"], label: "大地图场景", width: 240, wrap: true },
+              { field: ["combat", "scene"], label: "战斗场景", width: 240, wrap: true },
+            ],
+            objectValueSchema: {
+              type: "object",
+              properties: {
+                map: {
+                  type: "object",
+                  properties: {
+                    scene: { type: "string" },
+                    outfit: { type: "string" },
+                  },
+                },
+                combat: {
+                  type: "object",
+                  properties: {
+                    scene: { type: "string" },
+                    outfit: { type: "string" },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open array" })).toBeInTheDocument();
+  expect(screen.getByDisplayValue("ScenarioComponent")).toBeInTheDocument();
+  expect(screen.getByText("大地图场景")).toBeInTheDocument();
+  expect(screen.getByText("战斗场景")).toBeInTheDocument();
+
+  fireEvent.change(screen.getByDisplayValue("res://scenes/world/player.tscn"), {
+    target: { value: "res://scenes/world/player_v2.tscn" },
+  });
+
+  expect(screen.getByDisplayValue("res://scenes/world/player_v2.tscn")).toBeInTheDocument();
+});
+
+test("object pages keep plain arrays as navigable entries when schema does not declare table or reference preview", () => {
+  render(
+    <EditorShell
+      value={{
+        party: [
+          { id: "hero", hp: 10 },
+          { id: "guide", hp: 6 },
+        ],
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              party: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    id: { type: "string" },
+                    hp: { type: "number" },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.queryByText("Showing 2 of 2 items")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "party array 2 items" })).toBeInTheDocument();
+});
+
+test("projected object fields render declared table arrays as inline previews", () => {
+  render(
+    <EditorShell
+      value={{
+        world: {
+          entry_map: "mortal_realm_early_world",
+          maps: [
+            {
+              map_id: "mortal_realm_early_world",
+              map_name: "凡人界初期世界",
+            },
+          ],
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              world: {
+                type: "object",
+                properties: {
+                  entry_map: { type: "string" },
+                  maps: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        map_id: { type: "string", title: "地图ID" },
+                        map_name: { type: "string", title: "地图名称" },
+                      },
+                    },
+                    "x-editor": {
+                      table: {
+                        columns: [
+                          { key: "map_id", label: "地图ID" },
+                          { key: "map_name", label: "地图名称", width: 220, wrap: true },
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        getObjectProjectionConfig(context) {
+          if (context.path.at(-1) !== "world") {
+            return undefined;
+          }
+          return {
+            columns: [
+              { field: ["entry_map"], label: "入口地图", width: 180, wrap: true },
+              { field: ["maps"], label: "地图列表", width: 260, wrap: true },
+            ],
+            objectValueSchema: {
+              type: "object",
+              properties: {
+                entry_map: { type: "string" },
+                maps: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      map_id: { type: "string", title: "地图ID" },
+                      map_name: { type: "string", title: "地图名称" },
+                    },
+                  },
+                  "x-editor": {
+                    table: {
+                      columns: [
+                        { key: "map_id", label: "地图ID" },
+                        { key: "map_name", label: "地图名称", width: 220, wrap: true },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("地图列表")).toBeInTheDocument();
+  expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
+  expect(screen.getByLabelText("world 入口地图")).toHaveValue("mortal_realm_early_world");
+  expect(screen.getByLabelText("地图列表 0 map_id")).toHaveValue("mortal_realm_early_world");
+  expect(screen.getByLabelText("地图列表 0 map_name")).toHaveValue("凡人界初期世界");
+});
+
+test("object pages render rgba preset objects as compact inline editors", () => {
+  render(
+    <EditorShell
+      value={{
+        effect_color: {
+          r: 1,
+          g: 0.5,
+          b: 0.25,
+          a: 0.75,
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              effect_color: {
+                type: "object",
+                title: "Effect Color",
+                "x-editor": {
+                  object: {
+                    preset: "rgba",
+                  },
+                },
+                properties: {
+                  r: { type: "number" },
+                  g: { type: "number" },
+                  b: { type: "number" },
+                  a: { type: "number" },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("R")).toBeInTheDocument();
+  expect(screen.getByText("G")).toBeInTheDocument();
+  expect(screen.getByText("B")).toBeInTheDocument();
+  expect(screen.getByText("A")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("1")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.5")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.25")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.75")).toBeInTheDocument();
+});
+
+test("object pages resolve rgba preset from union object branches", () => {
+  render(
+    <EditorShell
+      value={{
+        effect_color: {
+          r: 0.8,
+          g: 0.4,
+          b: 0.2,
+          a: 1,
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              effect_color: {
+                title: "Effect Color",
+                oneOf: [
+                  {
+                    type: "array",
+                    items: { type: "number" },
+                  },
+                  {
+                    type: "object",
+                    "x-editor": {
+                      object: {
+                        preset: "rgba",
+                      },
+                    },
+                    properties: {
+                      r: { type: "number" },
+                      g: { type: "number" },
+                      b: { type: "number" },
+                      a: { type: "number" },
+                    },
+                  },
+                ],
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("R")).toBeInTheDocument();
+  expect(screen.getByText("G")).toBeInTheDocument();
+  expect(screen.getByText("B")).toBeInTheDocument();
+  expect(screen.getByText("A")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.8")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.4")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("0.2")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("1")).toBeInTheDocument();
+});
+
+test("object pages infer xy preset from numeric point schemas", () => {
+  render(
+    <EditorShell
+      value={{
+        position: {
+          x: 120,
+          y: 48,
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              position: {
+                type: "object",
+                title: "Position",
+                properties: {
+                  x: { type: "number" },
+                  y: { type: "number" },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("X")).toBeInTheDocument();
+  expect(screen.getByText("Y")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("120")).toBeInTheDocument();
+  expect(screen.getByDisplayValue("48")).toBeInTheDocument();
+});
+
 test("object pages honor field-level object projection schemas", () => {
   render(
     <EditorShell
@@ -4448,6 +4884,7 @@ test("reference object pages会沿用映射后的 sourceId schema，正确显示
         "x-editor": {
           display: {
             kind: "image",
+            preset: "large-icon",
           },
         },
       },
@@ -4503,4 +4940,6 @@ test("reference object pages会沿用映射后的 sourceId schema，正确显示
     "src",
     "http://localhost/assets/icons/hero.png",
   );
+  expect(screen.getAllByRole("img", { name: "Icon" })[0]).toHaveClass("reference-preview__image--large-icon");
+  expect(screen.getAllByRole("img", { name: "Icon" })[0].closest(".image-field-editor")).toHaveClass("image-field-editor--large-icon");
 });
