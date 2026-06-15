@@ -130,21 +130,82 @@ const OBJECT_PRESET_FIELDS: Record<EditorObjectPreset, string[]> = {
 function resolveImageDisplayConfig(
   schema: EditorSchema | undefined,
   context: ImagePreviewContext,
+  path?: JsonPath,
 ) {
   const display = schema?.["x-editor"]?.display;
-  const preset = display?.preset;
+  const preset = resolveImageDisplayPreset(schema, path);
   const presetPreview = preset ? IMAGE_PRESET_DEFAULTS[preset][context] : null;
   const preview = display?.preview;
   return {
-    kind: display?.kind ?? (preset ? "image" : undefined),
+    kind: display?.kind ?? (preset ? "image" : inferImageDisplayKind(schema, path)),
     width: preview?.width ?? presetPreview?.width ?? 40,
     height: preview?.height ?? presetPreview?.height ?? preview?.width ?? presetPreview?.width ?? 40,
     fit: preview?.fit ?? presetPreview?.fit ?? "contain",
   };
 }
 
-function resolveImageDisplayPreset(schema: EditorSchema | undefined) {
-  return schema?.["x-editor"]?.display?.preset ?? null;
+function resolveImageDisplayPreset(schema: EditorSchema | undefined, path?: JsonPath) {
+  return schema?.["x-editor"]?.display?.preset ?? inferImageDisplayPreset(schema, path);
+}
+
+function inferImageDisplayKind(schema: EditorSchema | undefined, path?: JsonPath) {
+  return inferImageDisplayPreset(schema, path) ? "image" : undefined;
+}
+
+function inferImageDisplayPreset(
+  schema: EditorSchema | undefined,
+  path?: JsonPath,
+): EditorImageDisplayPreset | null {
+  const hintText = collectImageFieldHints(schema, path);
+  if (hintText.length === 0) {
+    return null;
+  }
+  if (hintText.includes("portrait") || hintText.includes("avatar") || hintText.includes("立绘")) {
+    return "portrait";
+  }
+  if (hintText.includes("background") || hintText.includes("banner") || hintText.includes("背景") || hintText.includes("横幅")) {
+    return "banner";
+  }
+  if (hintText.includes("thumbnail") || hintText.includes("texture")) {
+    return "image";
+  }
+  const fieldName = getImageFieldName(path);
+  if (fieldName === "icon") {
+    return "large-icon";
+  }
+  if (fieldName.endsWith("_icon")) {
+    return "icon";
+  }
+  if (hintText.includes("icon") || hintText.includes("图标")) {
+    return "icon";
+  }
+  if (hintText.includes("image") || hintText.includes("图片") || hintText.includes("图像")) {
+    return "image";
+  }
+  return null;
+}
+
+function collectImageFieldHints(schema: EditorSchema | undefined, path?: JsonPath) {
+  return [
+    schema?.title?.toLowerCase() ?? "",
+    schema?.description?.toLowerCase() ?? "",
+    getImageFieldName(path),
+  ]
+    .filter((entry) => entry.length > 0)
+    .join(" ");
+}
+
+function getImageFieldName(path?: JsonPath) {
+  if (!path?.length) {
+    return "";
+  }
+  for (let index = path.length - 1; index >= 0; index -= 1) {
+    const segment = path[index];
+    if (typeof segment === "string") {
+      return segment.toLowerCase();
+    }
+  }
+  return "";
 }
 
 function getEditorObjectPreset(schema: EditorSchema | undefined): EditorObjectPreset | null {
@@ -3074,8 +3135,8 @@ function renderPrimitiveEditor(props: {
   }
 
   const text = typeof props.value === "string" ? props.value : String(props.value ?? "");
-  const imageDisplay = resolveImageDisplayConfig(props.schema, "field-editor");
-  const imagePreset = resolveImageDisplayPreset(props.schema);
+  const imageDisplay = resolveImageDisplayConfig(props.schema, "field-editor", props.path);
+  const imagePreset = resolveImageDisplayPreset(props.schema, props.path);
   if (typeof props.value === "string" && imageDisplay.kind === "image") {
     return withNullableControls(
       <div
@@ -3086,7 +3147,7 @@ function renderPrimitiveEditor(props: {
         ].filter(Boolean).join(" ")}
       >
         {text.trim().length > 0 ? (
-          <ImagePreview value={text} schema={props.schema} host={props.host} context="field-editor" />
+          <ImagePreview value={text} schema={props.schema} host={props.host} context="field-editor" path={props.path} />
         ) : (
           <span className="image-field-editor__empty">未设置图片</span>
         )}
@@ -4173,16 +4234,16 @@ function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) 
   return false;
 }
 
-function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefined, host?: EditorHost): ReactNode {
+function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefined, host?: EditorHost, path?: JsonPath): ReactNode {
   const display = schema?.["x-editor"]?.display;
-  const imageDisplay = resolveImageDisplayConfig(schema, "inline");
+  const imageDisplay = resolveImageDisplayConfig(schema, "inline", path);
   if (typeof value === "string" && imageDisplay.kind === "image") {
-    return <ImagePreview value={value} schema={schema} host={host} context="inline" />;
+    return <ImagePreview value={value} schema={schema} host={host} context="inline" path={path} />;
   }
   if (typeof value === "string" && (display?.text?.sentenceLimit ?? 0) > 0) {
     return extractLeadingSentences(value, display?.text?.sentenceLimit ?? 1);
   }
-  if (typeof value === "string" && isIconLikeField(schema)) {
+  if (typeof value === "string" && isIconLikeField(schema, path)) {
     return <span className="reference-preview__icon-path">{value}</span>;
   }
   if (Array.isArray(value)) {
@@ -4220,8 +4281,8 @@ function extractLeadingSentences(value: string, sentenceLimit: number) {
   return sentences.slice(0, sentenceLimit).join(" ");
 }
 
-function isImageDisplaySchema(schema: EditorSchema | undefined) {
-  return resolveImageDisplayConfig(schema, "inline").kind === "image";
+function isImageDisplaySchema(schema: EditorSchema | undefined, path?: JsonPath) {
+  return resolveImageDisplayConfig(schema, "inline", path).kind === "image";
 }
 
 function mergeProjectedFieldSchema(targetSchema: EditorSchema | undefined, viewSchema: EditorSchema | undefined): EditorSchema | undefined {
@@ -4253,10 +4314,9 @@ function inferReferenceFieldLabel(schema: EditorSchema | undefined, path: JsonPa
   return schema?.title ?? String(path.at(-1) ?? "value");
 }
 
-function isIconLikeField(schema: EditorSchema | undefined) {
-  const schemaTitle = schema?.title?.toLowerCase() ?? "";
-  const schemaDescription = schema?.description?.toLowerCase() ?? "";
-  return schemaTitle.includes("icon") || schemaDescription.includes("icon");
+function isIconLikeField(schema: EditorSchema | undefined, path?: JsonPath) {
+  const preset = inferImageDisplayPreset(schema, path);
+  return preset === "icon" || preset === "large-icon";
 }
 
 function isNavigable(value: unknown): boolean {
@@ -4264,11 +4324,11 @@ function isNavigable(value: unknown): boolean {
 }
 
 function ImagePreview(
-  { value, schema, host, context = "inline" }: { value: string; schema?: EditorSchema; host?: EditorHost; context?: ImagePreviewContext },
+  { value, schema, host, context = "inline", path }: { value: string; schema?: EditorSchema; host?: EditorHost; context?: ImagePreviewContext; path?: JsonPath },
 ) {
   const [loadFailed, setLoadFailed] = useState(false);
-  const preview = resolveImageDisplayConfig(schema, context);
-  const preset = resolveImageDisplayPreset(schema);
+  const preview = resolveImageDisplayConfig(schema, context, path);
+  const preset = resolveImageDisplayPreset(schema, path);
   const width = preview.width;
   const height = preview.height;
   const fit = preview.fit;

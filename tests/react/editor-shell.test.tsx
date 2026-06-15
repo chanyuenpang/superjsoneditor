@@ -3762,6 +3762,47 @@ test("object pages render large-icon preset with larger featured preview", () =>
   expect(iconPreview.closest(".image-field-editor")).toHaveClass("image-field-editor--large-icon");
 });
 
+test("object pages infer image presets from field semantics without host-injected display config", () => {
+  render(
+    <EditorShell
+      value={{
+        icon: "res://assets/icons/role/player_default.png",
+        portrait: "res://assets/portraits/player_default.png",
+        background_image: "res://assets/backgrounds/sect_hall.png",
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              icon: {
+                type: "string",
+                title: "图标",
+              },
+              portrait: {
+                type: "string",
+                title: "Portrait",
+              },
+              background_image: {
+                type: "string",
+                title: "背景图",
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  const previews = screen.getAllByRole("img");
+  expect(previews[0]).toHaveClass("reference-preview__image--large-icon");
+  expect(previews[0]).toHaveStyle({ width: "128px", height: "128px" });
+  expect(previews[1]).toHaveClass("reference-preview__image--portrait");
+  expect(previews[1]).toHaveStyle({ width: "144px", height: "192px" });
+  expect(previews[2]).toHaveClass("reference-preview__image--banner");
+  expect(previews[2]).toHaveStyle({ width: "192px", height: "72px" });
+});
+
 test("object pages render structured array fields as inline previews with direct cell editing", () => {
   render(
     <EditorShell
