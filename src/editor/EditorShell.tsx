@@ -637,6 +637,10 @@ export function EditorShell({
     });
   }
 
+  function handleJumpToSource(sourceId: string) {
+    handleJump([], sourceId);
+  }
+
   function handleBack() {
     if (shouldCollapseStackFlowToCurrentPage) {
       animationKeyRef.current += 1;
@@ -873,18 +877,19 @@ export function EditorShell({
                     activeChildSegment={undefined}
                     activeReferenceSourceId={undefined}
                     onNavigateUp={!isAtRootPage ? handleBack : undefined}
-                  onNavigate={(nextPath) => handleNavigate(0, nextPath)}
-                  readOnly={readOnly}
-                  onEditModeChange={setIsEditingCurrentPage}
-                  onApplyValue={(nextValue) => {
-                    if (readOnly) return;
-                    setValidationResult(null);
-                    setDocumentsBySourceId((current) => ({
-                      ...current,
-                      [compactSourceId]: setValueAtPath(current[compactSourceId], currentPage.path, nextValue),
-                    }));
-                  }}
-                />
+                    onNavigate={(nextPath) => handleNavigate(0, nextPath)}
+                    onJumpToSource={handleJumpToSource}
+                    readOnly={readOnly}
+                    onEditModeChange={setIsEditingCurrentPage}
+                    onApplyValue={(nextValue) => {
+                      if (readOnly) return;
+                      setValidationResult(null);
+                      setDocumentsBySourceId((current) => ({
+                        ...current,
+                        [compactSourceId]: setValueAtPath(current[compactSourceId], currentPage.path, nextValue),
+                      }));
+                    }}
+                  />
               </section>
                 );
               })()
@@ -947,6 +952,7 @@ export function EditorShell({
                         : undefined
                     }
                     onNavigate={(nextPath) => handleNavigate(index, nextPath)}
+                    onJumpToSource={handleJumpToSource}
                     readOnly={readOnly}
                     onEditModeChange={
                       isCurrent
@@ -1012,6 +1018,7 @@ export function EditorShell({
                     onNavigateUp={visiblePages[0] && (visiblePages[0].path.length > 0 || visiblePages[0].isReference) ? (() => undefined) : undefined}
                     onClosePage={undefined}
                     onNavigate={() => undefined}
+                    onJumpToSource={undefined}
                     onApplyValue={() => undefined}
                     readOnly={readOnly}
                     onEditModeChange={() => undefined}
@@ -1067,6 +1074,7 @@ export function EditorShell({
                     activeReferenceSourceId={undefined}
                     onClosePage={undefined}
                     onNavigate={() => undefined}
+                    onJumpToSource={undefined}
                     onApplyValue={() => undefined}
                     readOnly={readOnly}
                     onEditModeChange={() => undefined}
@@ -1109,6 +1117,7 @@ export function EditorShell({
                   activeReferenceSourceId={undefined}
                   onClosePage={undefined}
                   onNavigate={() => undefined}
+                  onJumpToSource={undefined}
                   onApplyValue={() => undefined}
                   readOnly={readOnly}
                   onEditModeChange={() => undefined}
@@ -1158,6 +1167,7 @@ export function EditorShell({
                   onNavigateUp={undefined}
                   onClosePage={undefined}
                   onNavigate={() => undefined}
+                  onJumpToSource={undefined}
                   onApplyValue={() => undefined}
                   readOnly={readOnly}
                   onEditModeChange={() => undefined}
@@ -1220,6 +1230,7 @@ export function EditorShell({
                         onNavigateUp={undefined}
                         onClosePage={undefined}
                         onNavigate={(nextPath) => handleNavigate(0, nextPath)}
+                        onJumpToSource={handleJumpToSource}
                         readOnly={readOnly}
                         onEditModeChange={setIsEditingCurrentPage}
                         onApplyValue={(nextValue) => {
@@ -1294,6 +1305,7 @@ export function EditorShell({
                         onNavigateUp={undefined}
                         onClosePage={handleCloseRightPage}
                         onNavigate={(nextPath) => handleNavigate(1, nextPath)}
+                        onJumpToSource={handleJumpToSource}
                         readOnly={readOnly}
                         onEditModeChange={setIsEditingCurrentPage}
                         onApplyValue={(nextValue) => {
@@ -1339,6 +1351,7 @@ export function EditorShell({
                       activeReferenceSourceId={undefined}
                       onClosePage={undefined}
                       onNavigate={() => undefined}
+                      onJumpToSource={undefined}
                       onApplyValue={() => undefined}
                     />
                   </section>

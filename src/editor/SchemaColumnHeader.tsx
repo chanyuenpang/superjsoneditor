@@ -35,6 +35,8 @@ const clickMenuOpenThresholdMs = 300;
 export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [renameDraft, setRenameDraft] = useState(props.label);
+  const [isRenameComposing, setIsRenameComposing] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const widthRef = useRef(props.width);
@@ -60,6 +62,11 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
   useEffect(() => {
     widthRef.current = props.width;
   }, [props.width]);
+
+  useEffect(() => {
+    if (!menuOpen || isRenameComposing) return;
+    setRenameDraft(props.label);
+  }, [isRenameComposing, menuOpen, props.label]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -231,6 +238,14 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
     });
   }
 
+  function commitRenameLabel(nextLabel: string) {
+    const normalizedLabel = nextLabel.trim().length ? nextLabel : "";
+    if (normalizedLabel === props.label) {
+      return;
+    }
+    runDialogAction(() => props.onRenameLabel(normalizedLabel));
+  }
+
   return (
     <div
       className={`column-header ${props.pressed ? "is-column-pressed" : ""} ${props.isDragging ? "is-column-dragging" : ""}`}
@@ -276,9 +291,26 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
               className="schema-column-menu__input"
               placeholder="Column label"
               type="text"
-              value={props.label}
+              value={renameDraft}
               onChange={(event) => {
-                runDialogAction(() => props.onRenameLabel(event.target.value));
+                const nextLabel = event.target.value;
+                setRenameDraft(nextLabel);
+                if (!isRenameComposing) {
+                  commitRenameLabel(nextLabel);
+                }
+              }}
+              onBlur={(event) => {
+                setRenameDraft(event.target.value);
+                if (!isRenameComposing) {
+                  commitRenameLabel(event.target.value);
+                }
+              }}
+              onCompositionStart={() => setIsRenameComposing(true)}
+              onCompositionEnd={(event) => {
+                const nextLabel = event.currentTarget.value;
+                setIsRenameComposing(false);
+                setRenameDraft(nextLabel);
+                commitRenameLabel(nextLabel);
               }}
             />
           </label>

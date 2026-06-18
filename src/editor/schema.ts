@@ -36,6 +36,8 @@ export type EditorViewOptionsSource = {
   valueField: string;
   labelField?: string;
   colorField?: string;
+  descriptionField?: string;
+  previewField?: string;
 };
 
 export type EditorTableColumn = {
@@ -53,7 +55,7 @@ export type EditorObjectPreset = "xy" | "xyz" | "rgba";
 export type EditorSchemaUi = {
   className?: string | string[];
   group?: string;
-  fieldType?: "select" | "multi-select" | "textarea";
+  fieldType?: "select" | "multi-select" | "textarea" | "asset-picker";
   options?: EditorViewOption[];
   optionsSource?: EditorViewOptionsSource;
   reference?: EditorReferenceSchema;

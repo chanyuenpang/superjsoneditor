@@ -9,6 +9,8 @@ export type SchemaOptionItem = {
   value: SchemaOptionValue;
   label: string;
   color: EditorViewOptionColor | null;
+  description?: string;
+  preview?: string;
 };
 
 type SchemaOptionFieldEditorProps = {

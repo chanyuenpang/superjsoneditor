@@ -1120,6 +1120,29 @@ test("references can navigate into a different source document", () => {
   expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
 });
 
+test("reference object pages apply ref-scope header styling after navigation", () => {
+  const { container } = render(
+    <EditorShell
+      documents={{
+        main: { profile: { companion: "asset://characters/hero.json" } },
+        "asset://characters/hero.json": { id: "hero", stats: { hp: 10 } },
+      }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://characters/hero.json" ? { id: "hero", stats: { hp: 10 } } : undefined;
+        },
+      }}
+      rootSourceId="main"
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+  fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
+
+  expect(getCurrentPageQueries().getByDisplayValue("hero")).toBeInTheDocument();
+  expect(container.querySelector(".stack-page.is-current .node-page--object .detail-header--page.detail-header--ref-scope-1")).not.toBeNull();
+});
+
 test("reference projection renders configured fields in object view", () => {
   const characterSchema: EditorSchema = {
     type: "object",
@@ -1450,6 +1473,13 @@ test("reference projection renders select labels in root array view", () => {
       if (path.length === 0) {
         return {
           type: "array",
+          "x-editor": {
+            table: {
+              columns: [
+                { key: "rarity" },
+              ],
+            },
+          },
           items: {
             type: "string",
             "x-editor": {
@@ -1493,6 +1523,121 @@ test("reference projection renders select labels in root array view", () => {
   const rarityCell = screen.getByText("普通").closest("td");
   expect(rarityCell).not.toBeNull();
   expect(within(rarityCell as HTMLElement).getByText("普通")).toHaveClass("chip");
+});
+
+test("reference projection root array columns fall back to target schema for key-only select and bool fields missing from the shared row schema", () => {
+  const settlementSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      id: { type: "string", title: "ID" },
+      name: { type: "string", title: "名称" },
+      settlement_type: {
+        title: "据点类型",
+        $ref: "settlement_type.schema.json",
+      },
+      unique: {
+        type: "boolean",
+        title: "唯一",
+      },
+    },
+  };
+  const settlementTypeSchema: EditorSchema = {
+    type: "integer",
+    title: "据点类型",
+    "x-editor": {
+      fieldType: "select",
+      options: [
+        { value: 0, label: "TOWN" },
+        { value: 1, label: "STRONGHOLD" },
+      ],
+    },
+  };
+  const sharedReferenceRowSchema: EditorSchema = {
+    type: "object",
+    properties: {
+      id: {
+        type: "string",
+        title: "ID",
+        "x-editor": {
+          projection: { path: ["id"] },
+        },
+      },
+      name: {
+        type: "string",
+        title: "名称",
+        "x-editor": {
+          projection: { path: ["name"] },
+        },
+      },
+    },
+  };
+  const schemaHost: EditorSchemaHost = {
+    getSchema({ path }) {
+      if (path.length === 0) {
+        return {
+          type: "array",
+          "x-editor": {
+            table: {
+              columns: [
+                { key: "id" },
+                { key: "name" },
+                { key: "settlement_type" },
+                { key: "unique" },
+              ],
+            },
+          },
+          items: {
+            type: "string",
+            "x-editor": {
+              reference: {
+                target: { schemaRef: "settlement" },
+                view: {
+                  layout: "inline",
+                  schemaRef: "resource_reference_row",
+                },
+              },
+            },
+          },
+        };
+      }
+      return undefined;
+    },
+    getNamedSchema(name) {
+      if (name === "settlement") return settlementSchema;
+      if (name === "settlement_type.schema.json") return settlementTypeSchema;
+      if (name === "resource_reference_row") return sharedReferenceRowSchema;
+      return undefined;
+    },
+  };
+
+  render(
+    <EditorShell
+      value={["asset://settlement/qingshi_town.json"]}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://settlement/qingshi_town.json"
+            ? {
+              id: "qingshi_town",
+              name: "青石镇",
+              settlement_type: 0,
+              unique: true,
+            }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("columnheader", { name: "据点类型" })).toBeInTheDocument();
+  const settlementTypeCell = screen.getByText("TOWN").closest("td");
+  expect(settlementTypeCell).not.toBeNull();
+  expect(within(settlementTypeCell as HTMLElement).getByText("TOWN")).toHaveClass("chip");
+  expect(screen.queryByText("0")).toBeNull();
+  const uniqueCheckbox = screen.getByRole("checkbox", { name: "唯一" });
+  expect(uniqueCheckbox).toBeChecked();
+  expect(uniqueCheckbox).toBeDisabled();
+  expect(screen.getByText("True")).toBeInTheDocument();
 });
 
 test("reference projection image display respects configured preview size", () => {
@@ -2116,6 +2261,683 @@ test("array object rows render inner multi-select fields as inline editors by de
   const selectedValues = within(screen.getByLabelText(/Array item 0 Tags selected values/i));
   expect(selectedValues.getByText("Fire")).toBeInTheDocument();
   expect(selectedValues.getByText("Boss")).toBeInTheDocument();
+});
+
+test("asset-picker renders single image selections with preview viewer and picker metadata", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          icon: {
+            type: "string",
+            title: "Icon",
+            "x-editor": {
+              fieldType: "asset-picker",
+              optionsSource: {
+                kind: "json-file",
+                uri: "asset://editor-picker/image.json",
+                valueField: "value",
+                labelField: "text",
+                descriptionField: "path",
+                previewField: "preview",
+              },
+              display: {
+                kind: "image",
+                preset: "large-icon",
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(
+    <EditorShell
+      value={{ icon: "res://assets/icons/role/player_default.png" }}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://editor-picker/image.json"
+            ? [{
+              value: "res://assets/icons/role/player_default.png",
+              text: "player_default.png",
+              path: "res://assets/icons/role/player_default.png",
+              preview: "res://assets/icons/role/player_default.png",
+            }]
+            : undefined;
+        },
+        resolveDisplayUrl(value) {
+          return value.replace("res://", "http://localhost/");
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("img", { name: "Icon" })).toHaveAttribute(
+    "src",
+    "http://localhost/assets/icons/role/player_default.png",
+  );
+  expect(screen.getByText("res://assets/icons/role/player_default.png")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "打开 Icon 图片浏览" })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /Field Icon/i }));
+  await waitFor(() => {
+    expect(screen.getByLabelText(/Field Icon 搜索/i)).toBeInTheDocument();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "打开 Icon 图片浏览" }));
+  expect(screen.getByRole("dialog", { name: "Icon 图片浏览" })).toBeInTheDocument();
+});
+
+test("asset-picker renders multi string arrays as array rows with add flow", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          role_ids: {
+            type: "array",
+            title: "角色",
+            items: { type: "string" },
+            "x-editor": {
+              fieldType: "asset-picker",
+              optionsSource: {
+                kind: "json-file",
+                uri: "asset://schema-data-resource-options/role.json",
+                valueField: "value",
+                labelField: "text",
+                descriptionField: "value",
+              },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  render(
+    <EditorShell
+      value={{ role_ids: ["npc_mortal_realm_innkeeper"] }}
+      schemaHost={schemaHost}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://schema-data-resource-options/role.json"
+            ? [
+              { value: "npc_mortal_realm_innkeeper", text: "客栈老板" },
+              { value: "npc_guard_captain", text: "守卫队长" },
+            ]
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("客栈老板")).toBeInTheDocument();
+  expect(screen.getByText("npc_mortal_realm_innkeeper")).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: /添加 Field 角色/i }));
+  fireEvent.pointerDown(screen.getByRole("button", { name: /守卫队长/i }));
+
+  await waitFor(() => {
+    expect(screen.getAllByText("守卫队长").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("npc_guard_captain").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+test("implicit res asset strings without schema editor metadata still render as asset picker cards", async () => {
+  render(
+    <EditorShell
+      value={{ scene: "res://scenes/ui/facility/specific/inn_facility.tscn" }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://editor-picker/tscn.json"
+            ? [{
+              value: "res://scenes/ui/facility/specific/inn_facility.tscn",
+              text: "inn_facility.tscn",
+              path: "res://scenes/ui/facility/specific/inn_facility.tscn",
+            }]
+            : undefined;
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              scene: {
+                type: "string",
+                title: "场景",
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: /Field 场景/i })).toBeInTheDocument();
+  expect(screen.getByText("inn_facility.tscn")).toBeInTheDocument();
+  expect(screen.getByText("res://scenes/ui/facility/specific/inn_facility.tscn")).toBeInTheDocument();
+  expect(screen.queryByDisplayValue("res://scenes/ui/facility/specific/inn_facility.tscn")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /Field 场景/i }));
+  await waitFor(() => {
+    expect(screen.getByLabelText(/Field 场景 搜索/i)).toBeInTheDocument();
+    expect(screen.getAllByText("inn_facility.tscn").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+test("reference fields render searchable picker cards instead of native select", async () => {
+  render(
+    <EditorShell
+      documents={{
+        main: { facility: "asset://facility/inn.json" },
+        "resource/facility/inn": {
+          id: "inn",
+          name: "客栈",
+        },
+        "resource/facility/blacksmith": {
+          id: "blacksmith",
+          name: "铁匠铺",
+        },
+      }}
+      host={{
+        getReferenceOptions() {
+          return [
+            {
+              value: "asset://facility/inn.json",
+              label: "客栈",
+              description: "asset://facility/inn.json",
+            },
+            {
+              value: "asset://facility/blacksmith.json",
+              label: "铁匠铺",
+              description: "asset://facility/blacksmith.json",
+            },
+          ];
+        },
+        loadReferenceSource(uri) {
+          if (uri === "asset://facility/inn.json") {
+            return { id: "inn", name: "客栈" };
+          }
+          if (uri === "asset://facility/blacksmith.json") {
+            return { id: "blacksmith", name: "铁匠铺" };
+          }
+          return undefined;
+        },
+        resolveReferenceSourceId(uri) {
+          if (uri === "asset://facility/inn.json") {
+            return "resource/facility/inn";
+          }
+          if (uri === "asset://facility/blacksmith.json") {
+            return "resource/facility/blacksmith";
+          }
+          return undefined;
+        },
+      }}
+      schemaHost={{
+        getSchema(context) {
+          if (context.sourceId === "resource/facility/inn" || context.sourceId === "resource/facility/blacksmith") {
+            return {
+              type: "object",
+              properties: {
+                id: { type: "string", readOnly: true },
+                name: { type: "string" },
+              },
+            };
+          }
+          return {
+            type: "object",
+            properties: {
+              facility: {
+                type: "string",
+                title: "设施",
+                "x-editor": {
+                  reference: {
+                    kind: "resource",
+                    types: ["facility"],
+                    target: {
+                      schemaRef: "facility",
+                    },
+                    view: {
+                      layout: "inline",
+                      schemaRef: "resource_reference_row",
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getAllByText("客栈").length).toBeGreaterThanOrEqual(1);
+  expect(screen.getByText("asset://facility/inn.json")).toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: /Field 设施/i })).toBeNull();
+  expect(screen.getByRole("button", { name: /Open Field 设施/i })).toBeEnabled();
+
+  fireEvent.click(screen.getByRole("button", { name: /^Field 设施$/i }));
+  await waitFor(() => {
+    expect(screen.getByLabelText(/Field 设施 搜索/i)).toBeInTheDocument();
+  });
+  fireEvent.pointerDown(screen.getByRole("button", { name: /铁匠铺/i }));
+
+  await waitFor(() => {
+    expect(screen.getAllByText("铁匠铺").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("asset://facility/blacksmith.json").length).toBeGreaterThanOrEqual(1);
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /Open Field 设施/i }));
+  await waitFor(() => {
+    expect(screen.getByDisplayValue("blacksmith")).toBeInTheDocument();
+  });
+});
+
+test("reference array items inside documents keep picker rows but不再提供额外打开按钮", async () => {
+  render(
+    <EditorShell
+      documents={{
+        main: {
+          facilities: ["asset://facility/inn.json"],
+        },
+        "resource/facility/inn": {
+          id: "inn",
+          name: "客栈",
+        },
+        "resource/facility/blacksmith": {
+          id: "blacksmith",
+          name: "铁匠铺",
+        },
+      }}
+      host={{
+        getReferenceOptions() {
+          return [
+            {
+              value: "asset://facility/inn.json",
+              label: "客栈",
+              description: "asset://facility/inn.json",
+            },
+            {
+              value: "asset://facility/blacksmith.json",
+              label: "铁匠铺",
+              description: "asset://facility/blacksmith.json",
+            },
+          ];
+        },
+        loadReferenceSource(uri) {
+          if (uri === "asset://facility/inn.json") {
+            return { id: "inn", name: "客栈" };
+          }
+          if (uri === "asset://facility/blacksmith.json") {
+            return { id: "blacksmith", name: "铁匠铺" };
+          }
+          return undefined;
+        },
+        resolveReferenceSourceId(uri) {
+          if (uri === "asset://facility/inn.json") {
+            return "resource/facility/inn";
+          }
+          if (uri === "asset://facility/blacksmith.json") {
+            return "resource/facility/blacksmith";
+          }
+          return undefined;
+        },
+      }}
+      schemaHost={{
+        getSchema(context) {
+          if (context.sourceId === "resource/facility/inn" || context.sourceId === "resource/facility/blacksmith") {
+            return {
+              type: "object",
+              properties: {
+                id: { type: "string", readOnly: true },
+                name: { type: "string" },
+              },
+            };
+          }
+          return {
+            type: "object",
+            properties: {
+              facilities: {
+                type: "array",
+                title: "设施列表",
+                items: {
+                  type: "string",
+                  "x-editor": {
+                    reference: {
+                      kind: "resource",
+                      types: ["facility"],
+                      target: {
+                        schemaRef: "facility",
+                      },
+                      view: {
+                        layout: "inline",
+                        schemaRef: "resource_reference_row",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /facilities array 1 items/i }));
+  expect(screen.getByRole("button", { name: /^Array item 0$/i })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Open Array item 0/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /facility reference asset:\/\/facility\/inn\.json/i })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /^Array item 0$/i }));
+  await waitFor(() => {
+    expect(screen.getByLabelText(/Array item 0 搜索/i)).toBeInTheDocument();
+  });
+  fireEvent.pointerDown(screen.getByRole("button", { name: /铁匠铺/i }));
+
+  await waitFor(() => {
+    expect(screen.getAllByText("铁匠铺").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("asset://facility/blacksmith.json").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+test("object 视图中的非 JSON 资产引用只保留 picker，不显示打开按钮", async () => {
+  render(
+    <EditorShell
+      documents={{
+        main: {
+          entry_map: "res://data/terrain_configs/test_map.tres",
+        },
+        "resource/terrain_config/test_map": {
+          id: "test_map",
+          name: "测试地图",
+        },
+      }}
+      host={{
+        getReferenceOptions() {
+          return [
+            {
+              value: "res://data/terrain_configs/test_map.tres",
+              label: "测试地图",
+              description: "res://data/terrain_configs/test_map.tres",
+            },
+          ];
+        },
+        loadReferenceSource(uri) {
+          return uri === "res://data/terrain_configs/test_map.tres"
+            ? { id: "test_map", name: "测试地图" }
+            : undefined;
+        },
+        resolveReferenceSourceId(uri) {
+          return uri === "res://data/terrain_configs/test_map.tres"
+            ? "resource/terrain_config/test_map"
+            : undefined;
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              entry_map: {
+                type: "string",
+                title: "入口地图",
+                "x-editor": {
+                  reference: {
+                    kind: "resource",
+                    types: ["terrain_config"],
+                    target: {
+                      schemaRef: "terrain_config",
+                    },
+                    view: {
+                      layout: "inline",
+                      schemaRef: "resource_reference_row",
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByText("res://data/terrain_configs/test_map.tres")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Open Field 入口地图/i })).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /^Field 入口地图$/i }));
+  await waitFor(() => {
+    expect(screen.getByLabelText(/Field 入口地图 搜索/i)).toBeInTheDocument();
+  });
+});
+
+test("array 视图在列 schema 缺省时默认复用 object schema，terrain 引用列显示颜色摘要而不是 4 fields", async () => {
+  render(
+    <EditorShell
+      value={["res://data/terrain_configs/test_map.tres"]}
+      schemaHost={{
+        getSchema({ path }) {
+          if (path.length === 0) {
+            return {
+              type: "array",
+              items: {
+                type: "string",
+                title: "地图",
+                "x-editor": {
+                  reference: {
+                    kind: "resource",
+                    types: ["terrain_config"],
+                    target: {
+                      schemaRef: "terrain_config",
+                    },
+                    view: {
+                      layout: "inline",
+                      schemaRef: "terrain_row",
+                    },
+                  },
+                },
+              },
+            };
+          }
+          return undefined;
+        },
+        getNamedSchema(name) {
+          if (name === "terrain_config") {
+            return {
+              type: "object",
+              properties: {
+                name: { type: "string", title: "地图名" },
+                tint: {
+                  type: "object",
+                  title: "地表色",
+                  "x-editor": {
+                    object: {
+                      preset: "rgba",
+                    },
+                  },
+                  properties: {
+                    r: { type: "number", title: "R" },
+                    g: { type: "number", title: "G" },
+                    b: { type: "number", title: "B" },
+                    a: { type: "number", title: "A" },
+                  },
+                },
+                icon: {
+                  type: "string",
+                  title: "缩略图",
+                  "x-editor": {
+                    display: {
+                      kind: "image",
+                    },
+                  },
+                },
+              },
+            };
+          }
+          if (name === "terrain_row") {
+            return {
+              type: "object",
+              properties: {
+                name: {
+                  type: "string",
+                  title: "地图名",
+                  "x-editor": {
+                    projection: { path: ["name"] },
+                  },
+                },
+                tint: {
+                  type: "object",
+                  title: "地表色",
+                  "x-editor": {
+                    projection: { path: ["tint"] },
+                  },
+                },
+                icon: {
+                  type: "string",
+                  title: "缩略图",
+                  "x-editor": {
+                    projection: { path: ["icon"] },
+                  },
+                },
+              },
+            };
+          }
+          return undefined;
+        },
+      }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "res://data/terrain_configs/test_map.tres"
+            ? {
+              name: "测试地图",
+              tint: {
+                r: 0.91,
+                g: 0.3,
+                b: 0.24,
+                a: 1,
+              },
+              icon: "res://assets/icons/test_map.png",
+            }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getByRole("columnheader", { name: "地图名" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "地表色" })).toBeInTheDocument();
+  expect(screen.getByRole("columnheader", { name: "缩略图" })).toBeInTheDocument();
+  expect(screen.getByText("测试地图")).toBeInTheDocument();
+  expect(screen.getByText("#E84D3D")).toBeInTheDocument();
+  expect(document.querySelector(".array-color-summary__swatch")).not.toBeNull();
+  expect(screen.getByRole("img", { name: "缩略图" })).toHaveAttribute("src", "res://assets/icons/test_map.png");
+  expect(screen.queryByText("4 fields")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Open Array item 0/i })).toBeNull();
+});
+
+test("reference arrays expose inline add picker together with create-resource entry", async () => {
+  const createReferenceRow = vi.fn(async () => "asset://facility/new_facility.json");
+
+  render(
+    <EditorShell
+      documents={{
+        main: {
+          facilities: ["asset://facility/inn.json"],
+        },
+        "resource/facility/inn": {
+          id: "inn",
+          name: "客栈",
+        },
+        "resource/facility/blacksmith": {
+          id: "blacksmith",
+          name: "铁匠铺",
+        },
+      }}
+      host={{
+        createReferenceRow,
+        getReferenceOptions() {
+          return [
+            {
+              value: "asset://facility/inn.json",
+              label: "客栈",
+              description: "asset://facility/inn.json",
+            },
+            {
+              value: "asset://facility/blacksmith.json",
+              label: "铁匠铺",
+              description: "asset://facility/blacksmith.json",
+            },
+          ];
+        },
+        loadReferenceSource(uri) {
+          if (uri === "asset://facility/inn.json") {
+            return { id: "inn", name: "客栈" };
+          }
+          if (uri === "asset://facility/blacksmith.json") {
+            return { id: "blacksmith", name: "铁匠铺" };
+          }
+          return undefined;
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              facilities: {
+                type: "array",
+                title: "设施列表",
+                items: {
+                  type: "string",
+                  "x-editor": {
+                    reference: {
+                      kind: "resource",
+                      types: ["facility"],
+                      target: {
+                        schemaRef: "facility",
+                      },
+                      view: {
+                        layout: "inline",
+                        schemaRef: "resource_reference_row",
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /facilities array 1 items/i }));
+  fireEvent.click(screen.getAllByRole("button", { name: /^Edit$/i }).at(-1) as HTMLElement);
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /添加引用/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /新建资源/i })).toBeInTheDocument();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /添加引用/i }));
+  await waitFor(() => {
+    expect(screen.getByLabelText(/添加引用 搜索/i)).toBeInTheDocument();
+  });
+  fireEvent.pointerDown(screen.getByRole("button", { name: /铁匠铺/i }));
+
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /^Array item 1$/i })).toBeInTheDocument();
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /新建资源/i }));
+  await waitFor(() => {
+    expect(createReferenceRow).toHaveBeenCalledTimes(1);
+  });
 });
 
 test("json-backed select options validate and render labels while preserving literal values", async () => {
@@ -2824,6 +3646,51 @@ test("schema authoring columns manager can add hidden object-array columns while
     { key: "title", sortable: true },
     { key: "id", label: "Quest ID" },
     { key: "hp" },
+  ]);
+});
+
+test("array 视图的 column 改名在中文输入法合成结束前不会提前提交", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "title" },
+        ],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        title: { type: "string", title: "Title" },
+      },
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[
+        { title: "First Quest" },
+      ]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Title" }));
+  const renameInput = screen.getByLabelText("Column label for Title");
+
+  fireEvent.compositionStart(renameInput);
+  fireEvent.change(renameInput, { target: { value: "标" } });
+
+  expect(renameInput).toHaveValue("标");
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
+    { key: "title" },
+  ]);
+
+  fireEvent.compositionEnd(renameInput, { data: "标" });
+
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
+    { key: "title", label: "标" },
   ]);
 });
 
@@ -4126,6 +4993,58 @@ test("object pages render large-icon preset with larger featured preview", () =>
   expect(iconPreview.closest(".image-field-editor")).toHaveClass("image-field-editor--large-icon");
 });
 
+test("object image previews open centered viewer with zoom controls and wheel scaling", () => {
+  render(
+    <EditorShell
+      value={{ icon: "res://assets/icons/role/player_default.png" }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              icon: {
+                type: "string",
+                title: "Icon",
+                "x-editor": {
+                  display: {
+                    kind: "image",
+                    preset: "large-icon",
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("img", { name: "Icon" }));
+
+  const dialog = screen.getByRole("dialog", { name: "Icon 图片浏览" });
+  const dialogQueries = within(dialog);
+  expect(dialogQueries.getByRole("button", { name: "放大图片" })).toBeTruthy();
+  expect(dialogQueries.getByRole("button", { name: "缩小图片" })).toBeTruthy();
+  expect(dialogQueries.getByRole("button", { name: "恢复图片大小" })).toBeTruthy();
+  expect(dialogQueries.getByRole("button", { name: "关闭图片浏览" })).toBeTruthy();
+  expect(dialogQueries.getByRole("button", { name: "放大图片" }).closest(".image-viewer__toolbar")?.parentElement).toBe(dialog);
+
+  const viewerImage = dialogQueries.getByRole("img", { name: "Icon" });
+  expect(viewerImage).toHaveStyle({ transform: "scale(1)" });
+
+  fireEvent.click(dialogQueries.getByRole("button", { name: "放大图片" }));
+  expect(viewerImage).toHaveStyle({ transform: "scale(1.25)" });
+
+  fireEvent.wheel(viewerImage, { deltaY: -100 });
+  expect(viewerImage).toHaveStyle({ transform: "scale(1.5)" });
+
+  fireEvent.click(dialogQueries.getByRole("button", { name: "恢复图片大小" }));
+  expect(viewerImage).toHaveStyle({ transform: "scale(1)" });
+
+  fireEvent.click(dialogQueries.getByRole("img", { name: "Icon" }).closest(".image-viewer__viewport") as HTMLElement);
+  expect(screen.queryByRole("dialog", { name: "Icon 图片浏览" })).toBeNull();
+});
+
 test("object pages infer image presets from field semantics without host-injected display config", () => {
   render(
     <EditorShell
@@ -4406,7 +5325,7 @@ test("object inline array previews keep reference cells as compact summaries ins
   expect(screen.queryByText("产地：矿山 用途：冶炼铜器")).toBeNull();
 });
 
-test("object inline array previews render rgba preset objects as inline compact projections", () => {
+test("object inline array previews render rgba preset objects as swatch plus color value summaries", () => {
   render(
     <EditorShell
       value={{
@@ -4471,15 +5390,109 @@ test("object inline array previews render rgba preset objects as inline compact 
   );
 
   expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
-  expect(screen.getByText("R")).toBeInTheDocument();
-  expect(screen.getByText("G")).toBeInTheDocument();
-  expect(screen.getByText("B")).toBeInTheDocument();
-  expect(screen.getByText("A")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("0.91")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("0.3")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("0.24")).toBeInTheDocument();
-  expect(screen.getByDisplayValue("1")).toBeInTheDocument();
+  expect(screen.getByText("#E84D3D")).toBeInTheDocument();
+  expect(document.querySelector(".array-color-summary__swatch")).not.toBeNull();
+  expect(screen.queryByDisplayValue("0.91")).toBeNull();
+  expect(screen.queryByDisplayValue("0.3")).toBeNull();
+  expect(screen.queryByDisplayValue("0.24")).toBeNull();
   expect(screen.queryByText("4 items")).toBeNull();
+});
+
+test("object reference fields render compact inline projections without field labels", () => {
+  const { container } = render(
+    <EditorShell
+      value={{
+        effect: "asset://buff/heal_small.json",
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              effect: {
+                type: "string",
+                title: "效果",
+                "x-editor": {
+                  reference: {
+                    kind: "resource",
+                    target: {
+                      schemaRef: "buff",
+                    },
+                    view: {
+                      layout: "inline",
+                      schemaRef: "resource_reference_row",
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+        getNamedSchema(name) {
+          if (name === "buff") {
+            return {
+              type: "object",
+              properties: {
+                id: { type: "string", title: "ID" },
+                name: { type: "string", title: "名称" },
+                description: { type: "string", title: "说明" },
+              },
+            };
+          }
+          if (name === "resource_reference_row") {
+            return {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  title: "ID",
+                  "x-editor": {
+                    projection: { path: ["id"] },
+                  },
+                },
+                name: {
+                  type: "string",
+                  title: "名称",
+                  "x-editor": {
+                    projection: { path: ["name"] },
+                  },
+                },
+                description: {
+                  type: "string",
+                  title: "说明",
+                  "x-editor": {
+                    projection: { path: ["description"] },
+                  },
+                },
+              },
+            };
+          }
+          return undefined;
+        },
+      }}
+      host={{
+        loadReferenceSource(uri) {
+          return uri === "asset://buff/heal_small.json"
+            ? {
+              id: "heal_small",
+              name: "小型治疗",
+              description: "恢复少量生命值",
+            }
+            : undefined;
+        },
+      }}
+    />,
+  );
+
+  const button = container.querySelector(".node-page--object .nested-entry-button.tone-reference");
+  const compact = button?.querySelector(".reference-preview__compact");
+
+  expect(button).not.toBeNull();
+  expect(compact).not.toBeNull();
+  expect(screen.getByText("小型治疗")).toBeInTheDocument();
+  expect(screen.queryByText("名称")).toBeNull();
+  expect(screen.queryByText("说明")).toBeNull();
+  expect(screen.getByText("恢复少量生命值")).toBeInTheDocument();
 });
 
 test("object pages keep plain arrays as navigable entries when schema does not declare table or reference preview", () => {
@@ -4712,6 +5725,62 @@ test("object pages render rgba preset objects as compact inline editors", () => 
   expect(screen.getByDisplayValue("0.5")).toBeInTheDocument();
   expect(screen.getByDisplayValue("0.25")).toBeInTheDocument();
   expect(screen.getByDisplayValue("0.75")).toBeInTheDocument();
+});
+
+test("object pages expose rgba color pickers that sync rgb channels and preserve alpha", () => {
+  const { container } = render(
+    <EditorShell
+      value={{
+        effect_color: {
+          r: 1,
+          g: 0.5,
+          b: 0.25,
+          a: 0.75,
+        },
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "object",
+            properties: {
+              effect_color: {
+                type: "object",
+                title: "Effect Color",
+                "x-editor": {
+                  object: {
+                    preset: "rgba",
+                  },
+                },
+                properties: {
+                  r: { type: "number" },
+                  g: { type: "number" },
+                  b: { type: "number" },
+                  a: { type: "number" },
+                },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  const picker = screen.getByLabelText("Effect Color color picker");
+  const projection = container.querySelector(".node-page--object .object-field-projection--rgba");
+  const firstCell = projection?.querySelector(".object-field-projection__cell");
+  expect(picker).toHaveValue("#ff8040");
+  expect(container.querySelector(".object-field-projection__rgba-control")).toBeNull();
+  expect(firstCell?.querySelector('input[type="color"]')).toBe(picker);
+  expect(firstCell).toHaveClass("object-field-projection__cell--rgba-picker");
+
+  fireEvent.change(picker, { target: { value: "#000000" } });
+
+  expect(screen.getByLabelText("Effect Color R")).toHaveValue(0);
+  expect(screen.getByLabelText("Effect Color G")).toHaveValue(0);
+  expect(screen.getByLabelText("Effect Color B")).toHaveValue(0);
+  expect(screen.getByDisplayValue("0.75")).toBeInTheDocument();
+  expect(screen.queryByDisplayValue("0.5")).toBeNull();
+  expect(screen.queryByDisplayValue("0.25")).toBeNull();
 });
 
 test("object pages resolve rgba preset from union object branches", () => {

@@ -215,6 +215,19 @@ Raw JSON 模式仍然保留，但它是一个 **host 可选开关能力**，而�
 
 因此，编辑器仍需保留清晰的字段级与文档级错误展示。
 
+### 7.2.1 视图 schema 默认复用规则
+
+在同一 field 同时出现在 `object` 视图与 `array` 视图时，编辑器默认遵循“先复用、后覆盖”的 schema 规则：
+
+- 如果 `array` 视图没有为该 field 单独提供列级 schema，则默认复用 `object` schema
+- 复用范围包括：
+  - `x-editor.object.preset`
+  - `x-editor.display`
+  - field 级对象投影 schema
+- 如果 `array` 视图显式声明了更具体的 schema，则以 `array` 侧为准
+
+这样可以避免宿主为了同一个 field，在 object / array 两个视图里重复维护两份等价 schema。
+
 ### 7.3 Raw 模式属于高级能力
 
 Raw 模式不应默认等同于主编辑路径。

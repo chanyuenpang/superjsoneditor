@@ -5,7 +5,7 @@ import { getValueAtPath, setValueAtPath } from "../core/document";
 import { createPortal } from "react-dom";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
-import { getReferenceLabel, getReferenceUri, isReferenceValue, resolveReferenceDocument, type EditorHost, type ReferenceErrorInfo } from "./host";
+import { getReferenceLabel, getReferenceUri, isReferenceValue, resolveReferenceDocument, type EditorHost, type EditorReferenceOption, type ReferenceErrorInfo } from "./host";
 import {
   buildPreviewOrderFromSlots,
   collectColumnSlots,
@@ -31,10 +31,14 @@ import {
   type EditorViewOptionColor,
 } from "./schema";
 import { SchemaColumnHeader } from "./SchemaColumnHeader";
+import { AssetPickerFieldEditor } from "./AssetPickerFieldEditor";
 import { SchemaOptionFieldEditor } from "./SchemaOptionFieldEditor";
 import { icons } from "./icons";
 
 const MAX_INLINE_ARRAY_PREVIEW_COLUMNS = 3;
+const IMAGE_VIEWER_SCALE_STEP = 0.25;
+const IMAGE_VIEWER_MIN_SCALE = 0.25;
+const IMAGE_VIEWER_MAX_SCALE = 5;
 
 type ValueInspectorProps = {
   value: unknown;
@@ -66,6 +70,7 @@ type ValueInspectorProps = {
   onNavigateUp?: () => void;
   onClosePage?: () => void;
   onNavigate: (path: JsonPath) => void;
+  onJumpToSource?: (sourceId: string) => void;
   onApplyValue: (nextValue: unknown) => void;
   onEditModeChange?: (isEditing: boolean) => void;
   toolbarPortalHost?: HTMLElement | null;
@@ -425,6 +430,7 @@ function renderInlineObjectProjection(props: {
   projectionMetadataByKey?: Record<string, Record<string, unknown>>;
   projectionMetadataSchema?: EditorSchema;
   onNavigate: (path: JsonPath) => void;
+  onJumpToSource?: (sourceId: string) => void;
   onChange: (nextValue: Record<string, unknown>) => void;
 }) {
   const {
@@ -441,6 +447,7 @@ function renderInlineObjectProjection(props: {
     projectionMetadataByKey,
     projectionMetadataSchema,
     onNavigate,
+    onJumpToSource,
     onChange,
   } = props;
 
@@ -469,6 +476,7 @@ function renderInlineObjectProjection(props: {
           projectionMetadataByKey: resolvedProjectionMetadataByKey,
           projectionMetadataSchema,
           onNavigate,
+          onJumpToSource,
           onChange,
         })
         : renderProjectedObjectFieldEditor({
@@ -483,6 +491,7 @@ function renderInlineObjectProjection(props: {
           objectPreset: props.objectPreset,
           resolveNamedSchema,
           onNavigate,
+          onJumpToSource,
           onChange,
         })}
     </div>
@@ -497,7 +506,7 @@ function getInlineArrayPreviewConfig(
 ) {
   const itemSchema = schema?.items;
   const referenceViewSchema = resolveReferenceViewSchema(itemSchema, resolveNamedSchema);
-  const referenceViewColumns = getReferenceViewColumns(value, referenceViewSchema, host);
+  const referenceViewColumns = getReferenceViewColumns(value, referenceViewSchema, itemSchema, host);
   const showReferenceProjectionTable = referenceViewColumns.length > 0;
   const tableSchema = getArrayTableSchema(schema, itemSchema);
   const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema);
@@ -522,7 +531,7 @@ function getInlineArrayPreviewConfig(
     configuredTableColumns,
     referenceViewColumns,
     showReferenceProjectionTable,
-    rows: buildArrayDisplayRows(value, null, referenceViewColumns, configuredTableColumns, host).slice(0, 3),
+    rows: buildArrayDisplayRows(value, null, referenceViewColumns, configuredTableColumns, itemSchema, host, undefined, resolveNamedSchema).slice(0, 3),
     totalCount: value.length,
   };
 }
@@ -577,6 +586,7 @@ function renderInlineArrayFieldPreview(props: {
                   preview.configuredTableColumns,
                   preview.referenceViewColumns,
                   preview.itemSchema,
+                  props.resolveNamedSchema,
                 );
                 const label = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, preview.itemSchema);
                 return <th key={`${props.rowKey}:${column}`}>{label}</th>;
@@ -604,6 +614,7 @@ function renderInlineArrayFieldPreview(props: {
                         preview.configuredTableColumns,
                         preview.referenceViewColumns,
                         preview.itemSchema,
+                        props.resolveNamedSchema,
                       );
                       return (
                         <td key={`${props.rowKey}:${sourceIndex}:${column}`}>
@@ -634,7 +645,9 @@ function renderInlineArrayFieldPreview(props: {
                       return (
                         <td key={`${props.rowKey}:${sourceIndex}:${column}`}>
                           {inlineProjection && isPlainObject(cellValue)
-                            ? isCompactInlineObjectPreset(inlineProjection.objectPreset)
+                            ? inlineProjection.objectPreset === "rgba"
+                              ? renderInlineArrayPreviewSummary(cellValue, cellSchema, props.host, [...arrayPath, sourceIndex, ...fieldPath])
+                              : isCompactInlineObjectPreset(inlineProjection.objectPreset)
                               ? renderInlineObjectProjection({
                                 fieldKey: String(fieldPath.at(-1) ?? column),
                                 fieldValue: cellValue,
@@ -716,6 +729,10 @@ function renderInlineArrayPreviewSummary(
   host?: EditorHost,
   path?: JsonPath,
 ) {
+  const rgbaSummary = renderRgbaColorSummary(value, schema);
+  if (rgbaSummary) {
+    return <span className="array-cell-summary array-cell-summary--projection">{rgbaSummary}</span>;
+  }
   const rendered = renderReferenceFieldValue(value, schema, host, path);
   if (typeof rendered === "string") {
     return <span className="array-cell-summary">{rendered}</span>;
@@ -836,6 +853,7 @@ function ObjectPage({
   onNavigateUp,
   onClosePage,
   onNavigate,
+  onJumpToSource,
   onApplyValue,
   onEditModeChange,
   readOnly = false,
@@ -1124,6 +1142,8 @@ function ObjectPage({
                                 path: [...path, key],
                                 host,
                                 readOnly: pageReadOnly,
+                                onOpenReference: onJumpToSource,
+                                showOpenReferenceButton: true,
                                 onUpdateSchema: canAuthorObjectSchema
                                   ? (updater) => updateObjectSchema((currentSchema) => updatePropertySchema(currentSchema, key, updater))
                                   : undefined,
@@ -1174,6 +1194,7 @@ function ObjectPage({
                                   projectionMetadataSchema: projection.metadataSchema,
                                   projectionMetadataByKey: resolvedProjectionMetadataByKey,
                                   onNavigate,
+                                  onJumpToSource,
                                   onChange(nextRowValue) {
                                     onApplyValue({
                                       ...value,
@@ -1194,6 +1215,7 @@ function ObjectPage({
                                 projectionSchema: projection.objectValueSchema,
                                 objectPreset: projection.objectPreset,
                                 onNavigate,
+                                onJumpToSource,
                                 onChange(nextRowValue) {
                                   onApplyValue({
                                     ...value,
@@ -1229,7 +1251,14 @@ function ObjectPage({
                                     <span className="nested-entry-icon" aria-hidden="true">
                                       {getStructureIcon(fieldValue, host)}
                                     </span>
-                                    {renderNestedEntryContent(fieldValue, fieldSchema, host, resolveNamedSchema)}
+                                    {renderNestedEntryContent(
+                                      fieldValue,
+                                      fieldSchema,
+                                      host,
+                                      resolveNamedSchema,
+                                      undefined,
+                                      isReferenceValue(fieldValue) ? "compact" : "full",
+                                    )}
                                   </button>
                                 )
                               ) : isNavigable(fieldValue) ? (
@@ -1242,7 +1271,14 @@ function ObjectPage({
                                   <span className="nested-entry-icon" aria-hidden="true">
                                     {getStructureIcon(fieldValue, host)}
                                   </span>
-                                  {renderNestedEntryContent(fieldValue, fieldSchema, host, resolveNamedSchema)}
+                                  {renderNestedEntryContent(
+                                    fieldValue,
+                                    fieldSchema,
+                                    host,
+                                    resolveNamedSchema,
+                                    undefined,
+                                    isReferenceValue(fieldValue) ? "compact" : "full",
+                                  )}
                                 </button>
                               ) : (
                                 renderPrimitiveEditor({
@@ -1252,6 +1288,8 @@ function ObjectPage({
                                   path: [...path, key],
                                   host,
                                   readOnly: pageReadOnly,
+                                  onOpenReference: onJumpToSource,
+                                  showOpenReferenceButton: true,
                                   onUpdateSchema: canAuthorObjectSchema
                                     ? (updater) => updateObjectSchema((currentSchema) => updatePropertySchema(currentSchema, key, updater))
                                     : undefined,
@@ -1410,6 +1448,7 @@ function ArrayPage({
   onNavigateUp,
   onClosePage,
   onNavigate,
+  onJumpToSource,
   onApplyValue,
   onEditModeChange,
   toolbarPortalHost,
@@ -1455,10 +1494,22 @@ function ArrayPage({
     [referenceTargetSchemaRef, resolveNamedSchema],
   );
   const referenceViewColumns = useMemo(
-    () => getReferenceViewColumns(value, referenceViewSchema, host),
-    [host, referenceViewSchema, value],
+    () => getReferenceViewColumns(value, referenceViewSchema, referenceItemSchema, host),
+    [host, referenceItemSchema, referenceViewSchema, value],
+  );
+  const referenceOptions = useMemo(
+    () => referenceSchema && host?.getReferenceOptions
+      ? host.getReferenceOptions({
+        path,
+        value,
+        schema: referenceItemSchema,
+        reference: referenceSchema,
+      })
+      : [],
+    [host, path, referenceItemSchema, referenceSchema, value],
   );
   const showReferenceProjectionTable = referenceViewColumns.length > 0;
+  const showReferenceArrayPicker = referenceOptions.length > 0;
   const columnSourceSchema = showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema;
   const tableSchema = getArrayTableSchema(schema, referenceItemSchema);
   const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema);
@@ -1528,7 +1579,7 @@ function ArrayPage({
     }
     const ordered = managedColumns.map((column) => {
       const columnId = getTableColumnId(column);
-      const referenceColumn = findReferenceColumn(columnId, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
+      const referenceColumn = findReferenceColumn(columnId, configuredTableColumns, referenceViewColumns, referenceTargetSchema, resolveNamedSchema);
       return {
         key: columnId,
         column,
@@ -1547,8 +1598,8 @@ function ArrayPage({
     return [...ordered, ...hidden];
   }, [availableSchemaColumns, columnSourceSchema, configuredTableColumns, managedColumns, referenceTargetSchema, referenceViewColumns, showReferenceProjectionTable, supportsColumnVisibility]);
   const displayRows = useMemo(
-    () => buildArrayDisplayRows(value, sortState, referenceViewColumns, configuredTableColumns, host, referenceTargetSchema),
-    [value, sortState, referenceViewColumns, configuredTableColumns, host, referenceTargetSchema],
+    () => buildArrayDisplayRows(value, sortState, referenceViewColumns, configuredTableColumns, referenceItemSchema, host, referenceTargetSchema, resolveNamedSchema),
+    [value, sortState, referenceViewColumns, configuredTableColumns, referenceItemSchema, host, referenceTargetSchema, resolveNamedSchema],
   );
   const columnWidths = useMemo(
     () => getArrayColumnWidths(
@@ -1558,8 +1609,9 @@ function ArrayPage({
       showReferenceProjectionTable ? (referenceTargetSchema ?? columnSourceSchema) : columnSourceSchema,
       referenceViewColumns,
       configuredTableColumns,
+      resolveNamedSchema,
     ),
-    [value, columns, host, columnSourceSchema, referenceTargetSchema, referenceViewColumns, configuredTableColumns, showReferenceProjectionTable],
+    [value, columns, host, columnSourceSchema, referenceTargetSchema, referenceViewColumns, configuredTableColumns, showReferenceProjectionTable, resolveNamedSchema],
   );
   const stableColumnWidths = useMemo(
     () => realColumnWidths ?? columnWidths,
@@ -1633,7 +1685,7 @@ function ArrayPage({
     }
     setEditMode(true);
     setHostActionError(null);
-    if (showReferenceProjectionTable) {
+    if (showReferenceProjectionTable || referenceSchema) {
       setPendingRow(null);
       return;
     }
@@ -1707,6 +1759,11 @@ function ArrayPage({
     if (hiddenEntry) {
       unhideColumn(hiddenEntry);
     }
+  }
+
+  function handleAppendReferenceValue(nextValue: unknown) {
+    setSuppressRowActionsUntil(Date.now() + 450);
+    onApplyValue([...value, cloneJsonValue(nextValue)]);
   }
 
   function reorderVisibleColumns(orderedVisibleKeys: string[]) {
@@ -1923,7 +1980,7 @@ function ArrayPage({
                     ) : null}
                     {orderedColumns.map((column, columnIndex) => (
                       (() => {
-                        const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
+                        const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns, referenceTargetSchema, resolveNamedSchema);
                         const configuredColumn = findConfiguredTableColumn(configuredTableColumns, column);
                         const columnLabel = getConfiguredColumnLabel(column, configuredColumn, referenceColumn, columnSourceSchema);
                         const isDescriptionColumn = referenceColumn?.key === "description";
@@ -2114,7 +2171,7 @@ function ArrayPage({
                                 </td>
                               );
                             }
-                            const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns, referenceTargetSchema);
+                            const referenceColumn = findReferenceColumn(column, configuredTableColumns, referenceViewColumns, referenceTargetSchema, resolveNamedSchema);
                             if (!referenceColumn) {
                               return <td key={`${sourceIndex}:${column}`} />;
                             }
@@ -2271,6 +2328,7 @@ function ArrayPage({
                                     path: [...path, sourceIndex, ...fieldPath],
                                     host,
                                     readOnly: pageReadOnly,
+                                    onOpenReference: onJumpToSource,
                                     onChange(nextValue) {
                                       onApplyValue(setValueAtPath(value, [sourceIndex, ...fieldPath], nextValue));
                                     },
@@ -2278,7 +2336,9 @@ function ArrayPage({
                                 </div>
                               ) : null}
                               {showInlineProjection
-                                ? renderInlineObjectProjection({
+                                ? cellProjectionConfig.objectPreset === "rgba"
+                                  ? renderInlineArrayPreviewSummary(cellValue, cellSchema, host, [...path, sourceIndex, ...fieldPath])
+                                  : renderInlineObjectProjection({
                                   fieldKey: column,
                                   fieldValue: cellValue,
                                   fieldLabel: cellLabel,
@@ -2300,6 +2360,7 @@ function ArrayPage({
                                       host,
                                     }),
                                   onNavigate,
+                                  onJumpToSource,
                                   onChange(nextValue) {
                                     onApplyValue(setValueAtPath(value, [sourceIndex, ...fieldPath], nextValue));
                                   },
@@ -2316,6 +2377,10 @@ function ArrayPage({
                     return (
                       <Fragment key={`${sourceIndex}:${String(item)}`}>
                         {renderArrayDropIndicator(displayIndex)}
+                        {(() => {
+                          const itemSchema = schema?.items;
+                          const showInlineItemEditor = path.length > 0 && isInlineSchemaEditor(item, itemSchema);
+                          return (
                         <tr
                           className={[
                             clickable ? "is-clickable" : "",
@@ -2335,7 +2400,25 @@ function ArrayPage({
                             <span className="array-cell-summary array-cell-summary--identity array-cell-summary--index">{displayIndex + 1}</span>
                           </td>
                           <td>
-                            {isNavigable(item) ? (
+                            {showInlineItemEditor ? (
+                              <div
+                                onClick={(event) => event.stopPropagation()}
+                                onPointerDown={(event) => event.stopPropagation()}
+                              >
+                                {renderPrimitiveEditor({
+                                  value: item,
+                                  ariaLabel: `Array item ${sourceIndex}`,
+                                  schema: itemSchema,
+                                  path: [...path, sourceIndex],
+                                  host,
+                                  readOnly: pageReadOnly,
+                                  onOpenReference: onJumpToSource,
+                                  onChange(nextValue) {
+                                    onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
+                                  },
+                                })}
+                              </div>
+                            ) : isNavigable(item) ? (
                               <button
                                 className={["nested-entry-button", "inline", getTypeToneClass(item, host)].filter(Boolean).join(" ")}
                                 type="button"
@@ -2356,6 +2439,7 @@ function ArrayPage({
                                 path: [...path, sourceIndex],
                                 host,
                                 readOnly: pageReadOnly,
+                                onOpenReference: onJumpToSource,
                                 onChange(nextValue) {
                                   onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
                                 },
@@ -2363,18 +2447,26 @@ function ArrayPage({
                             )}
                           </td>
                         </tr>
+                          );
+                        })()}
                       </Fragment>
                     );
                   })}
                     {rowDragState && rowDragState.targetIndex === rowDragState.orderedSourceIndexes.length ? renderArrayDropIndicator(rowDragState.targetIndex) : null}
-                    {showStructuralRowActions && showReferenceProjectionTable ? (
-                      renderReferenceCreateRow({
+                    {showStructuralRowActions && (showReferenceProjectionTable || showReferenceArrayPicker) ? (
+                      renderReferenceAddRow({
                         columns: orderedColumns,
+                        pickerAriaLabel: `${inferReferenceFieldLabel(schema, path)} 添加引用`,
+                        pickerOptions: referenceOptions,
+                        pickerDisabled: maxItemsReached,
+                        onPick(valueToAdd) {
+                          handleAppendReferenceValue(valueToAdd);
+                        },
                         createDisabled: maxItemsReached || isCreatingReferenceRow,
-                        onCreate: handleCreateReferenceRow,
+                        onCreate: host?.createReferenceRow ? handleCreateReferenceRow : undefined,
                       })
                     ) : null}
-                    {showStructuralRowActions && !showReferenceProjectionTable && pendingRow !== null ? (
+                    {showStructuralRowActions && !showReferenceProjectionTable && !showReferenceArrayPicker && pendingRow !== null ? (
                       renderPendingArrayRow({
                         value,
                         pendingRow,
@@ -2672,6 +2764,7 @@ function PrimitivePage({
   referenceSourceLabel,
   onNavigateUp,
   onClosePage,
+  onJumpToSource,
   onApplyValue,
   onEditModeChange,
   readOnly = false,
@@ -2749,6 +2842,8 @@ function PrimitivePage({
                     path,
                     host,
                     readOnly: pageReadOnly,
+                    onOpenReference: onJumpToSource,
+                    showOpenReferenceButton: true,
                     onChange: onApplyValue,
                   })}
                   {getFieldError(validationResult, sourceId, path) ? (
@@ -2961,21 +3056,27 @@ function renderPrimitiveEditor(props: {
   path: JsonPath;
   host?: EditorHost;
   readOnly?: boolean;
+  onOpenReference?: (sourceId: string) => void;
+  showOpenReferenceButton?: boolean;
   onUpdateSchema?: (updater: (schema: EditorSchema) => EditorSchema) => void;
   onChange: (nextValue: unknown) => void;
 }) {
-  const readOnly = props.readOnly || props.schema?.readOnly === true || props.schema?.const !== undefined;
-  const nullableBranch = getNullableBranchSchema(props.schema);
+  const effectiveSchema = resolveImplicitAssetPickerSchema(props.value, props.schema, props.path);
+  const readOnly = props.readOnly || effectiveSchema?.readOnly === true || effectiveSchema?.const !== undefined;
+  const nullableBranch = getNullableBranchSchema(effectiveSchema);
   const nullableLabel = getNullableBranchLabel(nullableBranch);
-  const editorOptionsState = resolveEditorOptions(props.schema, props.host);
-  const referenceOptions = props.schema?.["x-editor"]?.reference && props.host?.getReferenceOptions
+  const editorOptionsState = resolveEditorOptions(effectiveSchema, props.host);
+  const referenceOptions = effectiveSchema?.["x-editor"]?.reference && props.host?.getReferenceOptions
     ? props.host.getReferenceOptions({
       path: props.path,
       value: props.value,
-      schema: props.schema,
-      reference: props.schema["x-editor"]?.reference,
+      schema: effectiveSchema,
+      reference: effectiveSchema["x-editor"]?.reference,
     })
     : [];
+  const shouldRenderOpenReferenceButton = props.showOpenReferenceButton && getReferenceUri(props.value) != null;
+  const openReferenceSourceId = inferOpenableReferenceSourceId(props.value, props.host);
+  const canOpenReference = Boolean(shouldRenderOpenReferenceButton && props.onOpenReference && openReferenceSourceId);
 
   if (editorOptionsState.error) {
     return (
@@ -2992,38 +3093,38 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (props.schema?.["x-editor"]?.fieldType === "multi-select" && (props.value == null || Array.isArray(props.value))) {
+  if (effectiveSchema?.["x-editor"]?.fieldType === "multi-select" && (props.value == null || Array.isArray(props.value))) {
     const supportsOptionsSourceColorEditing = Boolean(
-      props.schema?.["x-editor"]?.optionsSource?.colorField
+      effectiveSchema?.["x-editor"]?.optionsSource?.colorField
       && props.host?.setOptionsSourceOptionColor,
     );
     return withNullableControls(
       <SchemaOptionFieldEditor
-        allowAuthoring={Boolean(props.onUpdateSchema && props.schema?.["x-editor"]?.options)}
+        allowAuthoring={Boolean(props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options)}
         ariaLabel={props.ariaLabel}
         mode="multi"
         options={editorOptionsState.options}
         readOnly={readOnly}
         value={Array.isArray(props.value) ? props.value as Array<string | number> : []}
         onEdit={(nextValue) => props.onChange(nextValue)}
-        onCreateOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onCreateOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
           : undefined}
-        onDeleteOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onDeleteOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (optionValue) => props.onUpdateSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
           : undefined}
-        onMoveOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onMoveOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (optionValue, direction) => props.onUpdateSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
           : undefined}
-        onRenameOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onRenameOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
           : undefined}
         onSetOptionColor={
-          props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
             ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
             : supportsOptionsSourceColorEditing
             ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
-              uri: props.schema?.["x-editor"]?.optionsSource?.uri ?? "",
+              uri: effectiveSchema?.["x-editor"]?.optionsSource?.uri ?? "",
               optionValue,
               color,
             })
@@ -3037,38 +3138,99 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (editorOptionsState.options.length > 0 && props.schema?.["x-editor"]?.fieldType === "select") {
+  if (effectiveSchema?.["x-editor"]?.fieldType === "asset-picker") {
+    const assetPickerValue = Array.isArray(props.value)
+      ? props.value as Array<string | number>
+      : props.value == null || props.value === ""
+        ? []
+        : [props.value as string | number];
+    const assetPickerMode = Array.isArray(props.value) || effectiveSchema?.type === "array" ? "multi" : "single";
+    const imageDisplay = resolveImageDisplayConfig(effectiveSchema, "field-editor", props.path);
+    if (assetPickerMode === "single" && imageDisplay.kind === "image") {
+      const textValue = typeof props.value === "string" ? props.value : "";
+      return withNullableControls(
+        <div
+          className={[
+            "image-field-editor",
+            "image-field-editor--picker",
+            ...getSchemaClassNames(effectiveSchema),
+          ].filter(Boolean).join(" ")}
+        >
+          {textValue.trim().length > 0 ? (
+            <ImagePreview value={textValue} schema={effectiveSchema} host={props.host} context="field-editor" path={props.path} />
+          ) : (
+            <span className="image-field-editor__empty">未设置图片</span>
+          )}
+          <div className="image-field-editor__control">
+            <AssetPickerFieldEditor
+              ariaLabel={props.ariaLabel}
+              mode="single"
+              options={editorOptionsState.options}
+              previewVisibility="options-only"
+              readOnly={readOnly}
+              resolvePreviewUrl={(value) => props.host?.resolveDisplayUrl?.(value, effectiveSchema) ?? value}
+              schema={effectiveSchema}
+              value={assetPickerValue}
+              onEdit={(nextValue) => props.onChange(nextValue[0] ?? "")}
+              placeholder="选择图片"
+            />
+          </div>
+        </div>,
+        nullableBranch,
+        readOnly,
+        () => props.onChange(null),
+      );
+    }
+    return withNullableControls(
+      <AssetPickerFieldEditor
+        ariaLabel={props.ariaLabel}
+        mode={assetPickerMode}
+        options={editorOptionsState.options}
+        readOnly={readOnly}
+        resolvePreviewUrl={(value) => props.host?.resolveDisplayUrl?.(value, effectiveSchema) ?? value}
+        schema={effectiveSchema}
+        value={assetPickerValue}
+        onEdit={(nextValue) => props.onChange(assetPickerMode === "multi" ? nextValue : (nextValue[0] ?? ""))}
+        placeholder={assetPickerMode === "multi" ? "添加资源" : "选择资源"}
+      />,
+      nullableBranch,
+      readOnly,
+      () => props.onChange(null),
+    );
+  }
+
+  if (editorOptionsState.options.length > 0 && effectiveSchema?.["x-editor"]?.fieldType === "select") {
     const supportsOptionsSourceColorEditing = Boolean(
-      props.schema?.["x-editor"]?.optionsSource?.colorField
+      effectiveSchema?.["x-editor"]?.optionsSource?.colorField
       && props.host?.setOptionsSourceOptionColor,
     );
     return withNullableControls(
       <SchemaOptionFieldEditor
-        allowAuthoring={Boolean(props.onUpdateSchema && props.schema?.["x-editor"]?.options)}
+        allowAuthoring={Boolean(props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options)}
         ariaLabel={props.ariaLabel}
         mode="single"
         options={editorOptionsState.options}
         readOnly={readOnly}
         value={props.value == null || props.value === "" ? [] : [props.value as string | number]}
         onEdit={(nextValue) => props.onChange(nextValue[0] ?? "")}
-        onCreateOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onCreateOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
           : undefined}
-        onDeleteOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onDeleteOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (optionValue) => props.onUpdateSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
           : undefined}
-        onMoveOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onMoveOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (optionValue, direction) => props.onUpdateSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
           : undefined}
-        onRenameOption={props.onUpdateSchema && props.schema?.["x-editor"]?.options
+        onRenameOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
           ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
           : undefined}
         onSetOptionColor={
-          props.onUpdateSchema && props.schema?.["x-editor"]?.options
+          props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
             ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
             : supportsOptionsSourceColorEditing
             ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
-              uri: props.schema?.["x-editor"]?.optionsSource?.uri ?? "",
+              uri: effectiveSchema?.["x-editor"]?.optionsSource?.uri ?? "",
               optionValue,
               color,
             })
@@ -3102,19 +3264,42 @@ function renderPrimitiveEditor(props: {
 
   if (referenceOptions.length > 0) {
     return withNullableControls(
-      <select
-        aria-label={props.ariaLabel}
-        className="detail-input"
-        disabled={readOnly}
-        value={String(props.value ?? "")}
-        onChange={(event) => props.onChange(event.target.value)}
-      >
-        {referenceOptions.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>,
+      <div className="reference-picker-field">
+        <div className="reference-picker-field__picker">
+          <AssetPickerFieldEditor
+            ariaLabel={props.ariaLabel}
+            mode="single"
+            options={referenceOptions.map((option) => ({
+              value: option.value,
+              label: option.label,
+              color: null,
+              description: option.description,
+            }))}
+            readOnly={readOnly}
+            schema={effectiveSchema}
+            value={props.value == null || props.value === "" ? [] : [String(props.value)]}
+            onEdit={(nextValue) => props.onChange(nextValue[0] ?? "")}
+            placeholder="选择引用"
+          />
+        </div>
+        {shouldRenderOpenReferenceButton ? (
+          <button
+            aria-label={`Open ${props.ariaLabel}`}
+            className="ghost-button compact-button reference-picker-field__open"
+            disabled={!canOpenReference}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!props.onOpenReference || !openReferenceSourceId) {
+                return;
+              }
+              props.onOpenReference(openReferenceSourceId);
+            }}
+          >
+            <icons.next size={14} />
+          </button>
+        ) : null}
+      </div>,
       nullableBranch,
       readOnly,
       () => props.onChange(null),
@@ -3356,6 +3541,8 @@ type ResolvedEditorOption = {
   value: string | number;
   label: string;
   color: EditorViewOptionColor | null;
+  description?: string;
+  preview?: string;
 };
 
 type ArrayDisplayRow = {
@@ -3410,12 +3597,13 @@ function getArrayColumnWidths(
   itemSchema?: EditorSchema,
   referenceViewColumns: ReferenceViewColumn[] = [],
   configuredColumns: EditorTableColumn[] = [],
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ) {
   const widths: Record<string, number> = {};
   const sampleSize = Math.min(items.length, 40);
 
   for (const column of columns) {
-    const referenceColumn = findReferenceColumn(column, configuredColumns, referenceViewColumns, itemSchema);
+    const referenceColumn = findReferenceColumn(column, configuredColumns, referenceViewColumns, itemSchema, resolveNamedSchema);
     const configuredColumn = findConfiguredTableColumn(configuredColumns, column);
     if (configuredColumn?.width) {
       widths[column] = configuredColumn.width;
@@ -3431,7 +3619,7 @@ function getArrayColumnWidths(
       const headerWidth = measureColumnText(configuredColumn?.label ?? referenceColumn.title);
       let contentWidth = headerWidth;
       for (let index = 0; index < sampleSize; index += 1) {
-        const cellText = getReferenceTableCellText(items[index], referenceColumn, itemSchema, host);
+        const cellText = getReferenceTableCellText(items[index], referenceColumn, itemSchema, host, resolveNamedSchema);
         contentWidth = Math.max(contentWidth, measureColumnText(cellText));
       }
       widths[column] = clampColumnWidth(contentWidth, configuredColumn?.label ?? referenceColumn.title);
@@ -3661,13 +3849,20 @@ function findReferenceColumn(
   configuredColumns: EditorTableColumn[],
   referenceColumns: ReferenceViewColumn[],
   targetSchema?: EditorSchema,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ) {
   const configuredColumn = findConfiguredTableColumn(configuredColumns, columnId);
   const configuredPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
   if (configuredPath.length > 0) {
     const matchedByPath = referenceColumns.find((entry) => isSameJsonPath(entry.path, configuredPath));
     if (matchedByPath) return matchedByPath;
-    const targetFieldSchema = resolveSchemaAtPath(targetSchema, configuredPath, undefined);
+    const targetFieldSchema = resolveReferenceProjectedFieldSchema(
+      targetSchema,
+      configuredPath,
+      undefined,
+      undefined,
+      resolveNamedSchema,
+    );
     if (targetFieldSchema) {
       return {
         key: columnId,
@@ -3697,17 +3892,19 @@ function buildArrayDisplayRows(
   sortState: { key: string; direction: "asc" | "desc" } | null,
   referenceViewColumns: ReferenceViewColumn[],
   configuredColumns: EditorTableColumn[],
+  itemSchema: EditorSchema | undefined,
   host?: EditorHost,
   targetSchema?: EditorSchema,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ): ArrayDisplayRow[] {
   const rows = items.map((item, sourceIndex) => ({ item, sourceIndex }));
   if (!sortState) return rows;
   const configuredColumn = findConfiguredTableColumn(configuredColumns, sortState.key);
   if (!configuredColumn?.sortable) return rows;
-  const referenceColumn = findReferenceColumn(sortState.key, configuredColumns, referenceViewColumns, targetSchema);
+  const referenceColumn = findReferenceColumn(sortState.key, configuredColumns, referenceViewColumns, targetSchema, resolveNamedSchema);
   return [...rows].sort((left, right) => {
-    const leftValue = normalizeSortValue(left.item, sortState.key, configuredColumn, referenceColumn, host);
-    const rightValue = normalizeSortValue(right.item, sortState.key, configuredColumn, referenceColumn, host);
+    const leftValue = normalizeSortValue(left.item, sortState.key, configuredColumn, referenceColumn, itemSchema, host, resolveNamedSchema);
+    const rightValue = normalizeSortValue(right.item, sortState.key, configuredColumn, referenceColumn, itemSchema, host, resolveNamedSchema);
     const result = leftValue.localeCompare(rightValue, undefined, { numeric: true, sensitivity: "base" });
     return sortState.direction === "asc" ? result : -result;
   });
@@ -3718,10 +3915,12 @@ function normalizeSortValue(
   key: string,
   configuredColumn: EditorTableColumn | undefined,
   referenceColumn: ReferenceViewColumn | undefined,
+  itemSchema: EditorSchema | undefined,
   host?: EditorHost,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ) {
   if (referenceColumn) {
-    return getReferenceTableCellText(item, referenceColumn, undefined, host).trim();
+    return getReferenceTableCellText(item, referenceColumn, itemSchema, host, resolveNamedSchema).trim();
   }
   if (isPlainObject(item)) {
     const fieldPath = configuredColumn ? getTableColumnPath(configuredColumn) : [];
@@ -3775,11 +3974,42 @@ function inferValueTitle(value: unknown): string | null {
 }
 
 function inferReferenceSourceId(value: unknown, host?: EditorHost): string | null {
+  const uri = getRenderableReferenceUri(value);
+  if (!uri) {
+    return null;
+  }
+  return host?.resolveReferenceSourceId?.(uri) ?? uri;
+}
+
+function inferOpenableReferenceSourceId(value: unknown, host?: EditorHost): string | null {
   const uri = getReferenceUri(value);
   if (!uri) {
     return null;
   }
   return host?.resolveReferenceSourceId?.(uri) ?? uri;
+}
+
+function isUriLikeString(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    return false;
+  }
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getRenderableReferenceUri(value: unknown, schema?: EditorSchema): string | null {
+  const jsonReferenceUri = getReferenceUri(value);
+  if (jsonReferenceUri) {
+    return jsonReferenceUri;
+  }
+  if (!schema?.["x-editor"]?.reference || !isUriLikeString(value)) {
+    return null;
+  }
+  return value;
 }
 
 function describeType(value: unknown, host?: EditorHost): string {
@@ -3944,29 +4174,60 @@ function renderPendingArrayRow(props: {
   );
 }
 
-function renderReferenceCreateRow(props: {
+function renderReferenceAddRow(props: {
   columns: string[];
+  pickerAriaLabel: string;
+  pickerOptions: EditorReferenceOption[];
+  pickerDisabled?: boolean;
+  onPick: (value: string) => void;
   createDisabled?: boolean;
-  onCreate: () => void;
+  onCreate?: () => void;
 }) {
   const span = Math.max(1, props.columns.length);
   return (
     <tr className="array-row--pending" data-row-index="pending">
       <td className="array-column--sticky array-column--actions">
         <div className="row-action-buttons">
-          <button
-            className="primary-button compact-button"
-            type="button"
-            disabled={props.createDisabled}
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={props.onCreate}
-          >
-            Create row
-          </button>
+          {props.onCreate ? (
+            <button
+              className="ghost-button compact-button"
+              type="button"
+              disabled={props.createDisabled}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={props.onCreate}
+            >
+              新建资源
+            </button>
+          ) : null}
         </div>
       </td>
       <td className="array-cell--pending-merged" colSpan={span}>
-        <span className="array-cell-summary array-cell-summary--pending">新建引用项将由宿主创建并回填</span>
+        <div className="reference-array-create-row">
+          <div className="reference-array-create-row__picker">
+            <AssetPickerFieldEditor
+              ariaLabel={props.pickerAriaLabel}
+              mode="single"
+              options={props.pickerOptions.map((option) => ({
+                value: option.value,
+                label: option.label,
+                color: null,
+                description: option.description,
+              }))}
+              readOnly={Boolean(props.pickerDisabled)}
+              value={[]}
+              onEdit={(nextValue) => {
+                const picked = nextValue[0];
+                if (typeof picked === "string" && picked.trim()) {
+                  props.onPick(picked);
+                }
+              }}
+              placeholder="添加已有引用"
+            />
+          </div>
+          <span className="array-cell-summary array-cell-summary--pending">
+            {props.onCreate ? "可直接选择已有引用，也可新建资源后回填" : "请选择已有引用加入数组"}
+          </span>
+        </div>
       </td>
     </tr>
   );
@@ -4048,12 +4309,12 @@ function renderNestedEntryContent(
   }
 
   if (mode === "compact") {
-    return renderCompactReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host);
+    return renderCompactReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host, resolveNamedSchema);
   }
 
   return (
     <div className={`reference-preview reference-preview--${referenceSchema?.view?.layout ?? "inline"}`.trim()}>
-      {renderReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host)}
+      {renderReferenceProjection(resolved.value, targetSchema, referenceViewColumns, host, resolveNamedSchema)}
     </div>
   );
 }
@@ -4063,13 +4324,17 @@ function renderCompactReferenceProjection(
   targetSchema: EditorSchema,
   columns: ReferenceViewColumn[],
   host?: EditorHost,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ) {
   const entries = columns
     .map((column) => {
       const fieldValue = getValueAtPath(targetValue, column.path);
-      const fieldSchema = mergeProjectedFieldSchema(
-        resolveSchemaAtPath(targetSchema, column.path, targetValue),
+      const fieldSchema = resolveReferenceProjectedFieldSchema(
+        targetSchema,
+        column.path,
+        targetValue,
         column.columnSchema,
+        resolveNamedSchema,
       );
       if (fieldValue == null || fieldValue === "") {
         return null;
@@ -4092,7 +4357,10 @@ function renderCompactReferenceProjection(
     ?? entryMap.get("id")
     ?? entries.find((entry) => entry.key !== "icon" && entry.key !== "description")?.value
     ?? entries[0]?.value;
-  const secondaryValue = primaryValue !== entryMap.get("id") ? entryMap.get("id") : null;
+  const secondaryValue = entryMap.get("description")
+    ?? (primaryValue !== entryMap.get("title") ? entryMap.get("title") : null)
+    ?? entries.find((entry) => entry.key !== "icon" && entry.key !== "name" && entry.key !== "title" && entry.key !== "id")?.value
+    ?? null;
 
   return (
     <span className="reference-preview__compact">
@@ -4110,13 +4378,17 @@ function renderReferenceProjection(
   targetSchema: EditorSchema,
   columns: ReferenceViewColumn[],
   host?: EditorHost,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ) {
   const entries = columns
     .map((column) => {
       const fieldValue = getValueAtPath(targetValue, column.path);
-      const fieldSchema = mergeProjectedFieldSchema(
-        resolveSchemaAtPath(targetSchema, column.path, targetValue),
+      const fieldSchema = resolveReferenceProjectedFieldSchema(
+        targetSchema,
+        column.path,
+        targetValue,
         column.columnSchema,
+        resolveNamedSchema,
       );
       if (fieldValue == null || fieldValue === "") {
         return null;
@@ -4150,11 +4422,9 @@ function getReferenceTableCellText(
   column: ReferenceViewColumn,
   itemSchema: EditorSchema | undefined,
   host?: EditorHost,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
 ) {
-  if (!isReferenceValue(value)) {
-    return previewValue(value, host);
-  }
-  const uri = getReferenceUri(value);
+  const uri = getRenderableReferenceUri(value, itemSchema);
   if (!uri) {
     return previewValue(value, host);
   }
@@ -4162,11 +4432,27 @@ function getReferenceTableCellText(
   if (!resolved.ok) {
     return previewValue(value, host);
   }
-  const targetSchemaRef = itemSchema?.["x-editor"]?.reference?.target?.schemaRef;
   const fieldValue = getValueAtPath(resolved.value, column.path);
   if (fieldValue == null || fieldValue === "") {
     return "";
   }
+
+  const targetSchemaRef = itemSchema?.["x-editor"]?.reference?.target?.schemaRef;
+  const targetSchema = targetSchemaRef ? resolveNamedSchema?.(targetSchemaRef) : undefined;
+  if (targetSchema) {
+    const fieldSchema = resolveReferenceProjectedFieldSchema(
+      targetSchema,
+      column.path,
+      resolved.value,
+      column.columnSchema,
+      resolveNamedSchema,
+    );
+    const rendered = renderReferenceFieldValue(fieldValue, fieldSchema, host);
+    if (typeof rendered === "string" || typeof rendered === "number") {
+      return String(rendered);
+    }
+  }
+
   if (typeof fieldValue === "string") {
     return fieldValue;
   }
@@ -4175,9 +4461,6 @@ function getReferenceTableCellText(
   }
   if (Array.isArray(fieldValue)) {
     return `${fieldValue.length} items`;
-  }
-  if (targetSchemaRef) {
-    return previewValue(fieldValue, host);
   }
   return previewValue(fieldValue, host);
 }
@@ -4189,16 +4472,19 @@ function renderReferenceTableCell(
   resolveNamedSchema?: (name: string) => EditorSchema | undefined,
   host?: EditorHost,
 ) {
-  if (!isReferenceValue(value)) {
+  const uri = getRenderableReferenceUri(value, itemSchema);
+  if (!uri) {
     return <span className="array-cell-summary">{previewValue(value, host)}</span>;
   }
 
   const referenceSchema = itemSchema?.["x-editor"]?.reference;
   const targetSchemaRef = referenceSchema?.target?.schemaRef;
   const targetSchema = targetSchemaRef ? resolveNamedSchema?.(targetSchemaRef) : undefined;
-  const uri = getReferenceUri(value);
-  if (!uri || !targetSchema) {
-    return <span className="array-cell-summary">{previewValue(value, host)}</span>;
+  if (!targetSchema) {
+    const summary = getReferenceTableCellText(value, column, itemSchema, host, resolveNamedSchema);
+    return summary
+      ? <span className="array-cell-summary">{summary}</span>
+      : <span className="array-cell-summary array-cell-summary--missing">-</span>;
   }
 
   const resolved = resolveReferenceDocument(uri, host);
@@ -4207,9 +4493,12 @@ function renderReferenceTableCell(
   }
 
   const fieldValue = getValueAtPath(resolved.value, column.path);
-  const fieldSchema = mergeProjectedFieldSchema(
-    resolveSchemaAtPath(targetSchema, column.path, resolved.value),
+  const fieldSchema = resolveReferenceProjectedFieldSchema(
+    targetSchema,
+    column.path,
+    resolved.value,
     column.columnSchema,
+    resolveNamedSchema,
   );
   if (fieldValue == null || fieldValue === "") {
     return <span className="array-cell-summary array-cell-summary--missing">-</span>;
@@ -4220,6 +4509,48 @@ function renderReferenceTableCell(
     return <span className="array-cell-summary">{rendered}</span>;
   }
   return <span className="array-cell-summary array-cell-summary--projection">{rendered}</span>;
+}
+
+function resolveReferenceProjectedFieldSchema(
+  targetSchema: EditorSchema | undefined,
+  fieldPath: JsonPath,
+  targetValue: unknown,
+  viewSchema: EditorSchema | undefined,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
+) {
+  const resolvedTargetFieldSchema = resolveNamedReferenceFieldSchema(
+    resolveSchemaAtPath(targetSchema, fieldPath, targetValue),
+    resolveNamedSchema,
+  );
+  return mergeProjectedFieldSchema(resolvedTargetFieldSchema, viewSchema);
+}
+
+function resolveNamedReferenceFieldSchema(
+  schema: EditorSchema | undefined,
+  resolveNamedSchema?: (name: string) => EditorSchema | undefined,
+) {
+  if (!schema?.$ref || schema.$ref.startsWith("#") || !resolveNamedSchema) {
+    return schema;
+  }
+
+  const refFileName = schema.$ref.replace(/\\/g, "/").split("/").at(-1) ?? schema.$ref;
+  const referencedSchema = [
+    schema.$ref,
+    refFileName,
+    refFileName.replace(/\.schema\.json$/i, ""),
+    refFileName.replace(/\.json$/i, ""),
+  ]
+    .map((candidate) => resolveNamedSchema(candidate))
+    .find((candidate): candidate is EditorSchema => candidate !== undefined);
+
+  if (!referencedSchema) {
+    return schema;
+  }
+
+  return mergeProjectedFieldSchema(referencedSchema, {
+    ...schema,
+    $ref: undefined,
+  });
 }
 
 function resolveReferenceViewSchema(
@@ -4233,6 +4564,7 @@ function resolveReferenceViewSchema(
 function getReferenceViewColumns(
   items: unknown[],
   viewSchema: EditorSchema | undefined,
+  itemSchema: EditorSchema | undefined,
   host?: EditorHost,
 ) {
   const columns = getReferenceViewColumnsFromSchema(viewSchema);
@@ -4242,8 +4574,7 @@ function getReferenceViewColumns(
 
   return columns.filter((column) =>
     items.some((item) => {
-      if (!isReferenceValue(item)) return false;
-      const uri = getReferenceUri(item);
+      const uri = getRenderableReferenceUri(item, itemSchema);
       if (!uri) return false;
       const resolved = resolveReferenceDocument(uri, host);
       if (!resolved.ok) return false;
@@ -4321,15 +4652,117 @@ function mapEditorOptionRecord(
   if (typeof rawValue !== "string" && typeof rawValue !== "number") return null;
   const rawLabel = source.labelField ? entry[source.labelField] : undefined;
   const rawColor = source.colorField ? entry[source.colorField] : undefined;
+  const rawDescription = source.descriptionField ? entry[source.descriptionField] : undefined;
+  const rawPreview = source.previewField ? entry[source.previewField] : undefined;
   return {
     value: rawValue,
     label: typeof rawLabel === "string" && rawLabel.trim().length > 0 ? rawLabel : String(rawValue),
     color: isEditorOptionColor(rawColor) ? rawColor : null,
+    description: typeof rawDescription === "string" && rawDescription.trim().length > 0 ? rawDescription : undefined,
+    preview: typeof rawPreview === "string" && rawPreview.trim().length > 0 ? rawPreview : undefined,
   };
 }
 
 function isEditorOptionColor(value: unknown): value is EditorViewOptionColor {
   return ["red", "orange", "yellow", "green", "blue", "gray", "gold"].includes(String(value));
+}
+
+function resolveImplicitAssetPickerSchema(
+  value: unknown,
+  schema: EditorSchema | undefined,
+  path: JsonPath,
+): EditorSchema | undefined {
+  if (typeof value !== "string") {
+    return schema;
+  }
+  if (schema?.["x-editor"]?.fieldType || schema?.["x-editor"]?.reference || schema?.["x-editor"]?.display?.kind === "image") {
+    return schema;
+  }
+  const implicitEditor = inferImplicitAssetPickerEditor(value, path);
+  if (!implicitEditor) {
+    return schema;
+  }
+  return {
+    ...(schema ?? { type: "string" as const }),
+    "x-editor": {
+      ...(schema?.["x-editor"] ?? {}),
+      ...implicitEditor,
+    },
+  };
+}
+
+function inferImplicitAssetPickerEditor(
+  value: string,
+  path: JsonPath,
+): NonNullable<EditorSchema["x-editor"]> | null {
+  const normalizedPath = String(path.at(-1) ?? "").toLowerCase();
+  const lowerValue = value.toLowerCase();
+
+  if (lowerValue.startsWith("asset://")) {
+    const match = /^asset:\/\/([^/]+)\/[^/]+\.json$/i.exec(value);
+    if (!match) {
+      return null;
+    }
+    return {
+      fieldType: "asset-picker",
+      optionsSource: {
+        kind: "json-file",
+        uri: `asset://schema-data-resource-options/${match[1]}.json`,
+        valueField: "value",
+        labelField: "text",
+        descriptionField: "value",
+      },
+    };
+  }
+
+  if (!lowerValue.startsWith("res://")) {
+    return null;
+  }
+
+  if (/\.(png|jpg|jpeg|webp|svg)$/i.test(value) || /(icon|image|portrait|banner)/.test(normalizedPath)) {
+    return {
+      fieldType: "asset-picker",
+      optionsSource: {
+        kind: "json-file",
+        uri: "asset://editor-picker/image.json",
+        valueField: "value",
+        labelField: "text",
+        descriptionField: "path",
+        previewField: "preview",
+      },
+      display: {
+        kind: "image",
+      },
+    };
+  }
+
+  if (/\.tscn$/i.test(value) || /(scene|outfit|prefab|panel)/.test(normalizedPath)) {
+    return {
+      fieldType: "asset-picker",
+      optionsSource: {
+        kind: "json-file",
+        uri: "asset://editor-picker/tscn.json",
+        valueField: "value",
+        labelField: "text",
+        descriptionField: "path",
+      },
+    };
+  }
+
+  if (/\.(gd|tscn)$/i.test(value) || /(script|executable)/.test(normalizedPath)) {
+    return {
+      fieldType: "asset-picker",
+      optionsSource: {
+        kind: "json-file",
+        uri: "asset://editor-picker/executable.json",
+        valueField: "value",
+        labelField: "text",
+        descriptionField: "path",
+      },
+    };
+  }
+
+  return null;
 }
 
 function chipStyleForSummaryColor(color: EditorViewOptionColor | null): React.CSSProperties | undefined {
@@ -4350,11 +4783,17 @@ function chipStyleForSummaryColor(color: EditorViewOptionColor | null): React.CS
 
 function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) {
   const fieldType = schema?.["x-editor"]?.fieldType;
+  if (schema?.["x-editor"]?.reference) {
+    return value == null || typeof value === "string";
+  }
   if (fieldType === "select") {
     return value == null || typeof value === "string" || typeof value === "number";
   }
   if (fieldType === "multi-select") {
     return value == null || Array.isArray(value);
+  }
+  if (fieldType === "asset-picker") {
+    return value == null || typeof value === "string" || typeof value === "number" || Array.isArray(value);
   }
   return false;
 }
@@ -4362,6 +4801,10 @@ function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) 
 function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefined, host?: EditorHost, path?: JsonPath): ReactNode {
   const display = schema?.["x-editor"]?.display;
   const imageDisplay = resolveImageDisplayConfig(schema, "inline", path);
+  const rgbaSummary = renderRgbaColorSummary(value, schema);
+  if (rgbaSummary) {
+    return rgbaSummary;
+  }
   if (typeof value === "string" && imageDisplay.kind === "image") {
     return <ImagePreview value={value} schema={schema} host={host} context="inline" path={path} />;
   }
@@ -4369,9 +4812,13 @@ function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefi
     const editorOptionsState = resolveEditorOptions(schema, host);
     const option = editorOptionsState.options.find((entry) => String(entry.value) === String(value));
     if (option) {
-      if (option.color) {
-        return <span className="chip" style={chipStyleForSummaryColor(option.color)}>{option.label}</span>;
-      }
+      return <span className="chip" style={chipStyleForSummaryColor(option.color)}>{option.label}</span>;
+    }
+  }
+  if ((typeof value === "string" || typeof value === "number") && schema?.["x-editor"]?.fieldType === "asset-picker") {
+    const editorOptionsState = resolveEditorOptions(schema, host);
+    const option = editorOptionsState.options.find((entry) => String(entry.value) === String(value));
+    if (option?.label) {
       return option.label;
     }
   }
@@ -4398,12 +4845,33 @@ function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefi
         </span>
       );
     }
+    if (schema?.["x-editor"]?.fieldType === "asset-picker") {
+      const editorOptionsState = resolveEditorOptions(schema, host);
+      const optionMap = new Map(editorOptionsState.options.map((option) => [String(option.value), option]));
+      const previewItems = value
+        .slice(0, 3)
+        .map((item) => optionMap.get(String(item))?.label ?? previewValue(item, host));
+      const suffix = value.length > 3 ? ` +${value.length - 3}` : "";
+      return `${previewItems.join(", ")}${suffix}`;
+    }
     const previewItems = value.slice(0, 3).map((item) => previewValue(item, host));
     const suffix = value.length > 3 ? ` +${value.length - 3}` : "";
     return `${previewItems.join(", ")}${suffix}`;
   }
   if (typeof value === "boolean") {
-    return value ? "True" : "False";
+    return (
+      <label className="checkbox-field checkbox-field--summary">
+        <input
+          aria-label={schema?.title ?? String(path?.at(-1) ?? "Boolean")}
+          checked={value}
+          disabled
+          readOnly
+          tabIndex={-1}
+          type="checkbox"
+        />
+        <span>{value ? "True" : "False"}</span>
+      </label>
+    );
   }
   if (value === null) {
     return "null";
@@ -4474,10 +4942,16 @@ function isNavigable(value: unknown): boolean {
   return isReferenceValue(value) || Array.isArray(value) || isPlainObject(value);
 }
 
+function clampImageViewerScale(value: number) {
+  return Math.min(IMAGE_VIEWER_MAX_SCALE, Math.max(IMAGE_VIEWER_MIN_SCALE, Number(value.toFixed(2))));
+}
+
 function ImagePreview(
   { value, schema, host, context = "inline", path }: { value: string; schema?: EditorSchema; host?: EditorHost; context?: ImagePreviewContext; path?: JsonPath },
 ) {
   const [loadFailed, setLoadFailed] = useState(false);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+  const [viewerScale, setViewerScale] = useState(1);
   const preview = resolveImageDisplayConfig(schema, context, path);
   const preset = resolveImageDisplayPreset(schema, path);
   const width = preview.width;
@@ -4485,6 +4959,35 @@ function ImagePreview(
   const fit = preview.fit;
   const label = schema?.title ?? "Image";
   const resolvedValue = host?.resolveDisplayUrl?.(value, schema) ?? value;
+  const canOpenViewer = context === "field-editor" && !loadFailed;
+
+  const closeViewer = useCallback(() => {
+    setIsViewerOpen(false);
+    setViewerScale(1);
+  }, []);
+
+  const openViewer = useCallback(() => {
+    if (!canOpenViewer) return;
+    setViewerScale(1);
+    setIsViewerOpen(true);
+  }, [canOpenViewer]);
+
+  const adjustViewerScale = useCallback((delta: number) => {
+    setViewerScale((current) => clampImageViewerScale(current + delta));
+  }, []);
+
+  useEffect(() => {
+    if (!isViewerOpen) return undefined;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeViewer();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closeViewer, isViewerOpen]);
 
   if (loadFailed) {
     return (
@@ -4502,7 +5005,7 @@ function ImagePreview(
     );
   }
 
-  return (
+  const previewImage = (
     <img
       alt={label}
       className={[
@@ -4517,6 +5020,86 @@ function ImagePreview(
       width={width}
       onError={() => setLoadFailed(true)}
     />
+  );
+
+  return (
+    <>
+      {canOpenViewer ? (
+        <button
+          aria-label={`打开 ${label} 图片浏览`}
+          className="image-preview-trigger"
+          type="button"
+          onClick={openViewer}
+        >
+          {previewImage}
+        </button>
+      ) : previewImage}
+      {isViewerOpen && typeof document !== "undefined" ? createPortal(
+        <div className="image-viewer-backdrop" onClick={closeViewer}>
+          <div
+            aria-label={`${label} 图片浏览`}
+            aria-modal="true"
+            className="image-viewer"
+            role="dialog"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div
+              className="image-viewer__viewport"
+              onClick={(event) => {
+                if (event.target !== event.currentTarget) return;
+                closeViewer();
+              }}
+              onWheel={(event) => {
+                event.preventDefault();
+                adjustViewerScale(event.deltaY < 0 ? IMAGE_VIEWER_SCALE_STEP : -IMAGE_VIEWER_SCALE_STEP);
+              }}
+            >
+              <img
+                alt={label}
+                className="image-viewer__image"
+                src={resolvedValue}
+                style={{ transform: `scale(${viewerScale})` }}
+              />
+            </div>
+            <div className="image-viewer__toolbar">
+              <button
+                aria-label="缩小图片"
+                className="image-viewer__toolbar-button"
+                type="button"
+                onClick={() => adjustViewerScale(-IMAGE_VIEWER_SCALE_STEP)}
+              >
+                <icons.zoomOut size={16} strokeWidth={2} />
+              </button>
+              <button
+                aria-label="恢复图片大小"
+                className="image-viewer__toolbar-button"
+                type="button"
+                onClick={() => setViewerScale(1)}
+              >
+                <icons.reset size={16} strokeWidth={2} />
+              </button>
+              <button
+                aria-label="放大图片"
+                className="image-viewer__toolbar-button"
+                type="button"
+                onClick={() => adjustViewerScale(IMAGE_VIEWER_SCALE_STEP)}
+              >
+                <icons.zoomIn size={16} strokeWidth={2} />
+              </button>
+              <button
+                aria-label="关闭图片浏览"
+                className="image-viewer__toolbar-button"
+                type="button"
+                onClick={closeViewer}
+              >
+                <icons.close size={16} strokeWidth={2} />
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+    </>
   );
 }
 
@@ -4584,6 +5167,7 @@ function renderProjectedObjectFieldEditor(props: {
   projectionSchema: EditorSchema;
   objectPreset?: EditorObjectPreset | null;
   onNavigate: (path: JsonPath) => void;
+  onJumpToSource?: (sourceId: string) => void;
   onChange: (nextValue: Record<string, unknown>) => void;
 }) {
   const {
@@ -4598,23 +5182,40 @@ function renderProjectedObjectFieldEditor(props: {
     projectionSchema,
     objectPreset,
     onNavigate,
+    onJumpToSource,
     onChange,
   } = props;
 
   return (
     <div className={["object-field-projection", objectPreset ? `object-field-projection--${objectPreset}` : ""].filter(Boolean).join(" ")}>
-      {projectionColumns.map((column) => {
+      {projectionColumns.map((column, columnIndex) => {
         const columnId = getTableColumnId(column);
         const fieldPath = getTableColumnPath(column);
         const cellValue = fieldPath.length > 0 ? getValueAtPath(rowValue, fieldPath) : rowValue[columnId];
         const cellSchema = resolveSchemaAtPath(projectionSchema, fieldPath, rowValue);
         const cellLabel = column.label ?? column.key ?? formatPath(fieldPath) ?? columnId;
         const hasValue = fieldPath.length > 0 ? cellValue !== undefined : Object.prototype.hasOwnProperty.call(rowValue, columnId);
+        const showRgbaPicker = objectPreset === "rgba" && columnIndex === 0;
 
         return (
-          <div className={["object-field-projection__cell", column.wrap ? "is-wrapped" : ""].filter(Boolean).join(" ")} key={`${rowKey}:${columnId}`}>
+          <div
+            className={[
+              "object-field-projection__cell",
+              column.wrap ? "is-wrapped" : "",
+              showRgbaPicker ? "object-field-projection__cell--rgba-picker" : "",
+            ].filter(Boolean).join(" ")}
+            key={`${rowKey}:${columnId}`}
+          >
             <span className="object-field-projection__label">{cellLabel}</span>
-            <div className="object-field-projection__value">
+            <div className={["object-field-projection__value", showRgbaPicker ? "object-field-projection__value--rgba-picker" : ""].filter(Boolean).join(" ")}>
+              {showRgbaPicker ? (
+                renderRgbaColorPicker({
+                  value: rowValue,
+                  label: rowLabel,
+                  readOnly,
+                  onChange,
+                })
+              ) : null}
               {hasValue && Array.isArray(cellValue) ? (
                 renderInlineArrayFieldPreview({
                   rowKey: String(fieldPath.at(-1) ?? columnId),
@@ -4660,6 +5261,8 @@ function renderProjectedObjectFieldEditor(props: {
                   path: [...path, rowKey, ...fieldPath],
                   host,
                   readOnly,
+                  onOpenReference: onJumpToSource,
+                  showOpenReferenceButton: true,
                   onChange(nextValue) {
                     onChange(setValueAtPath(rowValue, fieldPath, nextValue) as Record<string, unknown>);
                   },
@@ -4687,6 +5290,7 @@ function renderProjectedObjectMapFieldEditor(props: {
   projectionMetadataByKey?: Record<string, Record<string, unknown>>;
   projectionMetadataSchema?: EditorSchema;
   onNavigate: (path: JsonPath) => void;
+  onJumpToSource?: (sourceId: string) => void;
   onChange: (nextValue: Record<string, unknown>) => void;
 }) {
   const {
@@ -4703,6 +5307,7 @@ function renderProjectedObjectMapFieldEditor(props: {
     projectionMetadataByKey,
     projectionMetadataSchema,
     onNavigate,
+    onJumpToSource,
     onChange,
   } = props;
   const entryRows = getProjectedMapEntryKeys(rowValue, projectionMetadataByKey).map((entryKey) => [
@@ -4731,7 +5336,7 @@ function renderProjectedObjectMapFieldEditor(props: {
           <div className="object-field-projection__row" key={`${rowKey}:${entryKey}`}>
             <span className="object-field-projection__row-label">{entryLabel}</span>
             <div className="object-field-projection__row-cells">
-              {projectionColumns.map((column) => {
+              {projectionColumns.map((column, columnIndex) => {
                 const columnId = getTableColumnId(column);
                 const fieldPath = getTableColumnPath(column);
                 const cellPath = [...path, rowKey, entryKey, ...fieldPath];
@@ -4759,11 +5364,32 @@ function renderProjectedObjectMapFieldEditor(props: {
                     host,
                   })
                   : null;
+                const showRgbaPicker = objectPreset === "rgba" && columnIndex === 0;
 
                 return (
-                  <div className={["object-field-projection__cell", column.wrap ? "is-wrapped" : ""].filter(Boolean).join(" ")} key={`${rowKey}:${entryKey}:${columnId}`}>
+                  <div
+                    className={[
+                      "object-field-projection__cell",
+                      column.wrap ? "is-wrapped" : "",
+                      showRgbaPicker ? "object-field-projection__cell--rgba-picker" : "",
+                    ].filter(Boolean).join(" ")}
+                    key={`${rowKey}:${entryKey}:${columnId}`}
+                  >
                     <span className="object-field-projection__label">{cellLabel}</span>
-                    <div className="object-field-projection__value">
+                    <div className={["object-field-projection__value", showRgbaPicker ? "object-field-projection__value--rgba-picker" : ""].filter(Boolean).join(" ")}>
+                      {showRgbaPicker ? (
+                        renderRgbaColorPicker({
+                          value: normalizedEntryValue,
+                          label: `${rowLabel} ${entryLabel}`,
+                          readOnly,
+                          onChange(nextValue) {
+                            onChange({
+                              ...rowValue,
+                              [entryKey]: updateProjectedMapEntry(entryValue, normalizedEntryValue, [], nextValue),
+                            });
+                          },
+                        })
+                      ) : null}
                       {hasValue && inlineProjection && isPlainObject(cellValue) ? (
                         renderInlineObjectProjection({
                           fieldKey: entryKey,
@@ -4780,6 +5406,7 @@ function renderProjectedObjectMapFieldEditor(props: {
                           projectionMetadataByKey: inlineProjection.objectValueMetadataByKey,
                           projectionMetadataSchema: inlineProjection.metadataSchema,
                           onNavigate,
+                          onJumpToSource,
                           onChange(nextValue) {
                             onChange({
                               ...rowValue,
@@ -4835,6 +5462,8 @@ function renderProjectedObjectMapFieldEditor(props: {
                           path: [...path, rowKey, entryKey, ...fieldPath],
                           host,
                           readOnly,
+                          onOpenReference: onJumpToSource,
+                          showOpenReferenceButton: true,
                           onChange(nextValue) {
                             onChange({
                               ...rowValue,
@@ -4853,6 +5482,87 @@ function renderProjectedObjectMapFieldEditor(props: {
       })}
     </div>
   );
+}
+
+function renderRgbaColorPicker(props: {
+  value: Record<string, unknown>;
+  label: string;
+  readOnly: boolean;
+  onChange: (nextValue: Record<string, unknown>) => void;
+}) {
+  const rgbaValue = getRgbaProjectionValue(props.value);
+  if (!rgbaValue) {
+    return null;
+  }
+  const hex = rgbaValueToHex(rgbaValue);
+  return (
+    <input
+      aria-label={`${props.label} color picker`}
+      className="object-field-projection__rgba-picker"
+      disabled={props.readOnly}
+      title={hex.toUpperCase()}
+      type="color"
+      value={hex}
+      onChange={(event) => props.onChange(applyHexToRgbaValue(props.value, event.target.value))}
+    />
+  );
+}
+
+function renderRgbaColorSummary(value: unknown, schema: EditorSchema | undefined) {
+  if (!isPlainObject(value) || getEditorObjectPreset(schema) !== "rgba") {
+    return null;
+  }
+  const rgbaValue = getRgbaProjectionValue(value);
+  if (!rgbaValue) {
+    return null;
+  }
+  const hex = rgbaValueToHex(rgbaValue).toUpperCase();
+  return (
+    <span className="array-color-summary">
+      <span
+        aria-hidden="true"
+        className="array-color-summary__swatch"
+        style={{ backgroundColor: `rgba(${rgbaValue.r * 255}, ${rgbaValue.g * 255}, ${rgbaValue.b * 255}, ${rgbaValue.a})` }}
+      />
+      <span className="array-color-summary__value">{hex}</span>
+    </span>
+  );
+}
+
+function getRgbaProjectionValue(value: Record<string, unknown>) {
+  const r = getUnitNumber(value.r);
+  const g = getUnitNumber(value.g);
+  const b = getUnitNumber(value.b);
+  const a = getUnitNumber(value.a) ?? 1;
+  if (r == null || g == null || b == null) {
+    return null;
+  }
+  return { r, g, b, a };
+}
+
+function getUnitNumber(value: unknown) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return null;
+  }
+  return Math.max(0, Math.min(1, value));
+}
+
+function rgbaValueToHex(value: { r: number; g: number; b: number }) {
+  const channels = [value.r, value.g, value.b].map((channel) => Math.round(channel * 255).toString(16).padStart(2, "0"));
+  return `#${channels.join("")}`;
+}
+
+function applyHexToRgbaValue(value: Record<string, unknown>, hex: string) {
+  const normalized = hex.trim();
+  if (!/^#[0-9a-fA-F]{6}$/.test(normalized)) {
+    return value;
+  }
+  return {
+    ...value,
+    r: Number((parseInt(normalized.slice(1, 3), 16) / 255).toFixed(3)),
+    g: Number((parseInt(normalized.slice(3, 5), 16) / 255).toFixed(3)),
+    b: Number((parseInt(normalized.slice(5, 7), 16) / 255).toFixed(3)),
+  };
 }
 
 function updatePropertySchema(schema: EditorSchema, key: string, updater: (propertySchema: EditorSchema) => EditorSchema) {

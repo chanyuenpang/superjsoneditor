@@ -73,6 +73,16 @@ Super JSON Editor 是一个**可复用、可嵌入**的通用 JSON 编辑器。
 - `const` 字段只读
 - Raw 模式如果开启，也必须走同一套 schema 校验
 
+### Schema 复用规则
+
+为避免在 `array` 视图里重复声明一套与 `object` 视图等价的 field schema，编辑器默认遵循以下规则：
+
+- 当某个 field 在 `array` 视图没有单独定义列级 schema 时，默认回退复用该 field 的 `object` schema
+- 这个回退同时适用于对象投影 preset 与显示配置
+- 只有当 `array` 视图显式提供了更具体的 schema 时，才覆盖 `object` 侧定义
+
+这意味着像 `rgba`、图片显示、对象投影列这类 field 级 schema，通常只需要在对象 schema 上定义一次。
+
 ## 包入口
 
 ```ts

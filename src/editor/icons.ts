@@ -10,6 +10,7 @@ import {
   IconGripVertical,
   IconInfoCircleFilled,
   IconLayoutSidebarRightCollapse,
+  IconMinus,
   IconPencil,
   IconPlus,
   IconRotateClockwise2,
@@ -17,6 +18,7 @@ import {
   IconSortDescending,
   IconTextWrap,
   IconTrashFilled,
+  IconX,
 } from "@tabler/icons-react";
 
 export const icons = {
@@ -37,5 +39,8 @@ export const icons = {
   delete: IconTrashFilled,
   copy: IconCopy,
   addField: IconPlus,
+  zoomIn: IconPlus,
+  zoomOut: IconMinus,
+  close: IconX,
   check: IconCheck,
 } as const;
