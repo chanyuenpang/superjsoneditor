@@ -1,6 +1,24 @@
 {
-  "schemaVersion": 1,
   "id": "superjsoneditor",
+  "name": "super-json-editor",
+  "maxTasksToKeep": 99,
+  "planning": true,
+  "goalMode": true,
+  "truthDispatch": "per_task",
+  "externalPlanningSkill": null,
+  "externalTruthSkill": null,
+  "externalAdrSkill": null,
+  "defaultPlanTemplate": null,
+  "contextPaths": [],
+  "memory": {
+    "externalDocPaths": [],
+    "embedding": {
+      "provider": "local",
+      "model": "Snowflake/snowflake-arctic-embed-m-v2.0"
+    }
+  },
+  "gitnexus": true,
+  "schemaVersion": 1,
   "displayName": "superjsoneditor",
   "aliases": [],
   "description": "",
@@ -43,27 +61,5 @@
       "mcpServers": {}
     }
   },
-  "gitnexus": {
-    "repoId": "superjsoneditor",
-    "indexed": false,
-    "enabled": false
-  },
-  "memory": {
-    "externalDocPaths": [],
-    "embedding": {
-      "provider": "local",
-      "model": "Snowflake/snowflake-arctic-embed-m-v2.0",
-      "store": {
-        "vector": {
-          "enabled": true
-        }
-      }
-    }
-  },
-  "state": {},
-  "name": "super-json-editor",
-  "maxTasksToKeep": 99,
-  "externalTruthSkill": null,
-  "externalAdrSkill": null,
-  "contextPaths": []
+  "state": {}
 }

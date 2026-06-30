@@ -31,7 +31,7 @@ export function AssetPickerFieldEditor({
 }: AssetPickerFieldEditorProps) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -231,7 +231,7 @@ function AssetPickerOptions(props: {
   activeValue?: SchemaOptionValue;
   draft: string;
   filteredOptions: SchemaOptionItem[];
-  inputRef: RefObject<HTMLInputElement | null>;
+  inputRef: RefObject<HTMLInputElement>;
   mode: "single" | "multi";
   onDraftChange: (value: string) => void;
   onSelectOption: (optionValue: SchemaOptionValue) => void;

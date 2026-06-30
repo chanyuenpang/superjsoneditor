@@ -1,0 +1,66 @@
+{
+  "title": "ensure object schema authoring writes use active view layer",
+  "status": "process.active",
+  "goal": {
+    "text": "ensure object schema authoring writes use active view layer"
+  },
+  "requirements": {
+    "summary": "确保 object/detail 页面所有 schema authoring 改动都统一走 active schema layer，在 View 模式写入 view file，在 Default 模式写入 default schema。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "object/detail 字段排序在 View 模式只写入 view file，不修改 default schema。",
+      "object/detail 字段 title 修改在 View 模式只写入 view file，不修改 default schema。",
+      "object/detail 内联字段 schema 改动（例如 select/multi-select options）继续通过同一写入管道接管。",
+      "实现不为每个 schema 改动入口单独判断 view/default，而是复用统一的 onUpdateDocumentSchema/activeSchemaLayer 写入路径。",
+      "相关 focused tests 与 build:app 通过。"
+    ]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Refine unified object schema write requirements",
+      "detail": "Record that all object schema authoring changes must route through the active schema layer, not per-feature special cases.",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "Enter process.active",
+      "detail": "Move the claw plan into active execution and start goal tracking.",
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "title": "Audit object schema authoring entry points",
+      "detail": "Trace object field title, order, and inline editor option writes to confirm whether they all use updateObjectSchema/onUpdateDocumentSchema.",
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "title": "Add active-layer regression coverage",
+      "detail": "Add or update tests proving object field order and existing object schema edits write only to view file in View mode.",
+      "status": "done"
+    },
+    {
+      "id": 5,
+      "title": "Patch only shared routing gaps",
+      "detail": "If tests expose a gap, fix the shared schema write/read path instead of adding per-control view handling.",
+      "status": "done"
+    },
+    {
+      "id": 6,
+      "title": "Verify and close out",
+      "detail": "Run focused Vitest coverage and npm run build:app, then close the claw plan.",
+      "status": "done"
+    }
+  ],
+  "references": [],
+  "rules": [],
+  "keyDecisions": [
+    "View schema override 的 object merge 必须以 view key 顺序为主，default-only key 追加，才能让 object properties 顺序这类 schema 改动被个人视图接管。",
+    "ObjectPage 的字段排序、字段 title、内联字段 option authoring 都应通过 updateObjectSchema -> onUpdateDocumentSchema -> activeSchemaLayer/writeTarget 统一写入，不做逐控件 view/default 分支。",
+    "ObjectPage 本地 fieldOrder 只应根据 schema property order signature 和 value key signature 同步，并使用 useLayoutEffect 在 active layer 切换绘制前更新，避免 UI 暂留上一层顺序。"
+  ],
+  "retrospective": {
+    "summary": "完成 object schema authoring 的 active view layer 加固：修复 resolveViewSchema object merge 顺序，让 view keys 优先、default-only keys 自动补入；修复 ObjectPage fieldOrder 在 View/Default 切换时的同步；新增 merge 和 object field order view 隔离测试，并验证 schema-authoring demo、object order、select/multi-select option authoring 与 build:app。"
+  }
+}

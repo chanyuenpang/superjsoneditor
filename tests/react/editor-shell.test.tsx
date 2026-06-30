@@ -3,7 +3,8 @@ import { test, vi } from "vitest";
 import { App } from "../../src/App";
 import { within } from "@testing-library/react";
 import { EditorShell, resolveCompactStack } from "../../src/editor/EditorShell";
-import type { EditorSchema, EditorSchemaHost, EditorValidationResult } from "../../src/editor/schema";
+import { resolveViewSchema } from "../../src/editor/view-schema";
+import type { EditorSchema, EditorSchemaHost, EditorSchemaViewFile, EditorValidationResult } from "../../src/editor/schema";
 
 function createMutableSchemaHost(initialRootSchema: EditorSchema, initialNamedSchemas?: Record<string, EditorSchema>): EditorSchemaHost & {
   getRootSchemaSnapshot: () => EditorSchema;
@@ -37,6 +38,73 @@ function createMutableSchemaHost(initialRootSchema: EditorSchema, initialNamedSc
   };
 }
 
+function createLayeredSchemaHost(
+  initialRootSchema: EditorSchema,
+  initialNamedSchemas?: Record<string, EditorSchema>,
+  initialViewFile?: EditorSchemaViewFile,
+): EditorSchemaHost & {
+  getRootSchemaSnapshot: () => EditorSchema;
+  getNamedSchemaSnapshot: (name: string) => EditorSchema | undefined;
+  getViewFileSnapshot: () => EditorSchemaViewFile | undefined;
+} {
+  let rootSchema = structuredClone(initialRootSchema);
+  let namedSchemas = structuredClone(initialNamedSchemas ?? {});
+  let viewFile = initialViewFile ? structuredClone(initialViewFile) : undefined;
+  return {
+    getSchema(context) {
+      if (context.activeViewPath && viewFile?.target === context.sourceId) {
+        return resolveViewSchema(rootSchema, viewFile.schema);
+      }
+      return rootSchema;
+    },
+    getNamedSchema(name, context) {
+      const defaultNamed = namedSchemas[name];
+      if (context?.activeViewPath && viewFile?.target === context.sourceId) {
+        return resolveViewSchema(defaultNamed, viewFile.namedSchemas?.[name]);
+      }
+      return defaultNamed;
+    },
+    setRootSchema(nextSchema, context) {
+      if (context.writeTarget?.mode === "view") {
+        viewFile = {
+          ...(viewFile ?? { target: context.sourceId, schema: {} }),
+          target: context.sourceId,
+          schema: structuredClone(nextSchema),
+        };
+        return;
+      }
+      rootSchema = structuredClone(nextSchema);
+    },
+    setNamedSchema(name, nextSchema, context) {
+      if (context.writeTarget?.mode === "view") {
+        viewFile = {
+          ...(viewFile ?? { target: context.sourceId, schema: {} }),
+          target: context.sourceId,
+          namedSchemas: {
+            ...(viewFile?.namedSchemas ?? {}),
+            [name]: structuredClone(nextSchema),
+          },
+        };
+        return;
+      }
+      namedSchemas = {
+        ...namedSchemas,
+        [name]: structuredClone(nextSchema),
+      };
+    },
+    getRootSchemaSnapshot() {
+      return structuredClone(rootSchema);
+    },
+    getNamedSchemaSnapshot(name) {
+      const schema = namedSchemas[name];
+      return schema ? structuredClone(schema) : undefined;
+    },
+    getViewFileSnapshot() {
+      return viewFile ? structuredClone(viewFile) : undefined;
+    },
+  };
+}
+
 function getCurrentActionButton(name: string) {
   return screen.getAllByRole("button", { name }).at(-1) as HTMLElement;
 }
@@ -57,6 +125,31 @@ function quickPressHeaderMenu(button: HTMLElement) {
   fireEvent.mouseDown(button, { button: 0, clientX: 100, clientY: 20 });
   fireEvent.mouseUp(window, { button: 0, clientX: 100, clientY: 20 });
 }
+
+test("view schema object merge keeps override key order before default-only keys", () => {
+  const resolved = resolveViewSchema(
+    {
+      type: "object",
+      properties: {
+        id: { type: "string", title: "Identifier" },
+        title: { type: "string", title: "Title" },
+        hp: { type: "integer", title: "Health" },
+        owner: { type: "string", title: "Owner" },
+      },
+    },
+    {
+      properties: {
+        hp: { title: "View Health" },
+        id: { title: "View ID" },
+        title: { title: "View Title" },
+      },
+    },
+  );
+
+  expect(Object.keys(resolved?.properties ?? {})).toEqual(["hp", "id", "title", "owner"]);
+  expect(resolved?.properties?.hp.title).toBe("View Health");
+  expect(resolved?.properties?.owner.title).toBe("Owner");
+});
 
 function createNavigationSemanticsSchemaHost(): EditorSchemaHost {
   return {
@@ -188,6 +281,72 @@ test("demo scenario switcher swaps the live schema showcase", () => {
   expect(screen.getByText("Literal values, schema-defined options")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Field Tags/i })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Field Rarity/i })).toBeInTheDocument();
+});
+
+test("schema-authoring demo can toggle between default and view schemas beside raw and edit", () => {
+  render(<App />);
+
+  const defaultHeaders = [
+    "#",
+    "Quest",
+    "Quest ID",
+    "Status",
+    "Description",
+  ];
+
+  expect(screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim())).toEqual(defaultHeaders);
+
+  const viewToggle = screen.getAllByRole("button", { name: "View schema mode" }).at(-1) as HTMLElement;
+  expect(viewToggle).toHaveTextContent("View");
+  expect(viewToggle).toHaveAttribute("aria-pressed", "false");
+  expect(viewToggle).not.toHaveClass("is-active");
+
+  fireEvent.click(viewToggle);
+
+  expect(screen.getAllByRole("columnheader").map((node) => node.getAttribute("aria-label")?.trim())).toEqual(defaultHeaders);
+  expect(viewToggle).toHaveTextContent("View");
+  expect(viewToggle).toHaveAttribute("aria-pressed", "true");
+  expect(viewToggle).toHaveClass("is-active");
+});
+
+test("schema-authoring demo keeps view schema edits isolated from the default schema", async () => {
+  render(<App />);
+
+  const viewToggle = screen.getAllByRole("button", { name: "View schema mode" }).at(-1) as HTMLElement;
+
+  fireEvent.click(viewToggle);
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Quest" }));
+  fireEvent.change(screen.getAllByLabelText("Column label for Quest").at(-1) as HTMLElement, { target: { value: "Mission View" } });
+
+  expect(screen.getByRole("columnheader", { name: "Mission View" })).toBeInTheDocument();
+
+  fireEvent.click(viewToggle);
+  expect(screen.getByRole("columnheader", { name: "Quest" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Mission View" })).toBeNull();
+
+  fireEvent.click(viewToggle);
+  await waitFor(() => expect(screen.getByRole("columnheader", { name: "Mission View" })).toBeInTheDocument());
+});
+
+test("schema-authoring demo keeps object view schema edits isolated from the default schema", async () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByText("Wake The Beacon"));
+  const currentPage = getCurrentPageQueries();
+  const viewToggle = currentPage.getByRole("button", { name: "View schema mode" });
+
+  fireEvent.click(viewToggle);
+  fireEvent.click(currentPage.getByRole("button", { name: "Edit" }));
+  fireEvent.change(currentPage.getByLabelText("Field label for Quest"), { target: { value: "View Quest" } });
+
+  await waitFor(() => expect(currentPage.getByLabelText("Field View Quest")).toHaveValue("Wake The Beacon"));
+
+  fireEvent.click(viewToggle);
+  await waitFor(() => expect(currentPage.getByLabelText("Field Quest")).toHaveValue("Wake The Beacon"));
+  expect(currentPage.queryByLabelText("Field View Quest")).toBeNull();
+
+  fireEvent.click(viewToggle);
+  await waitFor(() => expect(currentPage.getByLabelText("Field View Quest")).toHaveValue("Wake The Beacon"));
 });
 
 test("reference projection demo stays aligned with real item fields", () => {
@@ -407,6 +566,230 @@ test("hosts can observe live document changes before save", async () => {
   fireEvent.change(screen.getByLabelText("Field hello"), { target: { value: "galaxy" } });
 
   await waitFor(() => expect(handleChange).toHaveBeenCalledWith({ main: { hello: "galaxy" } }));
+});
+
+test("schema writes in view mode update only the view file while default mode stays unchanged", () => {
+  const schemaHost = createLayeredSchemaHost(
+    {
+      type: "array",
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "title" },
+            { key: "status" },
+          ],
+        },
+      },
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", title: "Title" },
+          status: { type: "string", title: "Status" },
+        },
+      },
+    },
+    undefined,
+    {
+      target: "main",
+      schema: {
+        "x-editor": {
+          table: {
+            columns: [
+              { key: "title", label: "View Title" },
+              { key: "status", label: "Stage" },
+            ],
+          },
+        },
+      },
+    },
+  );
+
+  const { rerender } = render(
+    <EditorShell
+      value={[{ title: "Wake The Beacon", status: "draft" }]}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "view", path: "views/main.view.json" }}
+    />,
+  );
+
+  quickPressHeaderMenu(screen.getByRole("button", { name: "View Title" }));
+  fireEvent.change(screen.getAllByLabelText("Column label for View Title").at(-1) as HTMLElement, { target: { value: "Mission View" } });
+
+  expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
+    { key: "title" },
+    { key: "status" },
+  ]);
+  expect(schemaHost.getViewFileSnapshot()?.schema["x-editor"]?.table?.columns).toEqual([
+    { key: "title", label: "Mission View" },
+    { key: "status", label: "Stage" },
+  ]);
+
+  rerender(
+    <EditorShell
+      value={[{ title: "Wake The Beacon", status: "draft" }]}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "default" }}
+    />,
+  );
+
+  expect(screen.getByRole("columnheader", { name: "Title" })).toBeInTheDocument();
+  expect(screen.queryByRole("columnheader", { name: "Mission View" })).toBeNull();
+
+  rerender(
+    <EditorShell
+      value={[{ title: "Wake The Beacon", status: "draft" }]}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "view", path: "views/main.view.json" }}
+    />,
+  );
+
+  expect(screen.getByRole("columnheader", { name: "Mission View" })).toBeInTheDocument();
+});
+
+test("view schema overrides apply when toggled from an open array row object page", () => {
+  const schemaHost = createLayeredSchemaHost(
+    {
+      type: "array",
+      "x-editor": {
+        table: {
+          columns: [
+            { key: "title" },
+            { key: "status" },
+          ],
+        },
+      },
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", title: "Title" },
+          status: { type: "string", title: "Status" },
+        },
+      },
+    },
+    undefined,
+    {
+      target: "main",
+      schema: {
+        items: {
+          properties: {
+            title: { title: "View Title" },
+          },
+        },
+      },
+    },
+  );
+
+  const { rerender } = render(
+    <EditorShell
+      value={[{ title: "Wake The Beacon", status: "draft" }]}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "default" }}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("row", { name: /Wake The Beacon/i }));
+
+  expect(getCurrentPageQueries().getByLabelText("Field Title")).toBeInTheDocument();
+  expect(getCurrentPageQueries().queryByLabelText("Field View Title")).toBeNull();
+
+  rerender(
+    <EditorShell
+      value={[{ title: "Wake The Beacon", status: "draft" }]}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "view", path: "views/main.view.json" }}
+    />,
+  );
+
+  expect(getCurrentPageQueries().getByLabelText("Field View Title")).toBeInTheDocument();
+  expect(getCurrentPageQueries().queryByLabelText("Field Title")).toBeNull();
+});
+
+test("object schema field order writes in view mode update only the view file", () => {
+  const schemaHost = createLayeredSchemaHost({
+    type: "object",
+    properties: {
+      id: { type: "string", title: "Identifier" },
+      title: { type: "string", title: "Title" },
+      hp: { type: "integer", title: "Health" },
+    },
+  });
+
+  const { container, rerender } = render(
+    <EditorShell
+      value={{ id: "quest_001", title: "First Quest", hp: 10 }}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "view", path: "views/main.view.json" }}
+    />,
+  );
+
+  const healthHandle = screen.getByRole("button", { name: "Reorder Health" });
+  const idHandle = screen.getByRole("button", { name: "Reorder Identifier" });
+  const titleHandle = screen.getByRole("button", { name: "Reorder Title" });
+  (idHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 200,
+    width: 300,
+    height: 72,
+    top: 200,
+    right: 300,
+    bottom: 272,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (healthHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 120,
+    width: 300,
+    height: 72,
+    top: 120,
+    right: 300,
+    bottom: 192,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+  (titleHandle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+    x: 0,
+    y: 40,
+    width: 300,
+    height: 72,
+    top: 40,
+    right: 300,
+    bottom: 112,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent.mouseDown(healthHandle, { button: 0, clientX: 10, clientY: 150 });
+  fireEvent.mouseMove(window, { clientX: 10, clientY: 60 });
+  fireEvent.mouseUp(window, { clientX: 10, clientY: 60 });
+
+  expect([...container.querySelectorAll(".property-heading > span")].slice(0, 3).map((node) => node.textContent?.trim())).toEqual([
+    "Health",
+    "Identifier",
+    "Title",
+  ]);
+  expect(Object.keys(schemaHost.getRootSchemaSnapshot().properties ?? {})).toEqual(["id", "title", "hp"]);
+  expect(Object.keys(schemaHost.getViewFileSnapshot()?.schema.properties ?? {})).toEqual(["hp", "id", "title"]);
+
+  rerender(
+    <EditorShell
+      value={{ id: "quest_001", title: "First Quest", hp: 10 }}
+      schemaHost={schemaHost}
+      activeSchemaLayer={{ mode: "default" }}
+    />,
+  );
+
+  expect([...container.querySelectorAll(".property-heading > span")].slice(0, 3).map((node) => node.textContent?.trim())).toEqual([
+    "Identifier",
+    "Title",
+    "Health",
+  ]);
 });
 
 test("read only mode keeps navigation but disables mutation controls", () => {
@@ -1215,10 +1598,12 @@ test("reference projection renders configured fields in object view", () => {
     />,
   );
 
-  expect(screen.getByText("Name")).toBeInTheDocument();
+  const companionButton = screen.getByRole("button", { name: "companion reference asset://characters/hero.json" });
+  expect(companionButton.querySelector(".reference-preview__compact")).not.toBeNull();
   expect(screen.getByText("Hero")).toBeInTheDocument();
-  expect(screen.getByText("ID")).toBeInTheDocument();
-  expect(screen.getByText("hero")).toBeInTheDocument();
+  expect(screen.queryByText("Name")).toBeNull();
+  expect(screen.queryByText("ID")).toBeNull();
+  expect(screen.queryByText("hero")).toBeNull();
 });
 
 test("reference projection renders configured fields in root array view", () => {
@@ -2478,7 +2863,7 @@ test("reference fields render searchable picker cards instead of native select",
         },
       }}
       schemaHost={{
-        getSchema(context) {
+        getSchema(context): EditorSchema {
           if (context.sourceId === "resource/facility/inn" || context.sourceId === "resource/facility/blacksmith") {
             return {
               type: "object",
@@ -2588,7 +2973,7 @@ test("reference array items inside documents keep picker rows but不再提供额
         },
       }}
       schemaHost={{
-        getSchema(context) {
+        getSchema(context): EditorSchema {
           if (context.sourceId === "resource/facility/inn" || context.sourceId === "resource/facility/blacksmith") {
             return {
               type: "object",
@@ -2969,7 +3354,7 @@ test("json-backed select options validate and render labels while preserving lit
       value={{ tag: "fire" }}
       schemaHost={schemaHost}
       host={{
-        loadReferenceSource(uri) {
+        loadReferenceSource(uri: string) {
           return uri === "asset://schema-data/tags.json"
             ? [{ id: "fire", name: "Fire", color: "red" }, { id: "ice", name: "Ice", color: "blue" }]
             : undefined;
@@ -3017,7 +3402,7 @@ test("optionsSource multi-select color edits route back to the source when color
       value={{ tags: ["fire"] }}
       schemaHost={schemaHost}
       host={{
-        loadReferenceSource(uri) {
+        loadReferenceSource(uri: string) {
           return uri === "asset://schema-data/tags.json"
             ? [{ id: "fire", name: "Fire", color: "red" }, { id: "ice", name: "Ice", color: "blue" }]
             : undefined;
@@ -5320,9 +5705,9 @@ test("object inline array previews keep reference cells as compact summaries ins
 
   expect(screen.getByText("Showing 1 of 1 items")).toBeInTheDocument();
   expect(screen.getByText("铜矿石")).toBeInTheDocument();
-  expect(screen.getByText("copper_ore")).toBeInTheDocument();
+  expect(document.querySelector(".object-array-preview .reference-preview__compact")).not.toBeNull();
   expect(screen.queryByText("说明")).toBeNull();
-  expect(screen.queryByText("产地：矿山 用途：冶炼铜器")).toBeNull();
+  expect(screen.getByText("产地：矿山 用途：冶炼铜器")).toBeInTheDocument();
 });
 
 test("object inline array previews render rgba preset objects as swatch plus color value summaries", () => {

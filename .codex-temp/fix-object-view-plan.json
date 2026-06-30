@@ -1,0 +1,55 @@
+{
+  "title": "fix view schema override for object view",
+  "status": "process.discussing",
+  "goal": {
+    "text": "fix view schema override for object view"
+  },
+  "requirements": {
+    "summary": "修复 view schema override 只在 array 视图生效、object 详情视图不生效的问题。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "在 schema-authoring demo 中，开启 View 后编辑 object/detail 视图的字段 schema 会写入 view file，并与 default 隔离。",
+      "View 对 array/table 视图和 object/detail 视图都使用同一个 resolved schema layer。",
+      "初始 view file 为空时，object 与 array 视图都不应和 default 有差异。",
+      "新增或更新 focused tests，并通过相关 Vitest 与 build:app。"
+    ]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Refine requirements and test scope",
+      "detail": "Capture the object-view override regression and expected behavior for view/default isolation.",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "Enter process.active",
+      "detail": "Move the claw plan into active execution and start goal tracking.",
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "title": "Reproduce object-view override gap",
+      "detail": "Inspect object/detail schema reads and writes, compare them with array/table schema behavior, and add a focused failing test if needed.",
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "title": "Implement object-view schema layer fix",
+      "detail": "Patch the narrow root cause so object/detail pages use active view schema for reads and directed writes.",
+      "status": "pending"
+    },
+    {
+      "id": 5,
+      "title": "Verify regression coverage",
+      "detail": "Run focused schema-authoring tests and npm run build:app, then close out the claw plan.",
+      "status": "pending"
+    }
+  ],
+  "references": [],
+  "rules": [],
+  "keyDecisions": [],
+  "retrospective": {
+    "summary": ""
+  }
+}

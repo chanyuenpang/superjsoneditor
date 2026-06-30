@@ -1,0 +1,59 @@
+{
+  "title": "fix view schema override for object view",
+  "status": "process.active",
+  "goal": {
+    "text": "fix view schema override for object view"
+  },
+  "requirements": {
+    "summary": "修复 view schema override 只在 array 视图生效、object 详情视图不生效的问题。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "在 schema-authoring demo 中，开启 View 后编辑 object/detail 视图的字段 schema 会写入 view file，并与 default 隔离。",
+      "View 对 array/table 视图和 object/detail 视图都使用同一个 resolved schema layer。",
+      "初始 view file 为空时，object 与 array 视图都不应和 default 有差异。",
+      "新增或更新 focused tests，并通过相关 Vitest 与 build:app。"
+    ]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Refine requirements and test scope",
+      "detail": "Capture the object-view override regression and expected behavior for view/default isolation.",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "Enter process.active",
+      "detail": "Move the claw plan into active execution and start goal tracking.",
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "title": "Reproduce object-view override gap",
+      "detail": "Inspect object/detail schema reads and writes, compare them with array/table schema behavior, and add a focused failing test if needed.",
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "title": "Implement object-view schema layer fix",
+      "detail": "Patch the narrow root cause so object/detail pages use active view schema for reads and directed writes.",
+      "status": "done"
+    },
+    {
+      "id": 5,
+      "title": "Verify regression coverage",
+      "detail": "Run focused schema-authoring tests and npm run build:app, then close out the claw plan.",
+      "status": "done"
+    }
+  ],
+  "references": [],
+  "rules": [],
+  "keyDecisions": [
+    "Object/detail page 已能读取 active view resolved schema；本次修复不改变底层 overlay 规则。",
+    "Object/detail page 的 schema authoring 入口需要与 array/table page 对齐：Edit 模式下允许编辑字段 title，并通过 onUpdateDocumentSchema 写入当前 active layer。",
+    "字段 title 为空时删除 title，回退到字段 key，避免制造空标题覆盖。"
+  ],
+  "retrospective": {
+    "summary": "修复了 view 在 object 详情页看起来不生效的问题：根因不是 overlay 读取失败，而是 object 页缺少可见的字段标题 schema 编辑入口。现在 Edit 模式下可编辑 object 字段标题，View 模式写入 view file 并与 default 隔离；相关 focused tests 与 build:app 已通过。"
+  }
+}

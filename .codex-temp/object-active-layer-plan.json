@@ -1,0 +1,62 @@
+{
+  "title": "ensure object schema authoring writes use active view layer",
+  "status": "process.discussing",
+  "goal": {
+    "text": "ensure object schema authoring writes use active view layer"
+  },
+  "requirements": {
+    "summary": "确保 object/detail 页面所有 schema authoring 改动都统一走 active schema layer，在 View 模式写入 view file，在 Default 模式写入 default schema。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "object/detail 字段排序在 View 模式只写入 view file，不修改 default schema。",
+      "object/detail 字段 title 修改在 View 模式只写入 view file，不修改 default schema。",
+      "object/detail 内联字段 schema 改动（例如 select/multi-select options）继续通过同一写入管道接管。",
+      "实现不为每个 schema 改动入口单独判断 view/default，而是复用统一的 onUpdateDocumentSchema/activeSchemaLayer 写入路径。",
+      "相关 focused tests 与 build:app 通过。"
+    ]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Refine unified object schema write requirements",
+      "detail": "Record that all object schema authoring changes must route through the active schema layer, not per-feature special cases.",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "Enter process.active",
+      "detail": "Move the claw plan into active execution and start goal tracking.",
+      "status": "pending"
+    },
+    {
+      "id": 3,
+      "title": "Audit object schema authoring entry points",
+      "detail": "Trace object field title, order, and inline editor option writes to confirm whether they all use updateObjectSchema/onUpdateDocumentSchema.",
+      "status": "pending"
+    },
+    {
+      "id": 4,
+      "title": "Add active-layer regression coverage",
+      "detail": "Add or update tests proving object field order and existing object schema edits write only to view file in View mode.",
+      "status": "pending"
+    },
+    {
+      "id": 5,
+      "title": "Patch only shared routing gaps",
+      "detail": "If tests expose a gap, fix the shared schema write/read path instead of adding per-control view handling.",
+      "status": "pending"
+    },
+    {
+      "id": 6,
+      "title": "Verify and close out",
+      "detail": "Run focused Vitest coverage and npm run build:app, then close the claw plan.",
+      "status": "pending"
+    }
+  ],
+  "references": [],
+  "rules": [],
+  "keyDecisions": [],
+  "retrospective": {
+    "summary": ""
+  }
+}

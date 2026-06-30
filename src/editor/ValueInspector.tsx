@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCallback } from "react";
 import { Fragment } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
@@ -75,6 +75,7 @@ type ValueInspectorProps = {
   onEditModeChange?: (isEditing: boolean) => void;
   toolbarPortalHost?: HTMLElement | null;
   enableRawEditor?: boolean;
+  renderPageActionButtons?: () => ReactNode;
 };
 
 export function ValueInspector(props: ValueInspectorProps) {
@@ -425,7 +426,7 @@ function renderInlineObjectProjection(props: {
   parentValue?: unknown;
   readOnly: boolean;
   projectionColumns: EditorTableColumn[];
-  projectionSchema: EditorSchema;
+  projectionSchema?: EditorSchema;
   objectPreset?: EditorObjectPreset | null;
   projectionMetadataByKey?: Record<string, Record<string, unknown>>;
   projectionMetadataSchema?: EditorSchema;
@@ -858,6 +859,7 @@ function ObjectPage({
   onEditModeChange,
   readOnly = false,
   enableRawEditor = true,
+  renderPageActionButtons,
 }: ValueInspectorProps & { value: Record<string, unknown> }) {
   const [rawOpen, setRawOpen] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -881,7 +883,10 @@ function ObjectPage({
   const hasSchemaPropertyChoices = schemaAddablePropertyKeys.some((key) => key.trim().length > 0);
   const defaultSchemaPropertyKey = schemaAddablePropertyKeys[0] ?? "";
   const canEditCurrentPage = Boolean(onEditModeChange);
+  const extraPageActions = canEditCurrentPage ? renderPageActionButtons?.() : null;
   const canAuthorObjectSchema = Boolean(schema?.properties && onUpdateDocumentSchema && sourceId);
+  const schemaPropertyOrderSignature = Object.keys(schema?.properties ?? {}).join("\u0000");
+  const valueKeySignature = Object.keys(value).join("\u0000");
   const [fieldOrder, setFieldOrder] = useState(() => getOrderedKeys(value, schema));
   const propertyItemRefs = useRef<Record<string, HTMLElement | null>>({});
   const [pressedField, setPressedField] = useState<string | null>(null);
@@ -911,18 +916,15 @@ function ObjectPage({
     setFieldOrder(getOrderedKeys(value, schema));
   }, [defaultSchemaPropertyKey, pathKey, usesSchemaPropertyCreation]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setFieldOrder((current) => {
       const nextKeys = getOrderedKeys(value, schema);
-      const preserved = current.filter((key) => nextKeys.includes(key));
-      const appended = nextKeys.filter((key) => !preserved.includes(key));
-      const nextOrder = [...preserved, ...appended];
-      if (nextOrder.length === current.length && nextOrder.every((key, index) => key === current[index])) {
+      if (sameStringArray(nextKeys, current)) {
         return current;
       }
-      return nextOrder;
+      return nextKeys;
     });
-  }, [schema, value]);
+  }, [schemaPropertyOrderSignature, valueKeySignature]);
 
   useEffect(() => {
     onEditModeChange?.(editMode);
@@ -1098,7 +1100,23 @@ function ObjectPage({
                         ) : (
                           <section className={["property-block", ...getSchemaClassNames(fieldSchema)].join(" ")}>
                             <div className="property-heading">
-                              <span>{fieldLabel}</span>
+                              {editMode && canAuthorObjectSchema ? (
+                                <input
+                                  aria-label={`Field label for ${fieldLabel}`}
+                                  className="detail-input field-label-input"
+                                  value={fieldSchema?.title ?? key}
+                                  onChange={(event) => {
+                                    const nextTitle = event.target.value;
+                                    updateObjectSchema((currentSchema) => updatePropertySchema(
+                                      currentSchema,
+                                      key,
+                                      (propertySchema) => setSchemaTitle(propertySchema, nextTitle),
+                                    ));
+                                  }}
+                                />
+                              ) : (
+                                <span>{fieldLabel}</span>
+                              )}
                               <div className="property-heading__actions">
                                 {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
                                 {renderNullableTypeButton({
@@ -1134,7 +1152,7 @@ function ObjectPage({
                             {editMode && isRequiredField(schema, key) ? (
                               <div className="form-hint">必填字段不能删除。</div>
                             ) : null}
-                            {isInlineSchemaEditor(fieldValue, fieldSchema) ? (
+                            {isInlineSchemaEditor(fieldValue, fieldSchema, host) ? (
                               renderPrimitiveEditor({
                                 value: fieldValue,
                                 ariaLabel: `Field ${fieldLabel}`,
@@ -1421,6 +1439,7 @@ function ObjectPage({
                     {editMode ? "Done" : "Edit"}
                   </button>
                 ) : null}
+                {extraPageActions}
               </div>
             </section>
           </div>
@@ -1454,6 +1473,7 @@ function ArrayPage({
   toolbarPortalHost,
   readOnly = false,
   enableRawEditor = true,
+  renderPageActionButtons,
 }: ValueInspectorProps & { value: unknown[] }) {
   const actionColumnWidth = 136;
   const [rawOpen, setRawOpen] = useState(false);
@@ -1467,6 +1487,7 @@ function ArrayPage({
   const [tableViewportWidth, setTableViewportWidth] = useState(0);
   const pathKey = path.join("/");
   const canEditCurrentPage = Boolean(onEditModeChange);
+  const extraPageActions = canEditCurrentPage ? renderPageActionButtons?.() : null;
   const schemaState = schema
     ? resolveNode({
       rootSchema: schema,
@@ -2292,7 +2313,7 @@ function ArrayPage({
                               : cellValue !== undefined;
                             const showInlineProjection = hasColumn && cellProjectionConfig && isPlainObject(cellValue);
                             const cellLabel = configuredColumn?.label ?? column;
-                            const showInlineEditor = hasColumn && !showInlineProjection && isInlineSchemaEditor(cellValue, cellSchema);
+                            const showInlineEditor = hasColumn && !showInlineProjection && isInlineSchemaEditor(cellValue, cellSchema, host);
                             return (
                             <td
                               className={
@@ -2379,7 +2400,7 @@ function ArrayPage({
                         {renderArrayDropIndicator(displayIndex)}
                         {(() => {
                           const itemSchema = schema?.items;
-                          const showInlineItemEditor = path.length > 0 && isInlineSchemaEditor(item, itemSchema);
+                          const showInlineItemEditor = path.length > 0 && isInlineSchemaEditor(item, itemSchema, host);
                           return (
                         <tr
                           className={[
@@ -2507,6 +2528,7 @@ function ArrayPage({
                     {editMode ? "Done" : "Edit"}
                   </button>
                 ) : null}
+                {extraPageActions}
               </div>
             </section>
             {typeof document !== "undefined" && dragGhost ? createPortal(
@@ -2769,10 +2791,12 @@ function PrimitivePage({
   onEditModeChange,
   readOnly = false,
   enableRawEditor = true,
+  renderPageActionButtons,
 }: ValueInspectorProps) {
   const [rawOpen, setRawOpen] = useState(false);
   const pathKey = path.join("/");
   const canEditCurrentPage = Boolean(onEditModeChange);
+  const extraPageActions = canEditCurrentPage ? renderPageActionButtons?.() : null;
   const schemaState = schema
     ? resolveNode({
       rootSchema: schema,
@@ -2859,6 +2883,7 @@ function PrimitivePage({
                     Raw
                   </button>
                 ) : null}
+                {extraPageActions}
               </div>
             </section>
           </div>
@@ -3065,7 +3090,16 @@ function renderPrimitiveEditor(props: {
   const readOnly = props.readOnly || effectiveSchema?.readOnly === true || effectiveSchema?.const !== undefined;
   const nullableBranch = getNullableBranchSchema(effectiveSchema);
   const nullableLabel = getNullableBranchLabel(nullableBranch);
-  const editorOptionsState = resolveEditorOptions(effectiveSchema, props.host);
+  const usesImplicitAssetPicker = Boolean(
+    effectiveSchema?.["x-editor"]?.fieldType === "asset-picker"
+    && !props.schema?.["x-editor"]?.fieldType
+    && !props.schema?.["x-editor"]?.optionsSource,
+  );
+  const rawEditorOptionsState = resolveEditorOptions(effectiveSchema, props.host);
+  const editorOptionsState = rawEditorOptionsState.error && usesImplicitAssetPicker
+    ? { options: [], error: null }
+    : rawEditorOptionsState;
+  const disableImplicitAssetPickerUi = usesImplicitAssetPicker && editorOptionsState.options.length === 0;
   const referenceOptions = effectiveSchema?.["x-editor"]?.reference && props.host?.getReferenceOptions
     ? props.host.getReferenceOptions({
       path: props.path,
@@ -3138,7 +3172,7 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (effectiveSchema?.["x-editor"]?.fieldType === "asset-picker") {
+  if (effectiveSchema?.["x-editor"]?.fieldType === "asset-picker" && !disableImplicitAssetPickerUi) {
     const assetPickerValue = Array.isArray(props.value)
       ? props.value as Array<string | number>
       : props.value == null || props.value === ""
@@ -4781,10 +4815,10 @@ function chipStyleForSummaryColor(color: EditorViewOptionColor | null): React.CS
   return palette[color];
 }
 
-function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined) {
+function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined, host?: EditorHost) {
   const fieldType = schema?.["x-editor"]?.fieldType;
   if (schema?.["x-editor"]?.reference) {
-    return value == null || typeof value === "string";
+    return Boolean(host?.getReferenceOptions) && (value == null || typeof value === "string");
   }
   if (fieldType === "select") {
     return value == null || typeof value === "string" || typeof value === "number";
@@ -5130,6 +5164,10 @@ function getOrderedKeys(value: Record<string, unknown>, schema?: EditorSchema) {
   return [...prioritized, ...remaining];
 }
 
+function sameStringArray(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 function reorderSchemaPropertiesToMatch(schema: EditorSchema, orderedKeys: string[]) {
   if (!schema.properties) return schema;
   const rank = new Map(orderedKeys.map((key, index) => [key, index]));
@@ -5164,7 +5202,7 @@ function renderProjectedObjectFieldEditor(props: {
   resolveNamedSchema?: (name: string) => EditorSchema | undefined;
   readOnly: boolean;
   projectionColumns: EditorTableColumn[];
-  projectionSchema: EditorSchema;
+  projectionSchema?: EditorSchema;
   objectPreset?: EditorObjectPreset | null;
   onNavigate: (path: JsonPath) => void;
   onJumpToSource?: (sourceId: string) => void;
@@ -5285,7 +5323,7 @@ function renderProjectedObjectMapFieldEditor(props: {
   parentValue?: unknown;
   readOnly: boolean;
   projectionColumns: EditorTableColumn[];
-  projectionSchema: EditorSchema;
+  projectionSchema?: EditorSchema;
   objectPreset?: EditorObjectPreset | null;
   projectionMetadataByKey?: Record<string, Record<string, unknown>>;
   projectionMetadataSchema?: EditorSchema;
@@ -5573,6 +5611,19 @@ function updatePropertySchema(schema: EditorSchema, key: string, updater: (prope
       ...schema.properties,
       [key]: updater(schema.properties[key]),
     },
+  };
+}
+
+function setSchemaTitle(schema: EditorSchema, title: string): EditorSchema {
+  const normalizedTitle = title.trim();
+  if (!normalizedTitle) {
+    const nextSchema = { ...schema };
+    delete nextSchema.title;
+    return nextSchema;
+  }
+  return {
+    ...schema,
+    title: normalizedTitle,
   };
 }
 

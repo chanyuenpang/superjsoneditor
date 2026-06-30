@@ -510,6 +510,19 @@ button {
   background: #efeeeb;
 }
 
+.ghost-button.is-active,
+.ghost-button[aria-pressed="true"] {
+  background: #305f4f;
+  border-color: #305f4f;
+  color: #fff;
+}
+
+.ghost-button.is-active:hover,
+.ghost-button[aria-pressed="true"]:hover {
+  background: #24493d;
+  border-color: #24493d;
+}
+
 .toolbar-hidden-fields {
   position: relative;
 }
@@ -1867,6 +1880,16 @@ th:hover .column-resize-handle::after,
   color: #37352f;
   font-size: 13px;
   font-weight: 600;
+}
+
+.node-page--object .field-label-input {
+  color: #37352f;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 26px;
+  min-width: 120px;
+  padding: 0 8px;
+  width: min(220px, 100%);
 }
 
 .node-page--object .property-heading__actions {

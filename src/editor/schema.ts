@@ -132,16 +132,36 @@ export type EditorSchemaContext = {
   path: JsonPath;
   value: unknown;
   documents: Record<string, unknown>;
+  activeViewPath?: string | null;
 };
+
+export type EditorSchemaLayerTarget =
+  | {
+    mode: "default";
+  }
+  | {
+    mode: "view";
+    path: string;
+  };
 
 export type EditorSchemaWriteContext = {
   sourceId: string;
   documents: Record<string, unknown>;
+  activeViewPath?: string | null;
+  writeTarget?: EditorSchemaLayerTarget;
+};
+
+export type EditorSchemaViewFile = {
+  target: string;
+  schema: EditorSchema;
+  namedSchemas?: Record<string, EditorSchema>;
+  name?: string;
+  description?: string;
 };
 
 export type EditorSchemaHost = {
   getSchema: (context: EditorSchemaContext) => EditorSchema | undefined;
-  getNamedSchema?: (name: string) => EditorSchema | undefined;
+  getNamedSchema?: (name: string, context?: EditorSchemaWriteContext) => EditorSchema | undefined;
   setRootSchema?: (schema: EditorSchema, context: EditorSchemaWriteContext) => void | Promise<void>;
   setNamedSchema?: (name: string, schema: EditorSchema, context: EditorSchemaWriteContext) => void | Promise<void>;
 };

@@ -7,3 +7,4 @@ coverage/
 !.claw/project.json
 !.claw/truth/
 !.claw/truth/**
+.gitnexus

@@ -1,0 +1,72 @@
+{
+  "title": "view file schema override support and demo toggle",
+  "status": "process.active",
+  "goal": {
+    "text": "view file schema override support and demo toggle"
+  },
+  "requirements": {
+    "summary": "为 super-json-editor 增加 view file schema override 支持，并在 demo 的 schema-authoring 场景提供 View on/off toggle。",
+    "openQuestions": [],
+    "acceptanceCriteria": [
+      "View file schema 与 default schema 叠加得到 resolved schema，view 同字段覆盖 default，default 新字段在 view 未覆盖时继承。",
+      "在 view 模式编辑 schema 只写入 view file，不影响 default schema。",
+      "Demo 中 View 按钮固定显示 View/视图，开启后保持可见按下态；初始 view 与 default 完全一致。",
+      "相关 focused tests 与 app build 通过。"
+    ]
+  },
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Use the planning skill to refine the request and append executable tasks",
+      "detail": "Use the built-in planning skill to refine the request and append executable tasks into `tasks`. If the current request is still unclear, fill `requirements` first as part of the planning output, then append executable tasks. Keep the pre-seeded activation task and only append downstream work. Recommended planning skill: the built-in planning skill.",
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "title": "Enter process.active",
+      "detail": "After the planning task appends the executable tasks, move the plan into `process.active` and continue execution from the refined task list. If Goal Mode is enabled for this project, start Goal Mode when entering `process.active` and use `Using claw-kit, update plan, follow returned workflowGuidance，finish your goal：view file schema override support and demo toggle` as the goal objective.",
+      "status": "done"
+    },
+    {
+      "title": "Write the implementation plan and record the view file schema layering decisions",
+      "detail": "Create a plan doc under docs/plans that captures the agreed model: default schema + view file schema = resolved schema, default writes stay on the default schema, view writes stay on the active view file, and the demo site adds a toolbar toggle beside Raw/Edit.",
+      "status": "done",
+      "id": 3
+    },
+    {
+      "title": "Implement schema host view file layering and directed write support",
+      "detail": "Extend the schema host contract and EditorShell schema authoring flow so hosts can expose resolved schema reads plus write-target-aware updates for default and view layers without breaking existing hosts.",
+      "status": "done",
+      "id": 4
+    },
+    {
+      "title": "Add merge helper and tests for resolved schema behavior",
+      "detail": "Introduce a small schema merge helper for default schema plus view schema overrides, export it, and cover the layering behavior with focused tests.",
+      "status": "done",
+      "id": 5
+    },
+    {
+      "title": "Add demo-site view toggle and in-memory view file simulation",
+      "detail": "Update the demo app to simulate view files for the schema authoring scenario and render a toolbar toggle beside Raw/Edit so users can switch between default and view schema modes.",
+      "status": "done",
+      "id": 6
+    },
+    {
+      "title": "Run targeted verification and close out the task",
+      "detail": "Run the relevant Vitest coverage for schema authoring, view layering, and demo toggle behavior, then summarize the outcome and remaining risks before closeout.",
+      "status": "done",
+      "id": 7
+    }
+  ],
+  "references": [],
+  "rules": [],
+  "keyDecisions": [
+    "个人视图文件作为 view schema override，不引入冲突概念；同字段以 view 为主。",
+    "view schema 初始为空对象，resolve 时叠加 default schema，避免未编辑时切换 view 产生视觉差异。",
+    "schema 写入由 activeSchemaLayer/writeTarget 决定：default 写 default，view 写 active view file。",
+    "Demo View 控制采用稳定 on/off toggle：文本不在 View/Default 间切换，状态由 aria-pressed 与 is-active 表达。"
+  ],
+  "retrospective": {
+    "summary": "完成 view file schema override 支持、schema 写入目标分层、resolve helper、demo View toggle 与测试覆盖；修复了 View 初始切换不应改变视图、以及按钮开启后缺少保持按下视觉态的问题。验证通过 focused Vitest 与 npm run build:app。"
+  }
+}

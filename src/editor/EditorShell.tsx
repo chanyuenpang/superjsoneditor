@@ -4,7 +4,7 @@ import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type N
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { isReferenceValue, type EditorHost } from "./host";
-import type { EditorSchema, EditorSchemaHost, EditorValidationResult, EditorValidationHandler } from "./schema";
+import type { EditorSchema, EditorSchemaHost, EditorSchemaLayerTarget, EditorValidationResult, EditorValidationHandler } from "./schema";
 import { resolveSchemaAtPath, updateSchemaAtDocumentPath, validateDocument as validateBySchema } from "./schema";
 import {
   determineBackAnimation,
@@ -138,6 +138,7 @@ export type EditorShellProps = {
   value?: unknown;
   host?: EditorHost;
   schemaHost?: EditorSchemaHost;
+  activeSchemaLayer?: EditorSchemaLayerTarget;
   onSave?: EditorSaveHandler;
   onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
@@ -146,6 +147,7 @@ export type EditorShellProps = {
   readOnly?: boolean;
   enableRawEditor?: boolean;
   toolbarActions?: ReactNode;
+  renderPageActionButtons?: () => ReactNode;
 };
 
 const animationDurationMs = 500;
@@ -162,6 +164,7 @@ export function EditorShell({
   value,
   host,
   schemaHost,
+  activeSchemaLayer = { mode: "default" },
   onSave,
   onUnavailableSaveAttempt,
   onReload,
@@ -170,6 +173,7 @@ export function EditorShell({
   readOnly = false,
   enableRawEditor = true,
   toolbarActions,
+  renderPageActionButtons,
 }: EditorShellProps) {
   const initialDocuments = useMemo(() => normalizeDocuments(documents, rootSourceId, value), [documents, rootSourceId, value]);
   const initialDocumentsSnapshot = useMemo(() => JSON.stringify(initialDocuments), [initialDocuments]);
@@ -404,6 +408,7 @@ export function EditorShell({
       path: [],
       value: documentsBySourceId[sourceId],
       documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
     });
     if (page.path.length === 0) {
       return rootSchema;
@@ -419,11 +424,17 @@ export function EditorShell({
       path: page.path,
       value: resolvePageValue(page),
       documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
     });
   }
 
   function resolveNamedSchema(name: string): EditorSchema | undefined {
-    return schemaHost?.getNamedSchema?.(name);
+    return schemaHost?.getNamedSchema?.(name, {
+      sourceId: currentPage.sourceId ?? rootSourceId,
+      documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
+      writeTarget: activeSchemaLayer,
+    });
   }
 
   function handleUpdateDocumentSchema(
@@ -439,12 +450,15 @@ export function EditorShell({
       path: [],
       value: rootValue,
       documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
     });
     if (!rootSchema) return;
     const nextSchema = updateSchemaAtDocumentPath(rootSchema, path, target, updater);
     const result = schemaHost.setRootSchema(nextSchema, {
       sourceId,
       documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
+      writeTarget: activeSchemaLayer,
     });
     if (result instanceof Promise) {
       void result.then(() => setSchemaRevision((current) => current + 1));
@@ -458,11 +472,18 @@ export function EditorShell({
     updater: (schema: EditorSchema) => EditorSchema,
   ) {
     if (!schemaHost?.setNamedSchema) return;
-    const currentSchema = schemaHost.getNamedSchema?.(name);
+    const currentSchema = schemaHost.getNamedSchema?.(name, {
+      sourceId: rootSourceId,
+      documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
+      writeTarget: activeSchemaLayer,
+    });
     if (!currentSchema) return;
     const result = schemaHost.setNamedSchema(name, updater(currentSchema), {
       sourceId: rootSourceId,
       documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
+      writeTarget: activeSchemaLayer,
     });
     if (result instanceof Promise) {
       void result.then(() => setSchemaRevision((current) => current + 1));
@@ -484,6 +505,7 @@ export function EditorShell({
       path: [],
       value: nextDocuments[rootSourceId],
       documents: nextDocuments,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
     });
 
     if (!rootSchema) {
@@ -869,6 +891,7 @@ export function EditorShell({
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  renderPageActionButtons={renderPageActionButtons}
                   toolbarPortalHost={pageToolbarHost}
                     referenceError={currentPage.referenceError}
                     isReference={currentPage.isReference}
@@ -932,6 +955,7 @@ export function EditorShell({
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                     validationResult={validationResult}
                     enableRawEditor={enableRawEditor}
+                    renderPageActionButtons={renderPageActionButtons}
                     toolbarPortalHost={index === visiblePages.length - 1 ? pageToolbarHost : null}
                     referenceError={page.referenceError}
                     isReference={page.isReference}
@@ -1001,6 +1025,7 @@ export function EditorShell({
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                     validationResult={validationResult}
                     enableRawEditor={enableRawEditor}
+                    renderPageActionButtons={renderPageActionButtons}
                     referenceError={visiblePages[0]?.referenceError}
                     isReference={visiblePages[0]?.isReference}
                     referenceScopeDepth={getReferenceScopeDepthForPage(pages, visiblePages[0])}
@@ -1062,6 +1087,7 @@ export function EditorShell({
                     onUpdateNamedSchema={handleUpdateNamedSchema}
                     validationResult={validationResult}
                     enableRawEditor={enableRawEditor}
+                    renderPageActionButtons={renderPageActionButtons}
                     toolbarPortalHost={null}
                     referenceError={rightVisiblePage.referenceError}
                     isReference={rightVisiblePage.isReference}
@@ -1105,6 +1131,7 @@ export function EditorShell({
                   onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  renderPageActionButtons={renderPageActionButtons}
                   toolbarPortalHost={null}
                   referenceError={stackAnimation.exitingPage.referenceError}
                   isReference={stackAnimation.exitingPage.isReference}
@@ -1153,6 +1180,7 @@ export function EditorShell({
                   onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
                   enableRawEditor={enableRawEditor}
+                  renderPageActionButtons={renderPageActionButtons}
                   toolbarPortalHost={null}
                   referenceError={stackAnimation.promotingPage.referenceError}
                   isReference={stackAnimation.promotingPage.isReference}
@@ -1220,6 +1248,7 @@ export function EditorShell({
                         onUpdateNamedSchema={handleUpdateNamedSchema}
                         validationResult={validationResult}
                         enableRawEditor={enableRawEditor}
+                        renderPageActionButtons={renderPageActionButtons}
                         toolbarPortalHost={visiblePages.length === 1 ? pageToolbarHost : null}
                         referenceError={rootPage.referenceError}
                         isReference={rootPage.isReference}
@@ -1295,6 +1324,7 @@ export function EditorShell({
                         onUpdateNamedSchema={handleUpdateNamedSchema}
                         validationResult={validationResult}
                         enableRawEditor={enableRawEditor}
+                        renderPageActionButtons={renderPageActionButtons}
                         toolbarPortalHost={pageToolbarHost}
                         referenceError={pinnedRightPage.referenceError}
                         isReference={pinnedRightPage.isReference}
@@ -1343,6 +1373,7 @@ export function EditorShell({
                       onUpdateNamedSchema={handleUpdateNamedSchema}
                       validationResult={validationResult}
                       enableRawEditor={enableRawEditor}
+                      renderPageActionButtons={renderPageActionButtons}
                       toolbarPortalHost={null}
                       referenceError={stackAnimation.exitingPage.referenceError}
                       isReference={stackAnimation.exitingPage.isReference}

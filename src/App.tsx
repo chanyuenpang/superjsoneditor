@@ -2,8 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { EditorShell, type EditorDocuments } from "./editor/EditorShell";
 import type { EditorHost } from "./editor/host";
-import type { EditorSchema, EditorSchemaHost } from "./editor/schema";
+import type { EditorSchema, EditorSchemaHost, EditorSchemaViewFile } from "./editor/schema";
 import { usePressSlopGuard } from "./editor/usePressSlopGuard";
+import { resolveViewSchema } from "./editor/view-schema";
 import heroDocument from "./demo-sources/characters/hero.json";
 import guideDocument from "./demo-sources/characters/guide.json";
 import shadowEyeDocument from "./demo-sources/encounters/shadow-eye.json";
@@ -191,42 +192,48 @@ const selectAndTagsHostZh: EditorHost = {
   },
 };
 
-const schemaAuthoringSchemaHost = createMutableSchemaHost({
-  "schema-authoring": {
-    type: "array",
-    "x-editor": {
-      table: {
-        columns: [
-          { key: "title", label: "Quest", sortable: true },
-          { key: "id", label: "Quest ID" },
-          { key: "status", sortable: true },
-          { key: "description", wrap: true },
-        ],
-      },
-    },
-    items: {
-      type: "object",
-      properties: {
-        title: { type: "string", title: "Quest" },
-        id: { type: "string", title: "Quest ID" },
-        status: {
-          type: "string",
-          title: "Status",
-          "x-editor": {
-            fieldType: "select",
-            options: [
-              { value: "draft", label: "Draft", color: "gray" },
-              { value: "review", label: "Review", color: "yellow" },
-              { value: "live", label: "Live", color: "green" },
-            ],
-          },
-        },
-        owner: { type: "string", title: "Owner" },
-        description: { type: "string", title: "Description" },
-      },
+const schemaAuthoringDefaultSchema: EditorSchema = {
+  type: "array",
+  "x-editor": {
+    table: {
+      columns: [
+        { key: "title", label: "Quest", sortable: true },
+        { key: "id", label: "Quest ID" },
+        { key: "status", sortable: true },
+        { key: "description", wrap: true },
+      ],
     },
   },
-});
+  items: {
+    type: "object",
+    properties: {
+      title: { type: "string", title: "Quest" },
+      id: { type: "string", title: "Quest ID" },
+      status: {
+        type: "string",
+        title: "Status",
+        "x-editor": {
+          fieldType: "select",
+          options: [
+            { value: "draft", label: "Draft", color: "gray" },
+            { value: "review", label: "Review", color: "yellow" },
+            { value: "live", label: "Live", color: "green" },
+          ],
+        },
+      },
+      owner: { type: "string", title: "Owner" },
+      description: { type: "string", title: "Description" },
+    },
+  },
+};
+
+const schemaAuthoringDemoViewPath = "views/schema-authoring-compact.view.json";
+
+const schemaAuthoringInitialViewFile: EditorSchemaViewFile = {
+  target: "schema-authoring",
+  name: "Personal view",
+  schema: {},
+};
 
 const rewardItemSchema: EditorSchema = {
   type: "object",
@@ -598,7 +605,6 @@ const demoScenarioRuntimes: Record<DemoLocale, Record<string, DemoScenarioRuntim
     "schema-authoring": {
       documents: schemaAuthoringDocuments,
       rootSourceId: "schema-authoring",
-      schemaHost: schemaAuthoringSchemaHost,
     },
     "reference-projection": {
       documents: referenceProjectionDocuments,
@@ -622,7 +628,6 @@ const demoScenarioRuntimes: Record<DemoLocale, Record<string, DemoScenarioRuntim
     "schema-authoring": {
       documents: schemaAuthoringDocumentsZh,
       rootSourceId: "schema-authoring",
-      schemaHost: schemaAuthoringSchemaHost,
     },
     "reference-projection": {
       documents: referenceProjectionDocumentsZh,
@@ -665,6 +670,8 @@ const appCopy = {
     layoutModeLabel: "Layout mode",
     editingEnabledLabel: "Enable editing",
     rawJsonEnabledLabel: "Enable raw JSON",
+    viewModeLabel: "View schema mode",
+    viewToggleLabel: "View",
     leftPageFullscreenLabel: "Auto fullscreen single left page",
     deployedSaveMessage: "Save only works in local development. Changes in the deployed demo will not persist.",
   },
@@ -687,6 +694,8 @@ const appCopy = {
     layoutModeLabel: "布局模式",
     editingEnabledLabel: "允许编辑",
     rawJsonEnabledLabel: "允许 Raw JSON",
+    viewModeLabel: "视图 Schema 模式",
+    viewToggleLabel: "视图",
     leftPageFullscreenLabel: "单左页自动全屏",
     deployedSaveMessage: "保存仅在本地开发环境中生效，线上 demo 的改动不会持久化。",
   },
@@ -710,6 +719,8 @@ const appCopy = {
     layoutModeLabel: string;
     editingEnabledLabel: string;
     rawJsonEnabledLabel: string;
+    viewModeLabel: string;
+    viewToggleLabel: string;
     leftPageFullscreenLabel: string;
     deployedSaveMessage: string;
   }
@@ -723,13 +734,35 @@ export function App() {
   const [layoutMode, setLayoutMode] = useState<"stack-flow" | "pinned-root">("stack-flow");
   const [editingEnabled, setEditingEnabled] = useState(true);
   const [rawJsonEnabled, setRawJsonEnabled] = useState(true);
+  const [schemaViewMode, setSchemaViewMode] = useState<"default" | "view">("default");
   const [leftPageFullscreen, setLeftPageFullscreen] = useState(true);
+  const schemaAuthoringSchemaHost = useMemo(
+    () => createMutableViewSchemaHost(
+      { "schema-authoring": schemaAuthoringDefaultSchema },
+      undefined,
+      [{ path: schemaAuthoringDemoViewPath, file: schemaAuthoringInitialViewFile }],
+    ),
+    [],
+  );
   const activeScenario = useMemo(
     () => demoScenarios.find((scenario) => scenario.id === activeScenarioId) ?? demoScenarios[0],
     [activeScenarioId],
   );
   const copy = appCopy[locale];
-  const activeScenarioRuntime = demoScenarioRuntimes[locale][activeScenario.id];
+  const activeScenarioRuntime = useMemo(() => {
+    const runtime = demoScenarioRuntimes[locale][activeScenario.id];
+    if (activeScenario.id !== "schema-authoring") {
+      return runtime;
+    }
+    return {
+      ...runtime,
+      schemaHost: schemaAuthoringSchemaHost,
+    };
+  }, [activeScenario.id, locale, schemaAuthoringSchemaHost]);
+  const activeSchemaLayer =
+    activeScenario.id === "schema-authoring" && schemaViewMode === "view"
+      ? { mode: "view" as const, path: schemaAuthoringDemoViewPath }
+      : { mode: "default" as const };
   usePressSlopGuard(appRootRef);
 
   const saveHandler =
@@ -822,6 +855,7 @@ export function App() {
             readOnly={!editingEnabled}
             rootSourceId={activeScenarioRuntime.rootSourceId}
             schemaHost={activeScenarioRuntime.schemaHost}
+            activeSchemaLayer={activeSchemaLayer}
             toolbarActions={(
               <DemoSettingsPopover
                 copy={copy}
@@ -835,6 +869,22 @@ export function App() {
                 onRawJsonEnabledChange={setRawJsonEnabled}
               />
             )}
+            renderPageActionButtons={
+              activeScenario.id === "schema-authoring"
+                ? (() => (
+                  <button
+                    aria-label={copy.viewModeLabel}
+                    aria-pressed={schemaViewMode === "view"}
+                    className={`ghost-button compact-button${schemaViewMode === "view" ? " is-active" : ""}`}
+                    type="button"
+                    title={copy.viewModeLabel}
+                    onClick={() => setSchemaViewMode((current) => (current === "default" ? "view" : "default"))}
+                  >
+                    {copy.viewToggleLabel}
+                  </button>
+                ))
+                : undefined
+            }
           />
         </div>
       </main>
@@ -877,6 +927,83 @@ function createMutableSchemaHost(
       };
     },
     setNamedSchema(name, schema) {
+      namedSchemas = {
+        ...namedSchemas,
+        [name]: structuredClone(schema),
+      };
+    },
+  };
+}
+
+function createMutableViewSchemaHost(
+  initialSourceSchemas: Record<string, EditorSchema>,
+  initialNamedSchemas?: Record<string, EditorSchema>,
+  initialViewFiles?: Array<{ path: string; file: EditorSchemaViewFile }>,
+): EditorSchemaHost {
+  let sourceSchemas = structuredClone(initialSourceSchemas);
+  let namedSchemas = structuredClone(initialNamedSchemas ?? {});
+  let viewFiles = Object.fromEntries(
+    (initialViewFiles ?? []).map(({ path, file }) => [path, structuredClone(file)]),
+  ) as Record<string, EditorSchemaViewFile>;
+
+  function getActiveViewFile(viewPath: string | null | undefined, sourceId: string) {
+    if (!viewPath) return null;
+    const file = viewFiles[viewPath];
+    if (!file || file.target !== sourceId) return null;
+    return file;
+  }
+
+  return {
+    getSchema(context) {
+      const defaultSchema = sourceSchemas[context.sourceId];
+      const activeViewFile = getActiveViewFile(context.activeViewPath, context.sourceId);
+      return resolveViewSchema(defaultSchema, activeViewFile?.schema);
+    },
+    getNamedSchema(name, context) {
+      const defaultSchema = namedSchemas[name];
+      const activeViewFile = getActiveViewFile(context?.activeViewPath, context?.sourceId ?? "");
+      return resolveViewSchema(defaultSchema, activeViewFile?.namedSchemas?.[name]);
+    },
+    setRootSchema(schema, context) {
+      if (context.writeTarget?.mode === "view") {
+        const current = viewFiles[context.writeTarget.path] ?? {
+          target: context.sourceId,
+          schema: {},
+        };
+        viewFiles = {
+          ...viewFiles,
+          [context.writeTarget.path]: {
+            ...current,
+            target: context.sourceId,
+            schema: structuredClone(schema),
+          },
+        };
+        return;
+      }
+      sourceSchemas = {
+        ...sourceSchemas,
+        [context.sourceId]: structuredClone(schema),
+      };
+    },
+    setNamedSchema(name, schema, context) {
+      if (context.writeTarget?.mode === "view") {
+        const current = viewFiles[context.writeTarget.path] ?? {
+          target: context.sourceId,
+          schema: {},
+        };
+        viewFiles = {
+          ...viewFiles,
+          [context.writeTarget.path]: {
+            ...current,
+            target: context.sourceId,
+            namedSchemas: {
+              ...(current.namedSchemas ?? {}),
+              [name]: structuredClone(schema),
+            },
+          },
+        };
+        return;
+      }
       namedSchemas = {
         ...namedSchemas,
         [name]: structuredClone(schema),

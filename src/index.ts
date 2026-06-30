@@ -13,6 +13,8 @@ export type {
   EditorSchema,
   EditorSchemaContext,
   EditorSchemaHost,
+  EditorSchemaLayerTarget,
+  EditorSchemaViewFile,
   EditorMode,
   ResolvedSchemaNode,
   EditorValidationError,
@@ -28,6 +30,7 @@ export {
   switchUnionBranch,
   validateDocument,
 } from "./editor/schema";
+export { resolveViewSchema } from "./editor/view-schema";
 export type { NavigationPage, NavigationState } from "./core/navigation";
 export { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, samePath } from "./core/navigation";
 export type { JsonPath, PathSegment } from "./core/path";
