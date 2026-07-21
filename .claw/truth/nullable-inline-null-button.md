@@ -4,7 +4,7 @@
 ## 当前行为
 
 - `src/editor/ValueInspector.tsx` 里，支持设为 `null` 的 primitive/schema 现在使用标题栏内的细小扁平 `null` 按钮，而不是放在编辑器下方的大按钮。
-- 对 object 字段行，`null` 动作渲染在 `.property-heading__actions` 中，并且排在 `.field-type` 类型图标左侧；类型图标的完整语义由 [`field-type-icons-and-accessible-labels.md`](field-type-icons-and-accessible-labels.md) 维护。
+- 对 object 字段行，类型图标与字段名位于左侧 `.property-heading__label`，`null` 动作渲染在右侧 `.property-heading__actions` 中；类型图标的完整布局与语义由 [`field-type-icons-and-accessible-labels.md`](field-type-icons-and-accessible-labels.md) 维护。
 - 对单个 primitive 值页，`null` 动作也进入页面标题区域，保持和字段行一致的标题级布局。
 - `withNullableControls(...)` 不再在编辑器控制器下方追加底部 `Set null` 按钮。
 
@@ -23,4 +23,4 @@
 ## 验证规则
 
 - 编辑器回归测试应覆盖 object 字段行和单个 primitive 值页的标题级 `null` 动作，以及当前值为 `null` 时的恢复入口。
-- 布局断言应保持 `null` 动作位于类型图标左侧，并避免重新引入编辑器下方的 `Set null` 按钮。
+- 布局断言应保持类型图标在字段名左侧、`null` 动作在右侧操作区，并避免重新引入编辑器下方的 `Set null` 按钮。
