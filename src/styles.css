@@ -921,6 +921,13 @@ button {
   font-weight: 550;
 }
 
+.array-column-header__label {
+  align-items: center;
+  display: inline-flex;
+  gap: 5px;
+  justify-content: center;
+}
+
 .array-column-header small {
   color: #9a9894;
   font-size: 11px;
@@ -1693,6 +1700,13 @@ th:hover .column-resize-handle::after,
   gap: 8px;
 }
 
+.property-heading__label {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  min-width: 0;
+}
+
 .ghost-icon-button {
   align-items: center;
   background: transparent;
@@ -1852,6 +1866,14 @@ th:hover .column-resize-handle::after,
   color: #8b8a86;
 }
 
+.field-type--icon {
+  align-items: center;
+  display: inline-flex;
+  height: 16px;
+  justify-content: center;
+  width: 16px;
+}
+
 .field-type-button {
   background: transparent;
   border: 0;
@@ -1876,7 +1898,7 @@ th:hover .column-resize-handle::after,
   gap: 8px;
 }
 
-.node-page--object .property-heading > span:first-child {
+.node-page--object .property-heading__label {
   color: #37352f;
   font-size: 13px;
   font-weight: 600;

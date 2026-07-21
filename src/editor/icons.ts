@@ -1,7 +1,10 @@
 import {
+  IconBraces,
+  IconBrackets,
   IconCheck,
   IconChevronLeft,
   IconChevronRight,
+  IconCircleOff,
   IconCopy,
   IconDots,
   IconEye,
@@ -10,16 +13,30 @@ import {
   IconGripVertical,
   IconInfoCircleFilled,
   IconLayoutSidebarRightCollapse,
+  IconLink,
   IconMinus,
+  IconNumber,
   IconPencil,
   IconPlus,
   IconRotateClockwise2,
   IconSortAscending,
   IconSortDescending,
   IconTextWrap,
+  IconTextSize,
+  IconToggleLeft,
   IconTrashFilled,
   IconX,
 } from "@tabler/icons-react";
+
+export const jsonTypeIcons = {
+  array: IconBrackets,
+  boolean: IconToggleLeft,
+  null: IconCircleOff,
+  number: IconNumber,
+  object: IconBraces,
+  reference: IconLink,
+  string: IconTextSize,
+} as const;
 
 export const icons = {
   sortAscending: IconSortAscending,

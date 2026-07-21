@@ -33,7 +33,7 @@ import {
 import { SchemaColumnHeader } from "./SchemaColumnHeader";
 import { AssetPickerFieldEditor } from "./AssetPickerFieldEditor";
 import { SchemaOptionFieldEditor } from "./SchemaOptionFieldEditor";
-import { icons } from "./icons";
+import { icons, jsonTypeIcons } from "./icons";
 
 const MAX_INLINE_ARRAY_PREVIEW_COLUMNS = 3;
 const IMAGE_VIEWER_SCALE_STEP = 0.25;
@@ -1100,23 +1100,26 @@ function ObjectPage({
                         ) : (
                           <section className={["property-block", ...getSchemaClassNames(fieldSchema)].join(" ")}>
                             <div className="property-heading">
-                              {editMode && canAuthorObjectSchema ? (
-                                <input
-                                  aria-label={`Field label for ${fieldLabel}`}
-                                  className="detail-input field-label-input"
-                                  value={fieldSchema?.title ?? key}
-                                  onChange={(event) => {
-                                    const nextTitle = event.target.value;
-                                    updateObjectSchema((currentSchema) => updatePropertySchema(
-                                      currentSchema,
-                                      key,
-                                      (propertySchema) => setSchemaTitle(propertySchema, nextTitle),
-                                    ));
-                                  }}
-                                />
-                              ) : (
-                                <span>{fieldLabel}</span>
-                              )}
+                              <span className="property-heading__label">
+                                {renderTypeIcon(describeType(fieldValue, host))}
+                                {editMode && canAuthorObjectSchema ? (
+                                  <input
+                                    aria-label={`Field label for ${fieldLabel}`}
+                                    className="detail-input field-label-input"
+                                    value={fieldSchema?.title ?? key}
+                                    onChange={(event) => {
+                                      const nextTitle = event.target.value;
+                                      updateObjectSchema((currentSchema) => updatePropertySchema(
+                                        currentSchema,
+                                        key,
+                                        (propertySchema) => setSchemaTitle(propertySchema, nextTitle),
+                                      ));
+                                    }}
+                                  />
+                                ) : (
+                                  <span>{fieldLabel}</span>
+                                )}
+                              </span>
                               <div className="property-heading__actions">
                                 {isRequiredField(schema, key) ? <small className="field-required">Required</small> : null}
                                 {renderNullableTypeButton({
@@ -1130,7 +1133,6 @@ function ObjectPage({
                                     });
                                   },
                                 })}
-                                <small className={["field-type", getTypeToneClass(fieldValue, host)].filter(Boolean).join(" ")}>{describeType(fieldValue, host)}</small>
                                 {editMode && !pageReadOnly ? (
                                   <button
                                     className="danger-icon-button"
@@ -2137,8 +2139,10 @@ function ArrayPage({
                           />
                         ) : (
                           <div className="array-column-header">
-                            <span>{columnLabel}</span>
-                            {typeLabel ? <small className={getTypeToneClassForType(typeLabel)}>{typeLabel}</small> : null}
+                            <span className="array-column-header__label">
+                              {typeLabel ? renderTypeIcon(typeLabel) : null}
+                              <span>{columnLabel}</span>
+                            </span>
                           </div>
                         )}
                       </th>
@@ -2847,7 +2851,10 @@ function PrimitivePage({
               <div className="property-list">
                 <section className={["property-block", "object-field-row", ...getSchemaClassNames(schema), isFieldDirty(value, savedValue) ? "object-field-row--dirty" : ""].filter(Boolean).join(" ")}>
                   <div className="property-heading">
-                    <span>{schema?.title ?? (path.at(-1) == null ? "value" : String(path.at(-1)))}</span>
+                    <span className="property-heading__label">
+                      {renderTypeIcon(describeType(value))}
+                      <span>{schema?.title ?? (path.at(-1) == null ? "value" : String(path.at(-1)))}</span>
+                    </span>
                     <div className="property-heading__actions">
                       {renderNullableTypeButton({
                         value,
@@ -2855,7 +2862,6 @@ function PrimitivePage({
                         readOnly: pageReadOnly,
                         onSetNull: () => onApplyValue(null),
                       })}
-                      <small className={["field-type", getTypeToneClass(value)].filter(Boolean).join(" ")}>{describeType(value)}</small>
                     </div>
                   </div>
                   {schema?.description ? <div className="form-hint">{schema.description}</div> : null}
@@ -2921,7 +2927,7 @@ function ReferenceErrorPage({
               <section className={["property-block", "object-field-row", ...getSchemaClassNames(schema)].join(" ")}>
                 <div className="property-heading">
                   <span>Reference Error</span>
-                  <small className="field-type tone-reference">reference</small>
+                  {renderTypeIcon("reference")}
                 </div>
                 <div className="form-hint form-hint--danger">{referenceError.message}</div>
                 <div className="form-hint">{referenceError.uri}</div>
@@ -4293,6 +4299,20 @@ function getTypeToneClassForType(type: string) {
   if (type === "array") return "tone-array";
   if (type === "object") return "tone-object";
   return "";
+}
+
+function renderTypeIcon(type: string) {
+  const TypeIcon = jsonTypeIcons[type as keyof typeof jsonTypeIcons];
+  if (!TypeIcon) return null;
+  return (
+    <small
+      aria-label={type}
+      className={["field-type", "field-type--icon", getTypeToneClassForType(type)].filter(Boolean).join(" ")}
+      title={type}
+    >
+      <TypeIcon aria-hidden="true" size={14} stroke={1.9} />
+    </small>
+  );
 }
 
 function describeStructureIcon(value: unknown, host?: EditorHost) {
