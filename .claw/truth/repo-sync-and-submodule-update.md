@@ -1,4 +1,4 @@
-# 主仓库与 `vendor/data-editor` 的安全同步
+﻿# 主仓库与 `vendor/data-editor` 的安全同步
 
 ## 结论
 
