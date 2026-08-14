@@ -188,16 +188,22 @@ export function EditorShell({
   const [isEditingCurrentPage, setIsEditingCurrentPage] = useState(false);
   const [pageToolbarHost, setPageToolbarHost] = useState<HTMLDivElement | null>(null);
   const [, setSchemaRevision] = useState(0);
+  const [schemaPersistenceNotice, setSchemaPersistenceNotice] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
   const hasReportedChangeRef = useRef(false);
+  const schemaPersistenceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [stackViewportWidth, setStackViewportWidth] = useState(0);
   const [windowViewportWidth, setWindowViewportWidth] = useState(
     typeof window === "undefined" ? 0 : window.innerWidth,
   );
   const animationKeyRef = useRef(0);
   const rootPage = pages[0] ?? { sourceId: rootSourceId, path: [] };
+
+  useEffect(() => () => {
+    if (schemaPersistenceNoticeTimerRef.current) clearTimeout(schemaPersistenceNoticeTimerRef.current);
+  }, []);
   const currentPage = pages[pages.length - 1] ?? { sourceId: rootSourceId, path: [] };
   const isCompactStack = resolveCompactStack(compactBreakpoint, stackViewportWidth, windowViewportWidth);
   const isPinnedRootLayout = layoutMode === "pinned-root" && !isCompactStack;
@@ -443,7 +449,10 @@ export function EditorShell({
     target: "self" | "items",
     updater: (schema: EditorSchema) => EditorSchema,
   ) {
-    if (!schemaHost?.setRootSchema) return;
+    if (!schemaHost?.setRootSchema) {
+      showSchemaPersistenceNotice("当前宿主未接入 schema 保存，列配置不会保留。");
+      return;
+    }
     const rootValue = documentsBySourceId[sourceId];
     const rootSchema = schemaHost.getSchema({
       sourceId,
@@ -461,7 +470,9 @@ export function EditorShell({
       writeTarget: activeSchemaLayer,
     });
     if (result instanceof Promise) {
-      void result.then(() => setSchemaRevision((current) => current + 1));
+      void result
+        .then(() => setSchemaRevision((current) => current + 1))
+        .catch(() => showSchemaPersistenceNotice("schema 保存失败，列配置未保留。"));
       return;
     }
     setSchemaRevision((current) => current + 1);
@@ -471,7 +482,10 @@ export function EditorShell({
     name: string,
     updater: (schema: EditorSchema) => EditorSchema,
   ) {
-    if (!schemaHost?.setNamedSchema) return;
+    if (!schemaHost?.setNamedSchema) {
+      showSchemaPersistenceNotice("当前宿主未接入命名 schema 保存，配置不会保留。");
+      return;
+    }
     const currentSchema = schemaHost.getNamedSchema?.(name, {
       sourceId: rootSourceId,
       documents: documentsBySourceId,
@@ -486,10 +500,21 @@ export function EditorShell({
       writeTarget: activeSchemaLayer,
     });
     if (result instanceof Promise) {
-      void result.then(() => setSchemaRevision((current) => current + 1));
+      void result
+        .then(() => setSchemaRevision((current) => current + 1))
+        .catch(() => showSchemaPersistenceNotice("命名 schema 保存失败，配置未保留。"));
       return;
     }
     setSchemaRevision((current) => current + 1);
+  }
+
+  function showSchemaPersistenceNotice(message: string) {
+    if (schemaPersistenceNoticeTimerRef.current) clearTimeout(schemaPersistenceNoticeTimerRef.current);
+    setSchemaPersistenceNotice(message);
+    schemaPersistenceNoticeTimerRef.current = setTimeout(() => {
+      setSchemaPersistenceNotice(null);
+      schemaPersistenceNoticeTimerRef.current = null;
+    }, 4500);
   }
 
   async function runValidation(nextDocuments: EditorDocuments): Promise<EditorValidationResult | null> {
@@ -776,6 +801,7 @@ export function EditorShell({
 
   return (
     <div className="app-frame" ref={shellRef}>
+      {schemaPersistenceNotice ? <div className="schema-persistence-toast" role="status">{schemaPersistenceNotice}</div> : null}
       <div className="workspace">
         <header className="toolbar">
           {isCompactStack ? (

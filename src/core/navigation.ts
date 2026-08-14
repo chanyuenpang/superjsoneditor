@@ -52,7 +52,7 @@ export function openPath(
   const currentDocument = documents[currentPage.sourceId];
   const targetValue = getValueAtPath(currentDocument, path);
   const navLabel = getNavigationLabel(path);
-  const referenceUri = getReferenceUri(targetValue);
+  const referenceUri = getReferenceUri(targetValue, host, { path });
   const referenceSourceId = referenceUri ? (host?.resolveReferenceSourceId?.(referenceUri) ?? referenceUri) : null;
 
   if (referenceUri) {

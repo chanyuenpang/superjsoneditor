@@ -106,6 +106,10 @@ function getSchemaClassNames(schema: EditorSchema | undefined): string[] {
 
 type ImagePreviewContext = "inline" | "field-editor";
 
+const FLOATING_PANEL_MARGIN = 12;
+const HIDDEN_FIELDS_PANEL_WIDTH = 240;
+const HIDDEN_FIELDS_PANEL_ESTIMATED_HEIGHT = 280;
+
 const IMAGE_PRESET_DEFAULTS: Record<EditorImageDisplayPreset, Record<ImagePreviewContext, { width: number; height: number; fit: "contain" | "cover" }>> = {
   icon: {
     inline: { width: 40, height: 40, fit: "contain" },
@@ -2126,6 +2130,21 @@ function ArrayPage({
                             })}
                             onResize={(width) => updateSingleColumn(column, (current) => ({ ...current, width }))}
                             onSort={(direction) => {
+                              if (direction && tableSchema?.["x-editor"]?.table?.sort === "persist") {
+                                const orderedRows = buildArrayDisplayRows(
+                                  value,
+                                  { key: column, direction },
+                                  referenceViewColumns,
+                                  configuredTableColumns,
+                                  referenceItemSchema,
+                                  host,
+                                  referenceTargetSchema,
+                                  resolveNamedSchema,
+                                );
+                                onApplyValue(orderedRows.map((row) => row.item));
+                                setSortState(null);
+                                return;
+                              }
                               setSortState(direction ? { key: column, direction } : null);
                             }}
                             onToggleSortable={() => updateSingleColumn(column, (current) => ({ ...current, sortable: !current.sortable || undefined }))}
@@ -2586,7 +2605,7 @@ function HiddenFieldsToolbarAction({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Record<string, HTMLElement | null>>({});
-  const [panelPosition, setPanelPosition] = useState<{ right: number; top: number } | null>(null);
+  const [panelPosition, setPanelPosition] = useState<{ left: number; top: number } | null>(null);
   const [pressedKey, setPressedKey] = useState<string | null>(null);
   const [dragState, setDragState] = useState<{
     key: string;
@@ -2607,10 +2626,12 @@ function HiddenFieldsToolbarAction({
     const syncPanelPosition = () => {
       const rect = triggerRef.current?.getBoundingClientRect();
       if (!rect) return;
-      setPanelPosition({
-        right: Math.max(12, window.innerWidth - rect.right),
-        top: rect.bottom + 8,
-      });
+      const maxLeft = Math.max(FLOATING_PANEL_MARGIN, window.innerWidth - HIDDEN_FIELDS_PANEL_WIDTH - FLOATING_PANEL_MARGIN);
+      const belowTop = rect.bottom + 8;
+      const top = belowTop + HIDDEN_FIELDS_PANEL_ESTIMATED_HEIGHT <= window.innerHeight
+        ? belowTop
+        : Math.max(FLOATING_PANEL_MARGIN, rect.top - HIDDEN_FIELDS_PANEL_ESTIMATED_HEIGHT - 8);
+      setPanelPosition({ left: Math.min(Math.max(FLOATING_PANEL_MARGIN, rect.left), maxLeft), top });
     };
     syncPanelPosition();
     const onPointerDown = (event: PointerEvent) => {
@@ -2719,7 +2740,7 @@ function HiddenFieldsToolbarAction({
         <div
           className="hidden-fields-panel"
           ref={panelRef}
-          style={{ right: `${panelPosition.right}px`, top: `${panelPosition.top}px` }}
+          style={{ left: `${panelPosition.left}px`, top: `${panelPosition.top}px` }}
         >
           <div className="hidden-fields-list">
             {visibleColumns.length > 0 ? <div className="hidden-fields-group-label">Visible</div> : null}
@@ -3114,8 +3135,8 @@ function renderPrimitiveEditor(props: {
       reference: effectiveSchema["x-editor"]?.reference,
     })
     : [];
-  const shouldRenderOpenReferenceButton = props.showOpenReferenceButton && getReferenceUri(props.value) != null;
-  const openReferenceSourceId = inferOpenableReferenceSourceId(props.value, props.host);
+  const shouldRenderOpenReferenceButton = props.showOpenReferenceButton && getReferenceUri(props.value, props.host, { path: props.path, schema: effectiveSchema }) != null;
+  const openReferenceSourceId = inferOpenableReferenceSourceId(props.value, props.host, props.path, effectiveSchema);
   const canOpenReference = Boolean(shouldRenderOpenReferenceButton && props.onOpenReference && openReferenceSourceId);
 
   if (editorOptionsState.error) {
@@ -4021,8 +4042,8 @@ function inferReferenceSourceId(value: unknown, host?: EditorHost): string | nul
   return host?.resolveReferenceSourceId?.(uri) ?? uri;
 }
 
-function inferOpenableReferenceSourceId(value: unknown, host?: EditorHost): string | null {
-  const uri = getReferenceUri(value);
+function inferOpenableReferenceSourceId(value: unknown, host?: EditorHost, path?: JsonPath, schema?: EditorSchema): string | null {
+  const uri = getReferenceUri(value, host, { path, schema });
   if (!uri) {
     return null;
   }

@@ -2212,20 +2212,20 @@ test("schema table columns control root object-array header order and visibility
     getSchema() {
       return {
         type: "array",
+        "x-editor": {
+          table: {
+            columns: [
+              { key: "title", label: "Quest Title", sortable: true },
+              { key: "id", sortable: true },
+            ],
+          },
+        },
         items: {
           type: "object",
           properties: {
             id: { type: "string", title: "Identifier" },
             title: { type: "string", title: "Title" },
             hp: { type: "integer", title: "Health" },
-          },
-          "x-editor": {
-            table: {
-              columns: [
-                { key: "title", label: "Quest Title", sortable: true },
-                { key: "id", sortable: true },
-              ],
-            },
           },
         },
       };
@@ -2300,6 +2300,100 @@ test("sortable schema table columns can be toggled from the header without initi
   const afterDescSort = [...container.querySelectorAll("tbody tr[data-row-index]")]
     .map((row) => row.querySelectorAll("td")[1]?.textContent?.trim());
   expect(afterDescSort).toEqual(["Second Quest", "First Quest"]);
+});
+
+test("数组左侧的显示菜单会在视口内向右展开", () => {
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Reference Projection" }));
+  const trigger = screen.getByRole("button", { name: /Column visibility/ });
+  Object.defineProperty(trigger, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ left: 4, top: 8, right: 32, bottom: 36, width: 28, height: 28 }),
+  });
+  fireEvent.click(trigger);
+
+  const panel = document.body.querySelector(".hidden-fields-panel") as HTMLElement;
+  expect(panel.style.left).toBe("12px");
+  expect(panel.style.right).toBe("");
+});
+
+test("缺少 schema 保存宿主时，标题栏 schema 操作显示橙色提示", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        "x-editor": {
+          table: {
+            columns: [
+              { key: "title", label: "Title", sortable: true },
+              { key: "id", label: "ID" },
+            ],
+          },
+        },
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            title: { type: "string" },
+          },
+        },
+      };
+    },
+  };
+
+  render(<EditorShell value={[{ id: "quest_001", title: "First Quest" }]} schemaHost={schemaHost} />);
+
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Title" }));
+  fireEvent.click(screen.getByRole("button", { name: "Move right" }));
+
+  expect(screen.getByRole("status")).toHaveTextContent("当前宿主未接入 schema 保存，列配置不会保留。");
+  expect(screen.getByRole("status")).toHaveClass("schema-persistence-toast");
+});
+
+test("array schema can persist header sorting into the document order", () => {
+  let lastDocuments: Record<string, unknown> | null = null;
+  render(
+    <EditorShell
+      value={[
+        { id: "quest_002", title: "Second Quest" },
+        { id: "quest_001", title: "First Quest" },
+      ]}
+      onChange={(documents) => {
+        lastDocuments = documents;
+      }}
+      schemaHost={{
+        getSchema() {
+          return {
+            type: "array",
+            "x-editor": {
+              table: {
+                sort: "persist",
+                columns: [{ key: "title", label: "Title", sortable: true }],
+              },
+            },
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+              },
+            },
+          };
+        },
+      }}
+    />,
+  );
+
+  quickPressHeaderMenu(screen.getByRole("button", { name: "Title" }));
+  fireEvent.click(screen.getByRole("button", { name: /Sort ascending/i }));
+
+  expect(lastDocuments).toMatchObject({
+    main: [
+      { id: "quest_001", title: "First Quest" },
+      { id: "quest_002", title: "Second Quest" },
+    ],
+  });
 });
 
 test("schema table columns reorder reference projection columns", () => {

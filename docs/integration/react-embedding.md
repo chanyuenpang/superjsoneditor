@@ -58,6 +58,12 @@ export function JsonEditorHost() {
 - `onReload()`: optional. If omitted, `Reload` restores the last in-memory saved snapshot.
 - `readOnly`: optional. Disables all mutation controls while keeping navigation available.
 
+## Schema Host 接入
+
+项目一旦启用标题栏的列配置能力，就不能只传 `getSchema`。数组表格的列移动、隐藏、改名、改宽度等操作修改的是 schema，而不是 `documents`；它们不会等待用户点击 `Save`，也不会通过 `onSave` 回写。
+
+请按 [Schema Host 接入指南](schema-host.md) 同时实现 `getSchema` 与 `setRootSchema`，并把 schema 存储在业务 JSON 之外。
+
 ## Reference example
 
 ```tsx

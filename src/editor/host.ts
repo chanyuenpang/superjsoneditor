@@ -10,6 +10,14 @@ export type EditorReferenceOption = {
 export type EditorHost = {
   loadReferenceSource?: (uri: string) => unknown;
   resolveReferenceSourceId?: (uri: string) => string | undefined;
+  /**
+   * 将领域中的稳定 ID 投影为编辑器可导航的 URI，避免把显示/运行时路径写回 JSON。
+   */
+  resolveReferenceUri?: (context: {
+    value: unknown;
+    path?: JsonPath;
+    schema?: EditorSchema;
+  }) => string | undefined;
   resolveDisplayUrl?: (value: string, schema?: EditorSchema) => string | undefined;
   getObjectProjectionConfig?: (context: {
     path: JsonPath;
@@ -53,14 +61,20 @@ export type ReferenceErrorInfo = {
   message: string;
 };
 
-export function getReferenceUri(value: unknown): string | null {
-  if (typeof value !== "string" || !value) return null;
-  if (!value.toLowerCase().endsWith(".json")) return null;
+export function getReferenceUri(
+  value: unknown,
+  host?: EditorHost,
+  context: { path?: JsonPath; schema?: EditorSchema } = {},
+): string | null {
+	const resolvedByHost = host?.resolveReferenceUri?.({ value, ...context });
+	if (resolvedByHost) return resolvedByHost;
+	if (typeof value !== "string" || !value) return null;
 
-  try {
-    // 支持 http(s)、asset、res 等标准/自定义 URI。
-    new URL(value);
-    return value;
+	try {
+		// 默认只将 JSON 文档视为引用；自定义领域引用必须由 host 显式解析。
+		const uri = new URL(value);
+		if (!value.toLowerCase().endsWith(".json")) return null;
+		return value;
   } catch {
     return null;
   }

@@ -82,6 +82,8 @@ export type EditorSchemaUi = {
   };
   table?: {
     columns: EditorTableColumn[];
+    /** 排序仅改变当前视图，还是将排序后的行顺序写回数组。默认仅改变视图。 */
+    sort?: "view" | "persist";
     objectValueSchema?: EditorSchema;
     objectValueMetadataByKey?: Record<string, Record<string, unknown>>;
   };

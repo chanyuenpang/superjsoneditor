@@ -168,6 +168,20 @@ export function JsonEditorHost() {
 - 通过 `EditorHost` 提供引用解析、标签增强等能力
 - 在需要时通过 `EditorSchemaHost` 提供 schema
 
+### Schema 写回是独立契约
+
+只提供 `getSchema` 的宿主是**只读 schema 宿主**。它可以约束字段和渲染表格，但不能支持标题栏中会修改 schema 的操作。
+
+以下操作写的是 schema 元数据，不会进入 `onSave(documents)`：
+
+- 表格列的左移、右移、拖拽、隐藏与显示
+- 列标签、宽度、换行与可排序状态
+- 其他由 schema authoring UI 发起的结构元数据调整
+
+若宿主以可编辑模式暴露这些操作，必须同时提供 `schemaHost.setRootSchema`；需要命名 schema 时还必须提供 `setNamedSchema`。推荐将 schema 与业务 JSON 分开持久化，并在写入完成后更新宿主的权威 schema 状态。
+
+完整的职责划分、数组/对象 schema 写法和可复制接入示例见 [Schema Host 接入指南](docs/integration/schema-host.md)。
+
 编辑器内核不负责：
 
 - 项目专用资源类型规则
@@ -191,6 +205,7 @@ export function JsonEditorHost() {
 - [技术实现文档](docs/specs/2026-06-01-technical-design.md)
 - [导航与动效规则](docs/specs/2026-06-01-navigation-motion-rules.md)
 - [Schema 模式与 2020-12 支持设计](docs/specs/2026-06-03-schema-mode-and-2020-12-support.md)
+- [Schema Host 接入指南](docs/integration/schema-host.md)
 - [Left Page Fullscreen 设计说明](docs/specs/2026-06-04-left-page-fullscreen-design.md)
 - [Schema-Based CRUD 实施计划](docs/plans/2026-06-03-schema-based-crud-plan.md)
 - [Left Page Fullscreen 实现计划](docs/plans/2026-06-04-left-page-fullscreen-implementation-plan.md)
