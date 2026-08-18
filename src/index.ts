@@ -1,6 +1,7 @@
 import "./styles.css";
 
 export { EditorShell } from "./editor/EditorShell";
+export { AssetEditorShell } from "./editor/AssetEditorShell";
 export type {
   EditorChangeHandler,
   EditorDocuments,
@@ -8,6 +9,7 @@ export type {
   EditorSaveHandler,
   EditorShellProps,
 } from "./editor/EditorShell";
+export type { AssetEditorEntry, AssetEditorSection, AssetEditorShellProps } from "./editor/AssetEditorShell";
 export type { EditorHost } from "./editor/host";
 export type {
   EditorSchema,
