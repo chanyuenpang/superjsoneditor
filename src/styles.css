@@ -539,6 +539,7 @@ button {
 }
 
 .toolbar-back-button {
+  align-self: center;
   align-items: center;
   background: #2f6fed;
   border: 1px solid #2f6fed;
@@ -548,7 +549,6 @@ button {
   display: inline-flex;
   font-weight: 700;
   gap: 6px;
-  margin-block: auto;
   min-height: 30px;
   padding: 0 10px;
 }
