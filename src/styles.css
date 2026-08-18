@@ -539,7 +539,6 @@ button {
 }
 
 .toolbar-back-button {
-  align-self: center;
   align-items: center;
   background: #2f6fed;
   border: 1px solid #2f6fed;
