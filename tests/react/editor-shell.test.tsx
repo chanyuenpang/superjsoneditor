@@ -1,4 +1,6 @@
 ﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { test, vi } from "vitest";
 import { App } from "../../src/App";
 import { within } from "@testing-library/react";
@@ -1504,6 +1506,13 @@ test("references can navigate into a different source document", () => {
   expect(backButton).toHaveClass("toolbar-back-button");
   expect(backButton).toHaveAttribute("aria-label", "Back");
   expect(backButton.querySelector("svg")).not.toBeNull();
+});
+
+test("narrow editor shells keep the toolbar on one row and use an icon-only back control", () => {
+  const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+
+  expect(styles).toMatch(/@container editor-shell \(max-width: 360px\) \{[\s\S]*?\.toolbar \{[\s\S]*?flex-wrap: nowrap;/);
+  expect(styles).toMatch(/@container editor-shell \(max-width: 360px\) \{[\s\S]*?\.toolbar-back-button__label \{[\s\S]*?display: none;/);
 });
 
 test("reference object pages apply ref-scope header styling after navigation", () => {

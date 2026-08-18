@@ -569,6 +569,21 @@ button {
 }
 
 @container editor-shell (max-width: 360px) {
+  .toolbar {
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .toolbar-title {
+    min-width: 0;
+    width: auto;
+  }
+
+  .toolbar-inline-slot:empty {
+    display: none;
+  }
+
   .toolbar-back-button {
     justify-content: center;
     min-width: 30px;
