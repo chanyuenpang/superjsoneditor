@@ -1502,6 +1502,7 @@ test("references can navigate into a different source document", () => {
   expect(getCurrentPageQueries().getByDisplayValue("hero")).toBeInTheDocument();
   const backButton = screen.getByRole("button", { name: "Back" });
   expect(backButton).toHaveClass("toolbar-back-button");
+  expect(backButton).toHaveAttribute("aria-label", "Back");
   expect(backButton.querySelector("svg")).not.toBeNull();
 });
 

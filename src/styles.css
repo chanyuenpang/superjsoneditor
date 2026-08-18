@@ -369,6 +369,8 @@ button {
 }
 
 .app-frame {
+  container-name: editor-shell;
+  container-type: inline-size;
   height: 100vh;
   overflow: hidden;
 }
@@ -564,6 +566,18 @@ button {
 
 .toolbar-back-button svg {
   flex: 0 0 auto;
+}
+
+@container editor-shell (max-width: 360px) {
+  .toolbar-back-button {
+    justify-content: center;
+    min-width: 30px;
+    padding: 0;
+  }
+
+  .toolbar-back-button__label {
+    display: none;
+  }
 }
 
 .toolbar-hidden-fields {

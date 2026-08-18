@@ -869,9 +869,9 @@ export function EditorShell({
             </>
           ) : null}
           {!isAtRootPage && stackAnimation?.direction !== "pop" ? (
-            <button className="toolbar-back-button" type="button" onClick={handleBack}>
+            <button aria-label="Back" className="toolbar-back-button" type="button" onClick={handleBack}>
               <icons.previous aria-hidden="true" size={16} stroke={2.4} />
-              Back
+              <span className="toolbar-back-button__label">Back</span>
             </button>
           ) : null}
         </header>
