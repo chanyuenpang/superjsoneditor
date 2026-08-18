@@ -20,6 +20,7 @@ import {
 } from "./stack-motion";
 import { usePressSlopGuard } from "./usePressSlopGuard";
 import { ValueInspector } from "./ValueInspector";
+import { icons } from "./icons";
 
 export type EditorDocuments = Record<string, unknown>;
 
@@ -868,7 +869,8 @@ export function EditorShell({
             </>
           ) : null}
           {!isAtRootPage && stackAnimation?.direction !== "pop" ? (
-            <button className="ghost-button" type="button" onClick={handleBack}>
+            <button className="toolbar-back-button" type="button" onClick={handleBack}>
+              <icons.previous aria-hidden="true" size={16} stroke={2.4} />
               Back
             </button>
           ) : null}

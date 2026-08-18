@@ -1500,7 +1500,9 @@ test("references can navigate into a different source document", () => {
   fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
 
   expect(getCurrentPageQueries().getByDisplayValue("hero")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+  const backButton = screen.getByRole("button", { name: "Back" });
+  expect(backButton).toHaveClass("toolbar-back-button");
+  expect(backButton.querySelector("svg")).not.toBeNull();
 });
 
 test("reference object pages apply ref-scope header styling after navigation", () => {
