@@ -389,10 +389,23 @@ button {
   background: rgba(255, 255, 255, 0.94);
   border-bottom: 1px solid var(--border-base);
   box-shadow: 0 8px 24px rgba(24, 31, 41, 0.03);
-  display: flex;
+  display: grid;
   gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
   min-width: 0;
   padding: 8px 12px;
+}
+
+.toolbar-navigation {
+  min-width: 0;
+}
+
+.toolbar-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  min-width: 0;
 }
 
 .toolbar-title {
@@ -570,17 +583,21 @@ button {
 
 @container editor-shell (max-width: 360px) {
   .toolbar {
-    flex-wrap: nowrap;
     gap: 6px;
     padding-inline: 8px;
   }
 
-  .toolbar-title {
+  .toolbar-navigation .breadcrumbs-select,
+  .toolbar-navigation .breadcrumbs-select__input {
     min-width: 0;
-    width: auto;
+    width: 100%;
   }
 
-  .toolbar-inline-slot:empty {
+  .toolbar-actions {
+    gap: 6px;
+  }
+
+  .toolbar-actions .toolbar-inline-slot:empty {
     display: none;
   }
 

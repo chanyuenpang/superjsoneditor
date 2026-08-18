@@ -805,75 +805,78 @@ export function EditorShell({
       {schemaPersistenceNotice ? <div className="schema-persistence-toast" role="status">{schemaPersistenceNotice}</div> : null}
       <div className="workspace">
         <header className="toolbar">
-          {isCompactStack ? (
-            <label className="breadcrumbs-select" aria-label="Path">
-              <select
-                className="detail-input breadcrumbs-select__input"
-                value={String(Math.max(0, pages.length - 1))}
-                onChange={(event) => {
-                  const nextIndex = Number(event.target.value);
-                  if (nextIndex === 0) {
-                    handleJump([], rootSourceId);
-                    return;
-                  }
-                  const targetPage = pages[nextIndex];
-                  if (!targetPage) return;
-                  handleJump(targetPage.path, targetPage.sourceId ?? rootSourceId);
-                }}
-              >
-                {buildCompactPathOptions(pages, rootSourceId, rootLabel, getPageTitle).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <div className="breadcrumbs breadcrumbs--align-left" aria-label="Breadcrumb">
-              <button className="breadcrumbs__button" type="button" onClick={() => handleJump([], rootSourceId)}>
-                {rootLabel}
-              </button>
-              {getPageCrumbs().map((crumb) => (
-                <span key={crumb.id}>
-                  <span className="breadcrumbs__separator">/</span>
-                  <button className="breadcrumbs__button" type="button" onClick={() => handleJump(crumb.path, crumb.sourceId)}>
-                    {crumb.label}
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="toolbar-spacer" />
-          <div className="toolbar-inline-slot" ref={setPageToolbarHost} />
-          {toolbarActions}
-          {saveState !== "idle" ? (
-            <div className="toolbar-meta status-text">
-              {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save failed"}
-            </div>
-          ) : null}
-          {validationResult?.documentErrors?.length ? (
-            <div className="toolbar-meta status-text">
-              {validationResult.documentErrors.join(" ")}
-            </div>
-          ) : null}
-          {isDirty && !isEditingCurrentPage && !readOnly ? (
-            <>
-              <button className="ghost-button" type="button" onClick={handleReload}>
-                Reload
-              </button>
-              {onSave || onUnavailableSaveAttempt ? (
-                <button className="primary-button" type="button" onClick={onSave ? handleSave : onUnavailableSaveAttempt}>
-                  Save
+          <div className="toolbar-navigation">
+            {isCompactStack ? (
+              <label className="breadcrumbs-select" aria-label="Path">
+                <select
+                  className="detail-input breadcrumbs-select__input"
+                  value={String(Math.max(0, pages.length - 1))}
+                  onChange={(event) => {
+                    const nextIndex = Number(event.target.value);
+                    if (nextIndex === 0) {
+                      handleJump([], rootSourceId);
+                      return;
+                    }
+                    const targetPage = pages[nextIndex];
+                    if (!targetPage) return;
+                    handleJump(targetPage.path, targetPage.sourceId ?? rootSourceId);
+                  }}
+                >
+                  {buildCompactPathOptions(pages, rootSourceId, rootLabel, getPageTitle).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <div className="breadcrumbs breadcrumbs--align-left" aria-label="Breadcrumb">
+                <button className="breadcrumbs__button" type="button" onClick={() => handleJump([], rootSourceId)}>
+                  {rootLabel}
                 </button>
-              ) : null}
-            </>
-          ) : null}
-          {!isAtRootPage && stackAnimation?.direction !== "pop" ? (
-            <button aria-label="Back" className="toolbar-back-button" type="button" onClick={handleBack}>
-              <icons.previous aria-hidden="true" size={16} stroke={2.4} />
-              <span className="toolbar-back-button__label">Back</span>
-            </button>
-          ) : null}
+                {getPageCrumbs().map((crumb) => (
+                  <span key={crumb.id}>
+                    <span className="breadcrumbs__separator">/</span>
+                    <button className="breadcrumbs__button" type="button" onClick={() => handleJump(crumb.path, crumb.sourceId)}>
+                      {crumb.label}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="toolbar-actions">
+            <div className="toolbar-inline-slot" ref={setPageToolbarHost} />
+            {toolbarActions}
+            {saveState !== "idle" ? (
+              <div className="toolbar-meta status-text">
+                {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save failed"}
+              </div>
+            ) : null}
+            {validationResult?.documentErrors?.length ? (
+              <div className="toolbar-meta status-text">
+                {validationResult.documentErrors.join(" ")}
+              </div>
+            ) : null}
+            {isDirty && !isEditingCurrentPage && !readOnly ? (
+              <>
+                <button className="ghost-button" type="button" onClick={handleReload}>
+                  Reload
+                </button>
+                {onSave || onUnavailableSaveAttempt ? (
+                  <button className="primary-button" type="button" onClick={onSave ? handleSave : onUnavailableSaveAttempt}>
+                    Save
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+            {!isAtRootPage && stackAnimation?.direction !== "pop" ? (
+              <button aria-label="Back" className="toolbar-back-button" type="button" onClick={handleBack}>
+                <icons.previous aria-hidden="true" size={16} stroke={2.4} />
+                <span className="toolbar-back-button__label">Back</span>
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <main className="main-content" ref={pageStackViewportRef}>

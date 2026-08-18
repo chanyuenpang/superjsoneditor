@@ -1506,12 +1506,14 @@ test("references can navigate into a different source document", () => {
   expect(backButton).toHaveClass("toolbar-back-button");
   expect(backButton).toHaveAttribute("aria-label", "Back");
   expect(backButton.querySelector("svg")).not.toBeNull();
+  expect(backButton.closest(".toolbar-actions")).not.toBeNull();
+  expect(backButton.closest(".toolbar")?.querySelector(".toolbar-navigation .breadcrumbs")).not.toBeNull();
 });
 
 test("narrow editor shells keep the toolbar on one row and use an icon-only back control", () => {
   const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
-  expect(styles).toMatch(/@container editor-shell \(max-width: 360px\) \{[\s\S]*?\.toolbar \{[\s\S]*?flex-wrap: nowrap;/);
+  expect(styles).toMatch(/\.toolbar \{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
   expect(styles).toMatch(/@container editor-shell \(max-width: 360px\) \{[\s\S]*?\.toolbar-back-button__label \{[\s\S]*?display: none;/);
 });
 
