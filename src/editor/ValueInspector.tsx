@@ -1488,6 +1488,7 @@ function ArrayPage({
   const [pendingRow, setPendingRow] = useState<unknown | null>(null);
   const [suppressRowActionsUntil, setSuppressRowActionsUntil] = useState(0);
   const [hostActionError, setHostActionError] = useState<string | null>(null);
+  const [schemaRepairNotice, setSchemaRepairNotice] = useState<string | null>(null);
   const [isCreatingReferenceRow, setIsCreatingReferenceRow] = useState(false);
   const tableScrollRef = useRef<HTMLDivElement | null>(null);
   const [tableViewportWidth, setTableViewportWidth] = useState(0);
@@ -1507,7 +1508,7 @@ function ArrayPage({
   const minItemsReached = (schemaState?.arrayCapabilities?.minItems ?? 0) >= value.length;
   const maxItemsReached =
     schemaState?.arrayCapabilities?.maxItems !== undefined && value.length >= schemaState.arrayCapabilities.maxItems;
-  const arrayError = getFieldError(validationResult, sourceId, path)?.message ?? getLocalSchemaError(schemaState);
+  const validationArrayError = getFieldError(validationResult, sourceId, path)?.message ?? getLocalSchemaError(schemaState);
   const schemaItemsSignature = JSON.stringify(schema?.items ?? null);
   const referenceViewSchema = useMemo(
     () => resolveReferenceViewSchema(schema?.items, resolveNamedSchema),
@@ -1544,6 +1545,10 @@ function ArrayPage({
     () => getConfiguredTableColumns(tableSchema),
     [tableSchema],
   );
+  const hasEmptyPrimitiveColumnConfig = hasExplicitTableColumns
+    && configuredTableColumns.length === 0
+    && isPrimitiveArray(value, schema?.items, host);
+  const arrayError = validationArrayError ?? schemaRepairNotice;
   const [sortState, setSortState] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
   const [hiddenFieldsOpen, setHiddenFieldsOpen] = useState(false);
   const [pressedColumnKey, setPressedColumnKey] = useState<string | null>(null);
@@ -1580,8 +1585,14 @@ function ArrayPage({
     [columnSourceSchema, referenceTargetSchema, showReferenceProjectionTable],
   );
   const canAuthorTableSchema = Boolean(
-    !pageReadOnly && sourceId && onUpdateDocumentSchema,
+    sourceId && onUpdateDocumentSchema,
   );
+  useEffect(() => {
+    if (!hasEmptyPrimitiveColumnConfig) return;
+    setSchemaRepairNotice("原始值数组不能隐藏全部列；已恢复 Value 列。");
+    if (!canAuthorTableSchema) return;
+    void onUpdateDocumentSchema?.(sourceId as string, path, "self", (targetSchema) => setSchemaTableColumns(targetSchema, [{ key: "Value" }]));
+  }, [canAuthorTableSchema, hasEmptyPrimitiveColumnConfig, onUpdateDocumentSchema, path, sourceId]);
   const columns = useMemo(
     () => getArrayColumns(value, host, schema?.items, referenceViewColumns, configuredTableColumns, hasExplicitTableColumns),
     [value, host, schema?.items, referenceViewColumns, configuredTableColumns, hasExplicitTableColumns],
@@ -3619,7 +3630,7 @@ function getArrayColumns(
   configuredColumns: EditorTableColumn[] = [],
   hasExplicitConfiguredColumns = false,
 ) {
-  if (hasExplicitConfiguredColumns) {
+  if (hasExplicitConfiguredColumns && (configuredColumns.length > 0 || !isPrimitiveArray(items, itemSchema, host))) {
     return ["#", ...configuredColumns.map((column) => getTableColumnId(column))];
   }
   if (referenceViewColumns.length > 0) {
@@ -3638,6 +3649,14 @@ function getArrayColumns(
   }
 
   return ["#", "Value"];
+}
+
+/** 原始值数组恒有 Value 列；空 columns 只对 object / 引用投影有“隐藏字段”语义。 */
+function isPrimitiveArray(items: unknown[], itemSchema?: EditorSchema, host?: EditorHost) {
+  if (items.some((item) => Array.isArray(item) || isPlainObject(item) || isReferenceValue(item))) return false;
+  const type = itemSchema?.type;
+  if (Array.isArray(type)) return type.every((entry) => entry === "string" || entry === "number" || entry === "integer" || entry === "boolean" || entry === "null");
+  return type === undefined || type === "string" || type === "number" || type === "integer" || type === "boolean" || type === "null";
 }
 
 function describeObjectFields(value: Record<string, unknown>) {

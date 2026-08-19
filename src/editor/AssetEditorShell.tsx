@@ -12,6 +12,11 @@ export type AssetEditorSection = {
   id: string;
   title: string;
   entries: readonly AssetEditorEntry[];
+  /**
+   * 引用列表的行投影 schema。它描述目标对象哪些字段可被“筛选字段”显示，
+   * 不拥有也不修改引用目标的数据 schema。
+   */
+  referenceProjectionSchema?: EditorSchema;
 };
 
 export type AssetEditorShellProps = EditorShellProps & {
@@ -41,21 +46,33 @@ export function AssetEditorShell({
   useEffect(() => {
     if (!activeSection && sections[0]) setActiveSectionId(sections[0].id);
   }, [activeSection, sections]);
+  const activeRegistrySourceId = activeSection
+    ? `${registrySourceId}/${encodeURIComponent(activeSection.id)}`
+    : registrySourceId;
+  const activeRegistrySchema = useMemo(
+    () => createReferenceRegistrySchema(registrySchema, activeSection?.referenceProjectionSchema),
+    [activeSection?.referenceProjectionSchema, registrySchema],
+  );
   const registryDocuments = useMemo(() => ({
     ...(documents ?? {}),
-    [registrySourceId]: activeSection?.entries.map((entry) => entry.referenceUri) ?? [],
-  }), [activeSection, documents, registrySourceId]);
+    [activeRegistrySourceId]: activeSection?.entries.map((entry) => entry.referenceUri) ?? [],
+  }), [activeRegistrySourceId, activeSection, documents]);
   const registrySchemaHost = useMemo<EditorSchemaHost>(() => ({
     getSchema(context) {
-      return context.sourceId === registrySourceId ? registrySchema : schemaHost?.getSchema(context);
+      return context.sourceId === activeRegistrySourceId
+        ? schemaHost?.getSchema(context) ?? activeRegistrySchema
+        : schemaHost?.getSchema(context);
     },
     setRootSchema(schema, context) {
-      if (context.sourceId === registrySourceId) return;
       return schemaHost?.setRootSchema?.(schema, context);
     },
-    getNamedSchema: schemaHost?.getNamedSchema,
+    getNamedSchema(name, context) {
+      return (name === "content_asset_reference_row" || name === "content-asset") && activeSection?.referenceProjectionSchema
+        ? activeSection.referenceProjectionSchema
+        : schemaHost?.getNamedSchema?.(name, context);
+    },
     setNamedSchema: schemaHost?.setNamedSchema,
-  }), [registrySchema, registrySourceId, schemaHost]);
+  }), [activeRegistrySchema, activeRegistrySourceId, activeSection?.referenceProjectionSchema, schemaHost]);
 
   return (
     <div className="sje-asset-workbench">
@@ -81,8 +98,23 @@ export function AssetEditorShell({
         </div>
       </aside>
       <main className="sje-asset-workbench__detail">
-        {activeSection ? <EditorShell {...editorProps} documents={registryDocuments} enableRawEditor={enableRawEditor} rootPageTitle={activeSection.title} rootSourceId={registrySourceId} schemaHost={registrySchemaHost} /> : <div className="sje-asset-workbench__placeholder">{emptyLabel}</div>}
+        {activeSection ? <EditorShell key={activeRegistrySourceId} {...editorProps} documents={registryDocuments} enableRawEditor={enableRawEditor} rootPageTitle={activeSection.title} rootSourceId={activeRegistrySourceId} schemaHost={registrySchemaHost} /> : <div className="sje-asset-workbench__placeholder">{emptyLabel}</div>}
       </main>
     </div>
   );
+}
+
+function createReferenceRegistrySchema(registrySchema: EditorSchema, projectionSchema: EditorSchema | undefined): EditorSchema {
+  const projectionColumns = Object.keys(projectionSchema?.properties ?? {});
+  if (projectionColumns.length === 0) return registrySchema;
+  return {
+    ...registrySchema,
+    "x-editor": {
+      ...registrySchema["x-editor"],
+      table: {
+        ...registrySchema["x-editor"]?.table,
+        columns: projectionColumns.map((key) => ({ key })),
+      },
+    },
+  };
 }

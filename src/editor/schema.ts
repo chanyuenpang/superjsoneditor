@@ -90,6 +90,7 @@ export type EditorSchemaUi = {
 };
 
 export type EditorSchema = {
+  $schema?: string;
   $id?: string;
   $ref?: string;
   $defs?: Record<string, EditorSchema>;
@@ -161,12 +162,69 @@ export type EditorSchemaViewFile = {
   description?: string;
 };
 
+/**
+ * 宿主只负责加载和更新 schema；加载返回空值时，SJE 会从当前 JSON 推导最小 schema，
+ * 并在首个视图配置改动时将其通过 setRootSchema 交回宿主持久化。
+ */
 export type EditorSchemaHost = {
   getSchema: (context: EditorSchemaContext) => EditorSchema | undefined;
   getNamedSchema?: (name: string, context?: EditorSchemaWriteContext) => EditorSchema | undefined;
   setRootSchema?: (schema: EditorSchema, context: EditorSchemaWriteContext) => void | Promise<void>;
   setNamedSchema?: (name: string, schema: EditorSchema, context: EditorSchemaWriteContext) => void | Promise<void>;
 };
+
+/**
+ * 为没有预置 schema 的 JSON 值生成最小可编辑 schema。
+ *
+ * 推导结果只记录当前值的形状与对象字段顺序：不猜测业务必填项、枚举或
+ * 校验规则。对象保持可扩展，避免把一次视图编辑意外收紧为数据约束。
+ */
+export function inferSchemaFromValue(value: unknown, isRoot = true): EditorSchema {
+  const schema = inferSchemaNodeFromValues([value]);
+  return isRoot
+    ? { $schema: "https://json-schema.org/draft/2020-12/schema", ...schema }
+    : schema;
+}
+
+function inferSchemaNodeFromValues(values: unknown[]): EditorSchema {
+  const presentValues = values.filter((value) => value !== undefined);
+  const inferredTypes = uniqueStrings(presentValues.map(inferSchemaType)) as EditorSchemaType[];
+
+  if (inferredTypes.length === 1 && inferredTypes[0] === "object") {
+    const objects = presentValues.filter(isPlainObject);
+    const keys = uniqueStrings(objects.flatMap((value) => Object.keys(value)));
+    return {
+      type: "object",
+      properties: Object.fromEntries(keys.map((key) => [
+        key,
+        inferSchemaNodeFromValues(objects.map((value) => value[key])),
+      ])),
+      additionalProperties: true,
+    };
+  }
+
+  if (inferredTypes.length === 1 && inferredTypes[0] === "array") {
+    const entries = presentValues.filter(Array.isArray).flat();
+    return {
+      type: "array",
+      ...(entries.length > 0 ? { items: inferSchemaNodeFromValues(entries) } : {}),
+    };
+  }
+
+  return inferredTypes.length === 1
+    ? { type: inferredTypes[0] as EditorSchemaType }
+    : { type: inferredTypes };
+}
+
+function inferSchemaType(value: unknown): EditorSchemaType {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (isPlainObject(value)) return "object";
+  if (typeof value === "string") return "string";
+  if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+  if (typeof value === "boolean") return "boolean";
+  return "null";
+}
 
 export type EditorValidationError = {
   sourceId?: string;

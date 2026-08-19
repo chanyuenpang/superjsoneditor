@@ -5,7 +5,7 @@ import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { isReferenceValue, type EditorHost } from "./host";
 import type { EditorSchema, EditorSchemaHost, EditorSchemaLayerTarget, EditorValidationResult, EditorValidationHandler } from "./schema";
-import { resolveSchemaAtPath, updateSchemaAtDocumentPath, validateDocument as validateBySchema } from "./schema";
+import { inferSchemaFromValue, resolveSchemaAtPath, updateSchemaAtDocumentPath, validateDocument as validateBySchema } from "./schema";
 import {
   determineBackAnimation,
   determineJumpAnimation,
@@ -36,6 +36,12 @@ export function resolveCompactStack(
   if (compactBreakpoint <= 0) return false;
   const effectiveWidth = stackViewportWidth > 0 ? stackViewportWidth : windowViewportWidth;
   return effectiveWidth > 0 && effectiveWidth < compactBreakpoint;
+}
+
+function getSchemaOverrideKey(sourceId: string, target: EditorSchemaLayerTarget) {
+  return target.mode === "view"
+    ? `${sourceId}:view:${target.path}`
+    : `${sourceId}:default`;
 }
 
 type StackFlowRenderPage = {
@@ -194,6 +200,7 @@ export function EditorShell({
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
   const hasReportedChangeRef = useRef(false);
+  const schemaOverridesRef = useRef<Record<string, EditorSchema>>({});
   const schemaPersistenceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [stackViewportWidth, setStackViewportWidth] = useState(0);
   const [windowViewportWidth, setWindowViewportWidth] = useState(
@@ -410,13 +417,7 @@ export function EditorShell({
   function resolvePageSchema(page: NavigationPage): EditorSchema | undefined {
     if (!schemaHost) return undefined;
     const sourceId = page.sourceId ?? rootSourceId;
-    const rootSchema = schemaHost.getSchema({
-      sourceId,
-      path: [],
-      value: documentsBySourceId[sourceId],
-      documents: documentsBySourceId,
-      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
-    });
+    const rootSchema = resolveRootSchema(sourceId, documentsBySourceId[sourceId]);
     if (page.path.length === 0) {
       return rootSchema;
     }
@@ -432,7 +433,19 @@ export function EditorShell({
       value: resolvePageValue(page),
       documents: documentsBySourceId,
       activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
-    });
+    }) ?? inferSchemaFromValue(resolvePageValue(page));
+  }
+
+  function resolveRootSchema(sourceId: string, value: unknown): EditorSchema {
+    const override = schemaOverridesRef.current[getSchemaOverrideKey(sourceId, activeSchemaLayer)];
+    if (override) return override;
+    return schemaHost?.getSchema({
+      sourceId,
+      path: [],
+      value,
+      documents: documentsBySourceId,
+      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
+    }) ?? inferSchemaFromValue(value);
   }
 
   function resolveNamedSchema(name: string): EditorSchema | undefined {
@@ -455,15 +468,10 @@ export function EditorShell({
       return;
     }
     const rootValue = documentsBySourceId[sourceId];
-    const rootSchema = schemaHost.getSchema({
-      sourceId,
-      path: [],
-      value: rootValue,
-      documents: documentsBySourceId,
-      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
-    });
-    if (!rootSchema) return;
+    const rootSchema = resolveRootSchema(sourceId, rootValue);
     const nextSchema = updateSchemaAtDocumentPath(rootSchema, path, target, updater);
+    schemaOverridesRef.current[getSchemaOverrideKey(sourceId, activeSchemaLayer)] = nextSchema;
+    setSchemaRevision((current) => current + 1);
     const result = schemaHost.setRootSchema(nextSchema, {
       sourceId,
       documents: documentsBySourceId,
@@ -472,11 +480,9 @@ export function EditorShell({
     });
     if (result instanceof Promise) {
       void result
-        .then(() => setSchemaRevision((current) => current + 1))
-        .catch(() => showSchemaPersistenceNotice("schema 保存失败，列配置未保留。"));
+        .catch(() => showSchemaPersistenceNotice("schema 保存失败，当前视图保留本次内存配置。"));
       return;
     }
-    setSchemaRevision((current) => current + 1);
   }
 
   function handleUpdateNamedSchema(

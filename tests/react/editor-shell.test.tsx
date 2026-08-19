@@ -397,6 +397,20 @@ test("value arrays hide column visibility controls and disallow hiding generated
   expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
 });
 
+test("存量原始值数组的空列配置会恢复 Value 列并提示使用者", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: { type: "string" },
+    "x-editor": { table: { columns: [] } },
+  });
+
+  render(<EditorShell value={["COMBAT_VICTORY"]} schemaHost={schemaHost} />);
+
+  expect(screen.getByRole("columnheader", { name: "Value" })).toBeInTheDocument();
+  expect(screen.getByText("原始值数组不能隐藏全部列；已恢复 Value 列。")).toBeInTheDocument();
+  await waitFor(() => expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([{ key: "Value" }]));
+});
+
 test("reference projection demo can open nested encounter references from shared demo sources", () => {
   render(<App />);
 
@@ -4140,6 +4154,100 @@ test("schema authoring columns manager can add hidden object-array columns while
     { key: "id", label: "Quest ID" },
     { key: "hp" },
   ]);
+});
+
+test("schema 缺失时会从数组 JSON 推导 schema，并持久化表头编辑", () => {
+  let persistedSchema: EditorSchema | undefined;
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return undefined;
+    },
+    setRootSchema(schema) {
+      persistedSchema = structuredClone(schema);
+    },
+  };
+
+  render(
+    <EditorShell
+      value={[{ id: "quest_001", title: "First Quest", hp: 10 }]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  quickPressHeaderMenu(screen.getByRole("button", { name: "id" }));
+  fireEvent.change(screen.getByLabelText("Column label for id"), { target: { value: "Quest ID" } });
+
+  expect(screen.getByRole("columnheader", { name: "Quest ID" })).toBeInTheDocument();
+  expect(persistedSchema).toMatchObject({
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        hp: { type: "integer" },
+      },
+      additionalProperties: true,
+    },
+    "x-editor": {
+      table: {
+        columns: [
+          { key: "id", label: "Quest ID" },
+          { key: "title" },
+          { key: "hp" },
+        ],
+      },
+    },
+  });
+});
+
+test("schema 持久化失败后保留 object 视图的内存编辑并显示提示", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return undefined;
+    },
+    setRootSchema() {
+      return Promise.reject(new Error("disk unavailable"));
+    },
+  };
+
+  render(<EditorShell value={{ title: "Hero" }} schemaHost={schemaHost} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+  fireEvent.change(screen.getByLabelText("Field label for title"), { target: { value: "Name" } });
+
+  await waitFor(() => expect(screen.getByText("schema 保存失败，当前视图保留本次内存配置。")).toBeInTheDocument());
+  expect(screen.getByLabelText("Field Name")).toHaveValue("Hero");
+});
+
+test("数据只读不阻止 host 保存表头视图 schema", () => {
+  let persistedSchema: EditorSchema | undefined;
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        readOnly: true,
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+          },
+        },
+      };
+    },
+    setRootSchema(schema) {
+      persistedSchema = structuredClone(schema);
+    },
+  };
+
+  render(<EditorShell value={[{ id: "source.herb-field" }]} schemaHost={schemaHost} />);
+
+  quickPressHeaderMenu(screen.getByRole("button", { name: "id" }));
+  fireEvent.change(screen.getByLabelText("Column label for id"), { target: { value: "Source ID" } });
+
+  expect(screen.getByRole("columnheader", { name: "Source ID" })).toBeInTheDocument();
+  expect(persistedSchema?.["x-editor"]?.table?.columns).toEqual([{ key: "id", label: "Source ID" }]);
 });
 
 test("array 视图的 column 改名在中文输入法合成结束前不会提前提交", () => {
