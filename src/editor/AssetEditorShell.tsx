@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { EditorShell, type EditorShellProps } from "./EditorShell";
-import type { EditorSchema, EditorSchemaHost } from "./schema";
+import type { EditorSchema, EditorSchemaHost, EditorTableColumn } from "./schema";
 
 export type AssetEditorEntry = {
   id: string;
@@ -66,9 +66,12 @@ export function AssetEditorShell({
     }, [activeSection?.documentSourceId, activeSection?.entries, activeSourceId, documents]);
   const registrySchemaHost = useMemo<EditorSchemaHost>(() => ({
     getSchema(context) {
-      return context.sourceId === activeSourceId
-        ? schemaHost?.getSchema(context) ?? activeRegistrySchema
-        : schemaHost?.getSchema(context);
+      if (context.sourceId !== activeSourceId) return schemaHost?.getSchema(context);
+      return mergeReferenceRegistryViewSchema(
+        activeRegistrySchema,
+        activeSection?.referenceProjectionSchema,
+        schemaHost?.getSchema(context),
+      );
     },
     setRootSchema(schema, context) {
       return schemaHost?.setRootSchema?.(schema, context);
@@ -124,4 +127,39 @@ function createReferenceRegistrySchema(registrySchema: EditorSchema, projectionS
       },
     },
   };
+}
+
+/**
+ * 引用列表的字段候选集始终来自引用目标；已保存 schema 只能保留仍有效列的视图状态。
+ * 这样历史 registry 的 assetId / assetKind 等通用列不会遮蔽目标对象的字段。
+ */
+function mergeReferenceRegistryViewSchema(
+  registrySchema: EditorSchema,
+  projectionSchema: EditorSchema | undefined,
+  savedSchema: EditorSchema | undefined,
+): EditorSchema {
+  const projectionKeys = Object.keys(projectionSchema?.properties ?? {});
+  if (projectionKeys.length === 0 || !savedSchema?.["x-editor"]?.table) return registrySchema;
+  const savedColumns = savedSchema["x-editor"].table.columns;
+  const recognizedColumns = savedColumns.filter((column) => {
+    const key = tableColumnKey(column);
+    return key != null && projectionKeys.includes(key);
+  });
+  const columns = recognizedColumns.length > 0 || savedColumns.length === 0
+    ? recognizedColumns
+    : registrySchema["x-editor"]?.table?.columns ?? [];
+  return {
+    ...registrySchema,
+    "x-editor": {
+      ...registrySchema["x-editor"],
+      table: {
+        ...registrySchema["x-editor"]?.table,
+        columns,
+      },
+    },
+  };
+}
+
+function tableColumnKey(column: EditorTableColumn): string | undefined {
+  return column.key ?? (typeof column.field === "string" ? column.field : undefined);
 }
