@@ -62,7 +62,6 @@ export function SchemaOptionFieldEditor({
   value,
   options,
   readOnly,
-  placeholder = "",
   allowAuthoring,
   onEdit,
   onCreateOption,
@@ -166,7 +165,6 @@ export function SchemaOptionFieldEditor({
           type="button"
         >
           <div aria-label={`${ariaLabel} selected values`} className={mode === "single" ? "select-chips-cell" : "chips-cell"}>
-            {value.length === 0 && placeholder ? <span className="select-placeholder">{placeholder}</span> : null}
             {value.map((item, index) => {
               const option = optionMap.get(String(item));
               return (
