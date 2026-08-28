@@ -15,6 +15,7 @@ import {
   getVisiblePages,
   resolvePinnedRootMotionPlan,
   resolveStackFlowMotionPlan,
+  samePage,
   samePath,
   type StackAnimation,
 } from "./stack-motion";
@@ -25,7 +26,7 @@ import { icons } from "./icons";
 export type EditorDocuments = Record<string, unknown>;
 
 export type EditorSaveHandler = (documents: EditorDocuments) => void | EditorDocuments | Promise<void | EditorDocuments>;
-export type EditorReloadHandler = () => void | EditorDocuments | Promise<void | EditorDocuments>;
+export type EditorReloadHandler = () => EditorDocuments | Promise<EditorDocuments>;
 export type EditorChangeHandler = (documents: EditorDocuments) => void;
 
 export function resolveCompactStack(
@@ -185,10 +186,12 @@ export function EditorShell({
   const [documentsBySourceId, setDocumentsBySourceId] = useState(initialDocuments);
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
+  const [pinnedAnchor, setPinnedAnchor] = useState<NavigationPage | null>(null);
   const [stackAnimation, setStackAnimation] = useState<StackAnimation | null>(null);
   const [stackAnimationSourcePages, setStackAnimationSourcePages] = useState<NavigationPage[] | null>(null);
   const [closedStackFlowPage, setClosedStackFlowPage] = useState<Pick<NavigationPage, "sourceId" | "path"> | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [reloadError, setReloadError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<EditorValidationResult | null>(null);
   const [isEditingCurrentPage, setIsEditingCurrentPage] = useState(false);
   const [pageToolbarHost, setPageToolbarHost] = useState<HTMLDivElement | null>(null);
@@ -215,17 +218,20 @@ export function EditorShell({
   const currentPage = pages[pages.length - 1] ?? { sourceId: rootSourceId, path: [] };
   const isCompactStack = resolveCompactStack(compactBreakpoint, stackViewportWidth, windowViewportWidth);
   const isPinnedRootLayout = layoutMode === "pinned-root" && !isCompactStack;
+  const isManualPinnedLayout = pinnedAnchor != null && !isCompactStack;
+  const isPinnedLayout = isPinnedRootLayout || isManualPinnedLayout;
+  const pinnedLeftPage = isPinnedRootLayout ? rootPage : pinnedAnchor ?? rootPage;
   const prefersDualPageStackFlow = layoutMode === "stack-flow" && !isCompactStack;
   const shouldCollapseStackFlowToCurrentPage =
     prefersDualPageStackFlow &&
     closedStackFlowPage != null &&
     (currentPage.sourceId ?? rootSourceId) === (closedStackFlowPage.sourceId ?? rootSourceId) &&
     samePath(currentPage.path, closedStackFlowPage.path);
-  const visiblePages = isPinnedRootLayout
-    ? ((currentPage.sourceId ?? rootSourceId) === rootSourceId && currentPage.path.length === 0 ? [rootPage] : [rootPage, currentPage])
+  const visiblePages = isPinnedLayout
+    ? getPinnedVisiblePagesForPages(pages)
     : (prefersDualPageStackFlow ? (shouldCollapseStackFlowToCurrentPage ? [currentPage] : getVisiblePages(pages)) : [currentPage]);
   const stackFlowSourceVisiblePages =
-    !isCompactStack && !isPinnedRootLayout && stackAnimationSourcePages
+    !isCompactStack && !isPinnedLayout && stackAnimationSourcePages
       ? getVisiblePages(stackAnimationSourcePages)
       : null;
   const stackFlowMotionPlan = useMemo(
@@ -233,7 +239,7 @@ export function EditorShell({
     [stackAnimation, stackFlowSourceVisiblePages, visiblePages],
   );
   const isClosingStackFlowRightPage =
-    !isPinnedRootLayout &&
+    !isPinnedLayout &&
     stackAnimation?.direction === "replace" &&
     stackFlowMotionPlan.rightMotion === "fade-out";
   const hasVisibleRightPage = visiblePages.length > 1;
@@ -246,7 +252,7 @@ export function EditorShell({
     visiblePages.length === 1 &&
     currentPage.path.length === 0 &&
     !useFullscreenLeftPage;
-  const usesSplitLayout = !isCompactStack && (isPinnedRootLayout || (prefersDualPageStackFlow && (hasVisibleRightPage || showsRootPlaceholder || isClosingStackFlowRightPage)));
+  const usesSplitLayout = !isCompactStack && (isPinnedLayout || (prefersDualPageStackFlow && (hasVisibleRightPage || showsRootPlaceholder || isClosingStackFlowRightPage)));
   const referenceScopeDepths = useMemo(() => buildReferenceScopeDepths(pages), [pages]);
   const sourceReferenceScopeDepths = useMemo(
     () => (stackAnimationSourcePages ? buildReferenceScopeDepths(stackAnimationSourcePages) : null),
@@ -304,11 +310,13 @@ export function EditorShell({
     lastExternalDocumentsSnapshotRef.current = initialDocumentsSnapshot;
     setDocumentsBySourceId(initialDocuments);
     setSavedDocumentsBySourceId(initialDocuments);
+    setPinnedAnchor(null);
     setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
     setStackAnimation(null);
     setStackAnimationSourcePages(null);
     setClosedStackFlowPage(null);
     setSaveState("idle");
+    setReloadError(null);
     setValidationResult(null);
     setIsEditingCurrentPage(false);
   }, [initialDocuments, initialDocumentsSnapshot]);
@@ -341,19 +349,28 @@ export function EditorShell({
 
   async function handleReload() {
     try {
-      const nextDocuments = onReload ? await onReload() : savedDocumentsBySourceId;
-      const resolvedDocuments = nextDocuments ?? savedDocumentsBySourceId;
+      setReloadError(null);
+      if (!onReload) {
+        throw new Error("当前宿主未提供 JSON 刷新入口");
+      }
+      const nextDocuments = await onReload();
+      if (!nextDocuments) {
+        throw new Error("宿主未返回刷新后的 JSON 数据");
+      }
+      const resolvedDocuments = nextDocuments;
       setDocumentsBySourceId(resolvedDocuments);
       setSavedDocumentsBySourceId(resolvedDocuments);
-      setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
+      setPages(createNavigationState(rootSourceId, resolvedDocuments).pages);
+      setPinnedAnchor(null);
       setStackAnimation(null);
       setStackAnimationSourcePages(null);
       setClosedStackFlowPage(null);
       setSaveState("idle");
+      setReloadError(null);
       setValidationResult(null);
       setIsEditingCurrentPage(false);
-    } catch {
-      setSaveState("error");
+    } catch (error) {
+      setReloadError(error instanceof Error && error.message ? error.message : "JSON 重新加载失败");
     }
   }
 
@@ -570,12 +587,45 @@ export function EditorShell({
   }
 
   function getPinnedVisiblePagesForPages(targetPages: NavigationPage[]) {
-    const pinnedRootPage = targetPages[0] ?? { sourceId: rootSourceId, path: [] };
-    const pinnedCurrentPage = targetPages[targetPages.length - 1] ?? pinnedRootPage;
-    const isPinnedAtRoot =
-      (pinnedCurrentPage.sourceId ?? rootSourceId) === rootSourceId &&
-      pinnedCurrentPage.path.length === 0;
-    return isPinnedAtRoot ? [pinnedRootPage] : [pinnedRootPage, pinnedCurrentPage];
+    const anchor = isPinnedRootLayout
+      ? targetPages[0] ?? { sourceId: rootSourceId, path: [] }
+      : pinnedAnchor ?? targetPages[0] ?? { sourceId: rootSourceId, path: [] };
+    const targetCurrentPage = targetPages[targetPages.length - 1] ?? anchor;
+    return samePage(anchor, targetCurrentPage) ? [anchor] : [anchor, targetCurrentPage];
+  }
+
+  function handleTogglePinnedAnchor(page: NavigationPage) {
+    if (isPinnedRootLayout || stackAnimation) return;
+    setClosedStackFlowPage(null);
+    setStackAnimation(null);
+    setStackAnimationSourcePages(null);
+    setPinnedAnchor((current) => samePage(current ?? undefined, page) ? null : { ...page, path: [...page.path] });
+  }
+
+  function renderLeftPageActions(page: NavigationPage) {
+    const isPinned = isManualPinnedLayout && samePage(pinnedAnchor ?? undefined, page);
+    return (
+      <>
+        <button
+          aria-label={isPinned ? "Unpin left page" : "Pin left page"}
+          className="ghost-button compact-button"
+          disabled={Boolean(stackAnimation) || isPinnedRootLayout}
+          type="button"
+          onClick={() => handleTogglePinnedAnchor(page)}
+        >
+          <icons.pin size={16} />
+        </button>
+        <button
+          aria-label="Reload JSON data"
+          className="ghost-button compact-button"
+          disabled={Boolean(stackAnimation)}
+          type="button"
+          onClick={() => void handleReload()}
+        >
+          <icons.refresh size={16} />
+        </button>
+      </>
+    );
   }
 
   function handleNavigate(fromIndex: number, nextPath: JsonPath) {
@@ -584,13 +634,13 @@ export function EditorShell({
     setPages((currentPages) => {
       const currentVisiblePages = shouldCollapseStackFlowToCurrentPage
         ? [currentPages[currentPages.length - 1] ?? { sourceId: rootSourceId, path: [] }]
-        : isPinnedRootLayout
+        : isPinnedLayout
         ? getPinnedVisiblePagesForPages(currentPages)
         : (isCompactStack ? [currentPages[currentPages.length - 1] ?? { sourceId: rootSourceId, path: [] }] : getVisiblePages(currentPages));
       const actualIndex = isCompactStack
         ? currentPages.length - 1
-        : isPinnedRootLayout
-        ? (fromIndex === 0 ? 0 : currentPages.length - 1)
+        : isPinnedLayout
+        ? (fromIndex === 0 ? findRenderedPageIndex(currentPages, getPinnedVisiblePagesForPages(currentPages)[0]) : currentPages.length - 1)
         : Math.max(0, currentPages.length - currentVisiblePages.length + fromIndex);
       const sourceIsForeground = actualIndex === currentPages.length - 1;
       const basePages = sourceIsForeground ? currentPages : currentPages.slice(0, actualIndex + 1);
@@ -617,7 +667,7 @@ export function EditorShell({
       if (isCompactStack) {
         setStackAnimation(null);
         setStackAnimationSourcePages(null);
-      } else if (isPinnedRootLayout) {
+      } else if (isPinnedLayout) {
         const currentAnimationPages = getPinnedVisiblePagesForPages(currentPages);
         const nextAnimationPages = getPinnedVisiblePagesForPages(nextPages);
         const animation =
@@ -651,7 +701,7 @@ export function EditorShell({
       if (isCompactStack) {
         setStackAnimation(null);
         setStackAnimationSourcePages(null);
-      } else if (!isPinnedRootLayout) {
+      } else if (!isPinnedLayout) {
         setStackAnimation(determineJumpAnimation(currentPages, nextPages, animationKeyRef.current));
         setStackAnimationSourcePages(null);
       } else {
@@ -673,11 +723,14 @@ export function EditorShell({
   }
 
   function handleBack() {
+    if (isManualPinnedLayout && samePage(currentPage, pinnedAnchor ?? undefined)) {
+      return;
+    }
     if (shouldCollapseStackFlowToCurrentPage) {
       animationKeyRef.current += 1;
       const restoredVisiblePages = getVisiblePages(pages);
       setClosedStackFlowPage(null);
-      if (!isCompactStack && !isPinnedRootLayout && restoredVisiblePages.length === 2) {
+      if (!isCompactStack && !isPinnedLayout && restoredVisiblePages.length === 2) {
         const promotingPage = restoredVisiblePages[1] ?? currentPage;
         setStackAnimation({
           direction: "pop",
@@ -700,7 +753,7 @@ export function EditorShell({
       if (isCompactStack) {
         setStackAnimation(null);
         setStackAnimationSourcePages(null);
-      } else if (isPinnedRootLayout) {
+      } else if (isPinnedLayout) {
         setStackAnimation(
           determinePinnedRootBackAnimation(
             getPinnedVisiblePagesForPages(currentPages),
@@ -732,7 +785,7 @@ export function EditorShell({
       if (isCompactStack) {
         setStackAnimation(null);
         setStackAnimationSourcePages(null);
-      } else if (isPinnedRootLayout) {
+      } else if (isPinnedLayout) {
         setStackAnimation(
           determinePinnedRootBackAnimation(
             getPinnedVisiblePagesForPages(currentPages),
@@ -757,7 +810,7 @@ export function EditorShell({
 
     animationKeyRef.current += 1;
     setClosedStackFlowPage(
-      !isPinnedRootLayout && leftPageFullscreen
+      !isPinnedLayout && leftPageFullscreen
         ? { sourceId: targetPage.sourceId ?? rootSourceId, path: [...targetPage.path] }
         : null,
     );
@@ -771,12 +824,12 @@ export function EditorShell({
         setStackAnimation(null);
         setStackAnimationSourcePages(null);
       } else {
-        const currentVisiblePages = isPinnedRootLayout
+        const currentVisiblePages = isPinnedLayout
           ? getPinnedVisiblePagesForPages(currentPages)
           : getVisiblePages(currentPages);
         const exitingPage = currentVisiblePages[1];
         setStackAnimation(exitingPage ? { direction: "replace", key: animationKeyRef.current, exitingPage } : null);
-        setStackAnimationSourcePages(!isPinnedRootLayout && exitingPage ? currentPages : null);
+        setStackAnimationSourcePages(!isPinnedLayout && exitingPage ? currentPages : null);
       }
 
       return nextPages;
@@ -837,6 +890,7 @@ export function EditorShell({
                 {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save failed"}
               </div>
             ) : null}
+            {reloadError ? <div className="toolbar-meta status-text" role="alert">Reload failed: {reloadError}</div> : null}
             {validationResult?.documentErrors?.length ? (
               <div className="toolbar-meta status-text">
                 {validationResult.documentErrors.join(" ")}
@@ -844,9 +898,6 @@ export function EditorShell({
             ) : null}
             {isDirty && !isEditingCurrentPage && !readOnly ? (
               <>
-                <button className="ghost-button" type="button" onClick={handleReload}>
-                  Reload
-                </button>
                 {onSave || onUnavailableSaveAttempt ? (
                   <button className="primary-button" type="button" onClick={onSave ? handleSave : onUnavailableSaveAttempt}>
                     Save
@@ -932,7 +983,7 @@ export function EditorShell({
                 );
               })()
             ) : null}
-            {!isCompactStack && !isPinnedRootLayout ? (
+            {!isCompactStack && !isPinnedLayout ? (
               <>
             {renderedStackFlowPages.map((renderPage, index) => {
               const { page, depthClass, fullPageIndex, isCurrent, pageStack, replaceEnter, hideClass } = renderPage;
@@ -985,6 +1036,7 @@ export function EditorShell({
                           ? handleBack
                           : undefined
                     }
+                    pageHeaderActions={index === 0 ? renderLeftPageActions(page) : undefined}
                     onClosePage={
                       leftPageFullscreen && index === renderedStackFlowPages.length - 1 && hasVisibleRightPage && !isClosingStackFlowRightPage
                         ? handleCloseRightPage
@@ -1231,11 +1283,11 @@ export function EditorShell({
             ) : null}
               </>
             ) : null}
-            {!isCompactStack && isPinnedRootLayout ? (
+            {!isCompactStack && isPinnedLayout ? (
               <>
                 {(() => {
-                  const pinnedRootSourceId = rootPage.sourceId ?? rootSourceId;
-                  const pinnedRootValue = resolvePageValue(rootPage);
+                  const pinnedRootSourceId = pinnedLeftPage.sourceId ?? rootSourceId;
+                  const pinnedRootValue = resolvePageValue(pinnedLeftPage);
                   const pinnedRootKindClass = Array.isArray(pinnedRootValue)
                     ? "stack-page--array"
                     : (pinnedRootValue && typeof pinnedRootValue === "object" ? "stack-page--object" : "stack-page--primitive");
@@ -1245,19 +1297,19 @@ export function EditorShell({
                         "stack-page",
                         useFullscreenLeftPage ? "stack-page--fullscreen-left" : "stack-page--background",
                         pinnedRootKindClass,
-                        rootPage.isReference ? "is-reference" : "",
+                        pinnedLeftPage.isReference ? "is-reference" : "",
                       ].filter(Boolean).join(" ")}
-                      key="pinned-root:left"
+                      key={`pinned-anchor:left:${pinnedRootSourceId}:${pinnedLeftPage.path.join("/")}`}
                       style={getStackPageStyle(useFullscreenLeftPage ? "stack-page--fullscreen-left" : "stack-page--background")}
                     >
                       <ValueInspector
                         value={pinnedRootValue}
-                        savedValue={getValueAtPath(savedDocumentsBySourceId[pinnedRootSourceId], rootPage.path)}
+                        savedValue={getValueAtPath(savedDocumentsBySourceId[pinnedRootSourceId], pinnedLeftPage.path)}
                         sourceId={pinnedRootSourceId}
-                        path={rootPage.path}
-                        title={getPageTitle(rootPage)}
+                        path={pinnedLeftPage.path}
+                        title={getPageTitle(pinnedLeftPage)}
                         host={host}
-                        schema={resolvePageSchema(rootPage)}
+                        schema={resolvePageSchema(pinnedLeftPage)}
                         resolveNamedSchema={resolveNamedSchema}
                         onUpdateDocumentSchema={handleUpdateDocumentSchema}
                         onUpdateNamedSchema={handleUpdateNamedSchema}
@@ -1265,13 +1317,14 @@ export function EditorShell({
                         enableRawEditor={enableRawEditor}
                         renderPageActionButtons={renderPageActionButtons}
                         toolbarPortalHost={visiblePages.length === 1 ? pageToolbarHost : null}
-                        referenceError={rootPage.referenceError}
-                        isReference={rootPage.isReference}
-                        referenceScopeDepth={referenceScopeDepths[0]}
-                        referenceSourceLabel={getReferenceSourceLabel(rootPage.sourceId, rootSourceId, referenceScopeDepths[0])}
-                        activeChildSegment={deriveActiveChildSegment(rootPage.path, currentPage.path)}
+                        referenceError={pinnedLeftPage.referenceError}
+                        isReference={pinnedLeftPage.isReference}
+                        referenceScopeDepth={getReferenceScopeDepthForPage(pages, pinnedLeftPage)}
+                        referenceSourceLabel={getReferenceSourceLabel(pinnedLeftPage.sourceId, rootSourceId, getReferenceScopeDepthForPage(pages, pinnedLeftPage))}
+                        activeChildSegment={deriveActiveChildSegment(pinnedLeftPage.path, currentPage.path)}
                         activeReferenceSourceId={deriveActiveReferenceSourceId(pinnedRootSourceId, currentPage.sourceId ?? rootSourceId, rootSourceId)}
-                        onNavigateUp={undefined}
+                        onNavigateUp={!isManualPinnedLayout && (pinnedLeftPage.path.length > 0 || pinnedLeftPage.isReference) ? handleBack : undefined}
+                        pageHeaderActions={renderLeftPageActions(pinnedLeftPage)}
                         onClosePage={undefined}
                         onNavigate={(nextPath) => handleNavigate(0, nextPath)}
                         onJumpToSource={handleJumpToSource}
@@ -1282,7 +1335,7 @@ export function EditorShell({
                           setValidationResult(null);
                           setDocumentsBySourceId((current) => ({
                             ...current,
-                            [pinnedRootSourceId]: setValueAtPath(current[pinnedRootSourceId], rootPage.path, nextValue),
+                            [pinnedRootSourceId]: setValueAtPath(current[pinnedRootSourceId], pinnedLeftPage.path, nextValue),
                           }));
                         }}
                       />

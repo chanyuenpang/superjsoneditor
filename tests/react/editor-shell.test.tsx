@@ -554,14 +554,15 @@ test("unavailable save attempts can explain that deployed demo changes do not pe
   expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
 });
 
-test("reload without a host callback reverts to the last saved snapshot", () => {
+test("reload without a host callback retains the current document and exposes the failure", () => {
   render(<EditorShell documents={{ main: { hello: "world" } }} onSave={() => undefined} />);
 
   fireEvent.change(screen.getByLabelText("Field hello"), { target: { value: "galaxy" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "Reload" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Reload JSON data" }));
 
-  expect(screen.getByDisplayValue("world")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  expect(screen.getByDisplayValue("galaxy")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("当前宿主未提供 JSON 刷新入口");
+  expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
 });
 
 test("host reload can replace the in-memory documents", async () => {
@@ -569,7 +570,7 @@ test("host reload can replace the in-memory documents", async () => {
   render(<EditorShell documents={{ main: { hello: "world" } }} onReload={handleReload} onSave={() => undefined} />);
 
   fireEvent.change(screen.getByLabelText("Field hello"), { target: { value: "galaxy" } });
-  fireEvent.click(screen.getAllByRole("button", { name: "Reload" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Reload JSON data" }));
 
   await waitFor(() => expect(handleReload).toHaveBeenCalledTimes(1));
   await waitFor(() => expect(screen.getByDisplayValue("reloaded")).toBeInTheDocument());
@@ -1074,6 +1075,45 @@ test("pinned-root 模式导航后保留左侧 root 页", () => {
   expect(container.querySelector(".stack-page--background")).not.toBeNull();
   expect(container.querySelector(".stack-page--foreground")).not.toBeNull();
   expect(screen.getByRole("button", { name: "Close right page" })).toBeInTheDocument();
+});
+
+test("手动锁定左页后，右页深钻只替换右侧且左页保持不动", () => {
+  vi.useFakeTimers();
+  const { container } = render(
+    <EditorShell value={{ profile: { stats: { detail: { hp: 10 } } } }} layoutMode="stack-flow" />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "profile object 1 fields" }));
+    act(() => { vi.advanceTimersByTime(600); });
+    fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
+    act(() => { vi.advanceTimersByTime(600); });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+    expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "detail object 1 fields" }));
+
+    expect(container.querySelectorAll(".stack-page--background")).toHaveLength(1);
+    expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
+    expect(container.querySelector(".stack-page--push-enter")).toBeNull();
+    expect(screen.getByRole("button", { name: "stats object 1 fields" })).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("刷新成功会取消手动锁定并回到最新根 JSON", async () => {
+  const handleReload = vi.fn(async () => ({ main: { refreshed: "yes" } }));
+  render(<EditorShell documents={{ main: { profile: { stats: { hp: 10 } } } }} onReload={handleReload} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+  expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Reload JSON data" }));
+
+  await waitFor(() => expect(handleReload).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByDisplayValue("yes")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Pin left page" })).toBeInTheDocument();
 });
 
 test("pinned-root 妯″紡涓嬬偣鍑诲彸椤垫寜閽細娌跨敤宸﹂〉鐨?replace 鍔ㄧ敾璇箟", () => {

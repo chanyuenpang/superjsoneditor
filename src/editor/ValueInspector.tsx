@@ -71,6 +71,7 @@ type ValueInspectorProps = {
   readOnly?: boolean;
   onNavigateUp?: () => void;
   onClosePage?: () => void;
+  pageHeaderActions?: ReactNode;
   onNavigate: (path: JsonPath) => void;
   onJumpToSource?: (sourceId: string) => void;
   onApplyValue: (nextValue: unknown) => void;
@@ -859,6 +860,7 @@ function ObjectPage({
   referenceSourceLabel,
   onNavigateUp,
   onClosePage,
+  pageHeaderActions,
   onNavigate,
   onJumpToSource,
   onApplyValue,
@@ -1044,6 +1046,7 @@ function ObjectPage({
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
         onClosePage={onClosePage}
+        pageHeaderActions={pageHeaderActions}
       />
       <SchemaControlBar
         schema={schema}
@@ -1478,6 +1481,7 @@ function ArrayPage({
   activeReferenceSourceId,
   onNavigateUp,
   onClosePage,
+  pageHeaderActions,
   onNavigate,
   onJumpToSource,
   onApplyValue,
@@ -1973,6 +1977,7 @@ function ArrayPage({
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
         onClosePage={onClosePage}
+        pageHeaderActions={pageHeaderActions}
       />
       <SchemaControlBar
         schema={schema}
@@ -2850,6 +2855,7 @@ function PrimitivePage({
   referenceSourceLabel,
   onNavigateUp,
   onClosePage,
+  pageHeaderActions,
   onJumpToSource,
   onApplyValue,
   onEditModeChange,
@@ -2886,6 +2892,7 @@ function PrimitivePage({
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
         onClosePage={onClosePage}
+        pageHeaderActions={pageHeaderActions}
       />
       <SchemaControlBar
         schema={schema}
@@ -2968,6 +2975,7 @@ function ReferenceErrorPage({
   referenceSourceLabel,
   onNavigateUp,
   onClosePage,
+  pageHeaderActions,
 }: ValueInspectorProps & { referenceError: ReferenceErrorInfo }) {
   return (
     <section className={["node-page", "node-page--primitive", ...getSchemaClassNames(schema)].join(" ")}>
@@ -2979,6 +2987,7 @@ function ReferenceErrorPage({
         referenceSourceLabel={referenceSourceLabel}
         onNavigateUp={onNavigateUp}
         onClosePage={onClosePage}
+        pageHeaderActions={pageHeaderActions}
       />
       <div className="node-page__content">
         <div className="object-page-body">
@@ -3008,6 +3017,7 @@ function PageHeader(props: {
   referenceSourceLabel?: string;
   onNavigateUp?: () => void;
   onClosePage?: () => void;
+  pageHeaderActions?: ReactNode;
 }) {
   return (
     <div
@@ -3023,6 +3033,7 @@ function PageHeader(props: {
             {"<"}
           </button>
         ) : null}
+        {props.pageHeaderActions}
         <div className="detail-title">{props.title ?? formatPath(props.path)}</div>
       </div>
       <div className="page-header__actions">
