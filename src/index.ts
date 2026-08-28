@@ -20,7 +20,6 @@ export type {
   EditorMode,
   ResolvedSchemaNode,
   EditorValidationError,
-  EditorValidationHandler,
   EditorValidationResult,
 } from "./editor/schema";
 export {

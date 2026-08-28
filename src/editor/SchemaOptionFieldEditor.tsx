@@ -1,6 +1,7 @@
 import * as Popover from "@radix-ui/react-popover";
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { EditorViewOptionColor } from "./schema";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { colorChoiceGroups, namedChipPalette, type EditorViewOptionColor } from "./schema";
+import { useVerticalListDragReorder } from "./useVerticalListDragReorder";
 import { icons } from "./icons";
 
 export type SchemaOptionValue = string | number;
@@ -26,6 +27,7 @@ type SchemaOptionFieldEditorProps = {
   onRenameOption?: (previousValue: SchemaOptionValue, nextValue: string) => void;
   onDeleteOption?: (optionValue: SchemaOptionValue) => void;
   onMoveOption?: (optionValue: SchemaOptionValue, direction: "up" | "down") => void;
+  onReorderOptions?: (orderedValues: Array<string | number>) => void;
   onSetOptionColor?: (optionValue: SchemaOptionValue, color: EditorViewOptionColor | null) => void;
 };
 
@@ -34,27 +36,7 @@ type EditingState = {
   label: string;
 };
 
-const colorChoices: Array<{ value: EditorViewOptionColor | "default"; label: string }> = [
-  { value: "default", label: "Default" },
-  { value: "gray", label: "Gray" },
-  { value: "orange", label: "Orange" },
-  { value: "yellow", label: "Yellow" },
-  { value: "green", label: "Green" },
-  { value: "blue", label: "Blue" },
-  { value: "gold", label: "Gold" },
-  { value: "red", label: "Red" },
-];
-
-const namedChipPalette: Record<EditorViewOptionColor | "default", { background: string; color: string }> = {
-  default: { background: "#eef2f7", color: "#40516b" },
-  gray: { background: "#eceff3", color: "#556270" },
-  orange: { background: "#fff0de", color: "#9f580a" },
-  yellow: { background: "#fff5cb", color: "#876300" },
-  green: { background: "#e5f6ea", color: "#1f6b3a" },
-  blue: { background: "#e4f0ff", color: "#1e5eb8" },
-  gold: { background: "#fff2c6", color: "#7a5b00" },
-  red: { background: "#ffe4e1", color: "#8f3123" },
-};
+const defaultColorChoiceLabel = "默认";
 
 export function SchemaOptionFieldEditor({
   ariaLabel,
@@ -68,6 +50,7 @@ export function SchemaOptionFieldEditor({
   onRenameOption,
   onDeleteOption,
   onMoveOption,
+  onReorderOptions,
   onSetOptionColor,
 }: SchemaOptionFieldEditorProps) {
   const [open, setOpen] = useState(false);
@@ -75,6 +58,8 @@ export function SchemaOptionFieldEditor({
   const [editing, setEditing] = useState<EditingState | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const optionRowRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const popoverContentRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (open && !editing) inputRef.current?.focus();
@@ -104,8 +89,20 @@ export function SchemaOptionFieldEditor({
     const needle = draft.trim().toLowerCase();
     return normalizedOptions.filter((option) => option.label.toLowerCase().includes(needle) || String(option.value).toLowerCase().includes(needle));
   }, [draft, normalizedOptions]);
-  const canCreate = allowAuthoring && draft.trim().length > 0 && !normalizedOptions.some((option) => String(option.value).toLowerCase() === draft.trim().toLowerCase());
+  const canCreate = allowAuthoring && Boolean(onCreateOption) && draft.trim().length > 0 && !normalizedOptions.some((option) => String(option.value).toLowerCase() === draft.trim().toLowerCase());
   const canManageOption = Boolean(onRenameOption || onDeleteOption || onMoveOption || onSetOptionColor);
+
+  const { beginDrag, dragPreview, draggingId, handleSuppressedClickCapture } = useVerticalListDragReorder<HTMLDivElement>({
+    fullOrder: normalizedOptions.map((option) => String(option.value)),
+    visibleOrder: filteredOptions.map((option) => String(option.value)),
+    itemRefs: optionRowRefs,
+    onCommitOrder: (nextOrder) => onReorderOptions?.(nextOrder.map((entry) => {
+      const numeric = Number(entry);
+      return Number.isFinite(numeric) && String(numeric) === entry ? numeric : entry;
+    })),
+  });
+  const canDragOption = Boolean(onReorderOptions) && !readOnly && draft.trim().length === 0;
+
 
   function commit(nextValues: SchemaOptionValue[]) {
     onEdit(nextValues);
@@ -150,12 +147,18 @@ export function SchemaOptionFieldEditor({
     setEditing(null);
   }
 
-  function applyColor(optionValue: SchemaOptionValue, color: EditorViewOptionColor | "default") {
-    onSetOptionColor?.(optionValue, color === "default" ? null : color);
+  function applyColor(optionValue: SchemaOptionValue, color: EditorViewOptionColor | null) {
+    onSetOptionColor?.(optionValue, color);
   }
 
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
+    <Popover.Root
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setEditing(null);
+      }}
+      open={open}
+    >
       <Popover.Trigger asChild>
         <button
           aria-label={ariaLabel}
@@ -165,19 +168,26 @@ export function SchemaOptionFieldEditor({
           type="button"
         >
           <div aria-label={`${ariaLabel} selected values`} className={mode === "single" ? "select-chips-cell" : "chips-cell"}>
-            {value.map((item, index) => {
-              const option = optionMap.get(String(item));
-              return (
-                <span className="chip" key={`${item}-${index}`} style={chipStyleForValue(option?.color ?? null)}>
-                  {option?.label ?? String(item)}
-                </span>
-              );
-            })}
+            {mode === "single"
+              ? (value.length > 0
+                ? (() => {
+                  const option = optionMap.get(String(value[0]));
+                  return <span className="select-value-text" style={option?.color ? chipStyleForValue(option.color) : undefined}>{option?.label ?? String(value[0])}</span>;
+                })()
+                : <span className="select-placeholder">未选择</span>)
+              : value.map((item, index) => {
+                const option = optionMap.get(String(item));
+                return (
+                  <span className="chip" key={`${item}-${index}`} style={chipStyleForValue(option?.color ?? null)}>
+                    {option?.label ?? String(item)}
+                  </span>
+                );
+              })}
           </div>
         </button>
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Content className="multi-select-popover" align="start" collisionPadding={12} sideOffset={6} onOpenAutoFocus={(event) => event.preventDefault()}>
+        <Popover.Content className="multi-select-popover" align="start" collisionPadding={12} onClickCapture={handleSuppressedClickCapture} onOpenAutoFocus={(event) => event.preventDefault()} ref={popoverContentRef}>
           <div className="multi-select-selected">
             {value.map((item, index) => {
               const option = optionMap.get(String(item));
@@ -214,21 +224,49 @@ export function SchemaOptionFieldEditor({
             ) : null}
           </div>
           <div className="multi-select-options">
-            {filteredOptions.map((option) => {
+            {filteredOptions.map((option, index) => {
               const selected = selectedValues.has(String(option.value));
+              const isActiveTarget = dragPreview != null && dragPreview.activeId === String(option.value);
+              if (isActiveTarget) {
+                return (
+                  <Fragment key={String(option.value)}>
+                    {dragPreview!.dropIndex < index ? (
+                      <div className="option-field-drag-placeholder" style={{ minHeight: dragPreview!.ghostHeight }} />
+                    ) : null}
+                  </Fragment>
+                );
+              }
               return (
-                <div className={`multi-select-option-row ${selected ? "selected" : ""}`} key={String(option.value)}>
-                  <button
-                    className={`multi-select-option ${selected ? "selected" : ""}`}
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      if (!readOnly) toggleOption(option.value);
-                    }}
-                    type="button"
+                <Fragment key={String(option.value)}>
+                  <div
+                    className={`multi-select-option-row ${selected ? "selected" : ""}`}
+                    ref={(element) => { optionRowRefs.current[String(option.value)] = element; }}
                   >
-                    <icons.dragHandle size={14} />
-                    <span className="chip" style={chipStyleForValue(option.color)}>{option.label}</span>
-                  </button>
+                    <button
+                      className={canDragOption ? "option-drag-handle" : "option-drag-handle is-disabled"}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        if (canDragOption) beginDrag(String(option.value), event);
+                      }}
+                      type="button"
+                    >
+                      <icons.dragHandle size={14} />
+                    </button>
+                    <button
+                      className={`multi-select-option ${selected ? "selected" : ""}`}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        if (!readOnly) toggleOption(option.value);
+                      }}
+                      type="button"
+                    >
+                      <span className="chip" style={chipStyleForValue(option.color)}>{option.label}</span>
+                      {selected ? (
+                        <span className="picker-option-selected-check">
+                          <icons.check size={14} />
+                        </span>
+                      ) : null}
+                    </button>
                   {canManageOption && !readOnly ? (
                     <Popover.Root open={editing?.value === String(option.value)} onOpenChange={(nextOpen) => setEditing(nextOpen ? { value: String(option.value), label: option.label } : null)}>
                       <Popover.Trigger asChild>
@@ -238,7 +276,7 @@ export function SchemaOptionFieldEditor({
                             event.stopPropagation();
                             setEditing({ value: String(option.value), label: option.label });
                           }}
-                          title="Edit option"
+                          title="编辑选项"
                           type="button"
                         >
                           <icons.more size={16} />
@@ -275,59 +313,62 @@ export function SchemaOptionFieldEditor({
                               type="button"
                             >
                               <icons.delete size={16} />
-                              <span>Delete</span>
+                              <span>删除</span>
                             </button>
-                          ) : null}
-                          {onMoveOption ? (
-                            <>
-                              <button
-                                className="multi-select-option-action"
-                                onPointerDown={(event) => {
-                                  event.preventDefault();
-                                  onMoveOption(option.value, "up");
-                                }}
-                                type="button"
-                              >
-                                <icons.previous size={16} />
-                                <span>Move up</span>
-                              </button>
-                              <button
-                                className="multi-select-option-action"
-                                onPointerDown={(event) => {
-                                  event.preventDefault();
-                                  onMoveOption(option.value, "down");
-                                }}
-                                type="button"
-                              >
-                                <icons.next size={16} />
-                                <span>Move down</span>
-                              </button>
-                            </>
                           ) : null}
                           {onSetOptionColor ? (
                             <>
                               <div className="multi-select-option-divider" />
-                              <div className="multi-select-option-section-title">Color</div>
+                              <div className="multi-select-option-section-title">颜色</div>
                               <div className="multi-select-color-list">
-                                {colorChoices.map((choice) => {
-                                  const active = (option.color ?? "default") === choice.value;
-                                  const palette = namedChipPalette[choice.value];
+                                {(() => {
+                                  const active = option.color == null;
+                                  const palette = namedChipPalette.default;
                                   return (
                                     <button
                                       className={`multi-select-color-item ${active ? "active" : ""}`}
-                                      key={choice.value}
+                                      key="default"
                                       onPointerDown={(event) => {
                                         event.preventDefault();
-                                        applyColor(option.value, choice.value);
+                                        applyColor(option.value, null);
                                       }}
                                       type="button"
                                     >
-                                      <span className="multi-select-color-swatch" style={{ background: palette.background, borderColor: palette.color }} />
-                                      <span>{choice.label}</span>
+                                      <span className="multi-select-color-swatch" style={{ background: palette.background, borderColor: palette.swatchBorder }} />
+                                      <span>{defaultColorChoiceLabel}</span>
                                       {active ? <icons.check size={16} /> : <span className="multi-select-color-check-placeholder" />}
                                     </button>
                                   );
-                                })}
+                                })()}
+                              </div>
+                              <div className="multi-select-color-columns">
+                                {colorChoiceGroups.map((group) => (
+                                  <div className="multi-select-color-group" data-color-group={group.key} key={group.key}>
+                                    <div className="multi-select-color-group-title">{group.label}</div>
+                                    <div className="multi-select-color-list">
+                                      {group.choices.map((choice) => {
+                                        const active = option.color === choice.value;
+                                        const palette = namedChipPalette[choice.value];
+                                        return (
+                                          <button
+                                            className={`multi-select-color-item ${active ? "active" : ""}`}
+                                            data-color-choice={choice.value}
+                                            key={choice.value}
+                                            onPointerDown={(event) => {
+                                              event.preventDefault();
+                                              applyColor(option.value, choice.value);
+                                            }}
+                                            type="button"
+                                          >
+                                            <span className="multi-select-color-swatch" style={{ background: palette.background, borderColor: palette.swatchBorder }} />
+                                            <span>{choice.label}</span>
+                                            {active ? <icons.check size={16} /> : <span className="multi-select-color-check-placeholder" />}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             </>
                           ) : null}
@@ -335,7 +376,11 @@ export function SchemaOptionFieldEditor({
                       </Popover.Portal>
                     </Popover.Root>
                   ) : null}
-                </div>
+                  </div>
+                  {dragPreview != null && dragPreview.dropIndex === index ? (
+                    <div className="option-field-drag-placeholder" style={{ minHeight: dragPreview.ghostHeight }} />
+                  ) : null}
+                </Fragment>
               );
             })}
             {canCreate ? (
@@ -352,6 +397,23 @@ export function SchemaOptionFieldEditor({
               </button>
             ) : null}
           </div>
+          {dragPreview ? (() => {
+            const popoverRect = popoverContentRef.current?.getBoundingClientRect();
+            const activeOption = optionMap.get(dragPreview.activeId);
+            return (
+              <div
+                className="option-field-drag-ghost"
+                style={{
+                  height: dragPreview.ghostHeight,
+                  left: popoverRect ? dragPreview.ghostLeft - popoverRect.left : dragPreview.ghostLeft,
+                  top: popoverRect ? dragPreview.ghostTop - popoverRect.top : dragPreview.ghostTop,
+                  width: dragPreview.ghostWidth,
+                }}
+              >
+                {activeOption ? <span className="chip" style={chipStyleForValue(activeOption.color)}>{activeOption.label}</span> : null}
+              </div>
+            );
+          })() : null}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>

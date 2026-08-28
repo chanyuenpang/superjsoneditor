@@ -1,4 +1,4 @@
-﻿import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test, vi } from "vitest";
@@ -718,6 +718,87 @@ test("view schema overrides apply when toggled from an open array row object pag
 
   expect(getCurrentPageQueries().getByLabelText("Field View Title")).toBeInTheDocument();
   expect(getCurrentPageQueries().queryByLabelText("Field Title")).toBeNull();
+});
+
+test("附加字段不显示拖动把手，已声明字段正常显示", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          alpha: { type: "string", title: "Alpha" },
+          beta: { type: "string", title: "Beta" },
+        },
+        additionalProperties: true,
+      };
+    },
+    setRootSchema() { return undefined; },
+  };
+
+  render(<EditorShell value={{ alpha: "1", beta: "2", extra: "3" }} schemaHost={schemaHost} />);
+
+  expect(screen.getByRole("button", { name: "Reorder Alpha" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reorder Beta" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Reorder extra" })).not.toBeInTheDocument();
+});
+
+test("仅一个已声明字段时所有字段都不显示拖动把手", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          alpha: { type: "string", title: "Alpha" },
+        },
+        additionalProperties: true,
+      };
+    },
+    setRootSchema() { return undefined; },
+  };
+
+  render(<EditorShell value={{ alpha: "1", extra: "2", other: "3" }} schemaHost={schemaHost} />);
+
+  expect(screen.queryByRole("button", { name: /Reorder /i })).not.toBeInTheDocument();
+});
+
+test("拖已声明字段后 schema.properties 键集合不变且附加字段恒尾部", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "object",
+    properties: {
+      alpha: { type: "string", title: "Alpha" },
+      beta: { type: "string", title: "Beta" },
+    },
+    additionalProperties: true,
+  });
+
+  const { container } = render(<EditorShell value={{ alpha: "1", beta: "2", extra: "3" }} schemaHost={schemaHost} />);
+
+  const betaHandle = screen.getByRole("button", { name: "Reorder Beta" });
+  const mockRow = (handle: HTMLElement, top: number) => {
+    (handle.closest(".detail-property-item") as HTMLElement).getBoundingClientRect = () => ({
+      x: 0, y: top, width: 300, height: 72, top, right: 300, bottom: top + 72, left: 0, toJSON() { return {}; },
+    } as DOMRect);
+  };
+  mockRow(betaHandle, 120);
+  mockRow(screen.getByRole("button", { name: "Reorder Alpha" }), 40);
+  const extraRow = (screen.getByText("extra").closest(".detail-property-item")) as HTMLElement;
+  extraRow.getBoundingClientRect = () => ({ x: 0, y: 200, width: 300, height: 72, top: 200, right: 300, bottom: 272, left: 0, toJSON() { return {}; } } as DOMRect);
+
+  // 把 beta 拖到 alpha 之前
+  fireEvent.mouseDown(betaHandle, { button: 0, clientX: 10, clientY: 150 });
+  fireEvent.mouseMove(window, { clientX: 10, clientY: 30 });
+  fireEvent.mouseUp(window, { clientX: 10, clientY: 30 });
+
+  const saved = schemaHost.getRootSchemaSnapshot();
+  expect(Object.keys(saved.properties ?? {})).toEqual(["beta", "alpha"]);
+  // 键集合不变：附加字段未被注入 schema
+  expect(Object.keys(saved.properties ?? {})).toEqual(["beta", "alpha"]);
+  // 字段显示顺序：附加字段恒在尾部
+  expect([...container.querySelectorAll(".property-heading > span")].slice(0, 3).map((node) => node.textContent?.trim())).toEqual([
+    "Beta",
+    "Alpha",
+    "extra",
+  ]);
 });
 
 test("object schema field order writes in view mode update only the view file", () => {
@@ -2671,6 +2752,390 @@ test("inline multi-select options render chip labels and persist literal values"
   expect(screen.queryByText("fire")).toBeNull();
 });
 
+test("multi-select reference fields project host reference options as select options", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "object",
+        properties: {
+          assignees: {
+            type: "array",
+            title: "Assignees",
+            "x-editor": { fieldType: "multi-select" },
+            items: {
+              type: "string",
+              "x-editor": { reference: { types: ["person"] } },
+            },
+          },
+        },
+      };
+    },
+  };
+
+  const onChange = vi.fn();
+  render(
+    <EditorShell
+      value={{ assignees: ["management://person/yop"] }}
+      schemaHost={schemaHost}
+      host={{
+        getReferenceOptions({ reference }) {
+          return reference?.types?.includes("person")
+            ? [
+              { value: "management://person/yop", label: "Yop" },
+              { value: "management://person/qin", label: "Qin" },
+            ]
+            : [];
+        },
+      }}
+      onChange={onChange}
+    />,
+  );
+
+  const selectedValues = within(screen.getByLabelText(/Field Assignees selected values/i));
+  expect(selectedValues.getByText("Yop")).toBeInTheDocument();
+  expect(screen.queryByText("management://person/yop")).toBeNull();
+
+  fireEvent.click(screen.getByRole("button", { name: /Field Assignees/i }));
+  fireEvent.pointerDown(screen.getByRole("button", { name: /^Qin$/i }));
+
+  await waitFor(() => {
+    const lastDocuments = onChange.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(Object.values(lastDocuments)[0]).toEqual({
+      assignees: ["management://person/yop", "management://person/qin"],
+    });
+  });
+});
+
+test("table cell select fields author options and colors when schema writing is available", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          title: "Status",
+          "x-editor": {
+            fieldType: "select",
+            options: [{ value: "todo", label: "Todo" }],
+          },
+        },
+      },
+    },
+  });
+
+  render(<EditorShell value={[{ status: "todo" }]} schemaHost={schemaHost} rootSourceId="tasks" />);
+
+  fireEvent.click(screen.getByRole("button", { name: /Array item 0 status/i }));
+  const menuTrigger = document.querySelector(".option-menu-trigger") as HTMLButtonElement | null;
+  expect(menuTrigger).not.toBeNull();
+  fireEvent.click(menuTrigger!);
+  fireEvent.pointerDown(screen.getByRole("button", { name: /深红/ }));
+
+  await waitFor(() => {
+    const savedItems = schemaHost.getRootSchemaSnapshot().items as Record<string, any>;
+    const options = savedItems.properties.status["x-editor"].options as Array<{ value: string; color?: string }>;
+    expect(options.find((option) => option.value === "todo")?.color).toBe("dark_red");
+  });
+});
+
+test("无声明 options 的表格 cell 字段发现现有值并支持 label 创建/设色", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        tags: {
+          type: "array",
+          title: "Tags",
+          "x-editor": { fieldType: "multi-select" },
+          items: { type: "string" },
+        },
+      },
+      additionalProperties: true,
+    },
+  });
+
+  render(
+    <EditorShell
+      value={[{ tags: ["fire", "boss"] }, { tags: ["fire"] }]}
+      schemaHost={schemaHost}
+      rootSourceId="tasks"
+    />,
+  );
+
+  // 1) 打开表格 cell 的 multi-select：选项来自数据行发现（去重）
+  fireEvent.click(screen.getAllByRole("button", { name: /Array item 0 tags/i }).at(-1)!);
+  const popover = latestPopover();
+  expect(within(popover).getAllByText("fire").length).toBeGreaterThan(0);
+  expect(within(popover).getAllByText("boss").length).toBeGreaterThan(0);
+
+  // 2) 发现模式提供选项管理入口
+  const menus = popover.querySelectorAll(".option-menu-trigger");
+  expect(menus.length).toBe(2);
+
+  // 3) 给 "fire" 设深红色：首次编辑先把发现选项物化进 schema，再写颜色
+  fireEvent.click(menus[0] as HTMLElement);
+  await waitFor(() => { expect(latestOptionEditor().querySelector(".multi-select-color-columns")).not.toBeNull(); });
+  fireEvent.pointerDown(within(latestOptionEditor()).getAllByRole("button", { name: /深红/ })[0]);
+  await waitFor(() => {
+    const savedItems = schemaHost.getRootSchemaSnapshot().items as Record<string, any>;
+    const options = savedItems.properties.tags["x-editor"].options as Array<{ value: string; color?: string }>;
+    expect(options.find((option) => option.value === "fire")?.color).toBe("dark_red");
+    expect(options.find((option) => option.value === "boss")?.color).toBeUndefined();
+  });
+
+  // 4) 创建新 label：输入 draft → Create → schema options 追加
+  const draftInput = popover.querySelector<HTMLInputElement>(".multi-select-input")!;
+  fireEvent.change(draftInput, { target: { value: "elite" } });
+  fireEvent.pointerDown(within(popover).getAllByRole("button", { name: /Create "elite"/i })[0]);
+  await waitFor(() => {
+    const savedItems = schemaHost.getRootSchemaSnapshot().items as Record<string, any>;
+    const options = savedItems.properties.tags["x-editor"].options as Array<{ value: string }>;
+    expect(options.some((option) => option.value === "elite")).toBe(true);
+  });
+});
+
+function latestPopover() {
+  const popovers = document.querySelectorAll<HTMLElement>(".multi-select-popover");
+  return popovers[popovers.length - 1]!;
+}
+
+function latestOptionEditor() {
+  const editors = document.querySelectorAll<HTMLElement>(".multi-select-option-editor");
+  return editors[editors.length - 1]!;
+}
+
+test("详情页 select 字段提供重命名/删除/排序/设色完整 label 编辑", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          title: "Status",
+          "x-editor": {
+            fieldType: "select",
+            options: [
+              { value: "todo", label: "Todo" },
+              { value: "doing", label: "Doing" },
+            ],
+          },
+        },
+      },
+    },
+  });
+
+  render(<EditorShell value={[{ status: "todo" }]} schemaHost={schemaHost} rootSourceId="tasks" />);
+
+  // 进入详情页并点开 status select
+  fireEvent.click(document.querySelector("tbody tr")!);
+  fireEvent.click(screen.getByRole("button", { name: /Field Status/i }));
+  const popover = latestPopover();
+  const menus = popover.querySelectorAll(".option-menu-trigger");
+  expect(menus.length).toBe(2);
+
+  // 打开第一个选项的编辑菜单：应含重命名输入、删除与颜色分组（vendor 面板无 Move 按钮）
+  fireEvent.click(menus[0] as HTMLElement);
+  const editor = latestOptionEditor();
+  expect(editor.querySelector(".multi-select-option-name-input")).not.toBeNull();
+  expect(editor.textContent).toContain("删除");
+  expect(editor.textContent).not.toContain("Move up");
+  expect(editor.querySelector(".multi-select-color-columns")).not.toBeNull();
+});
+
+test("选项 dragHandle 支持拖拽排序并写回 schema 顺序", async () => {
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const list = this.closest(".multi-select-options");
+    if (!list || !this.classList.contains("multi-select-option-row") || !list.contains(this)) {
+      return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    }
+    const rows = [...list.children].filter((el) => el.classList.contains("multi-select-option-row"));
+    const index = rows.indexOf(this);
+    return { top: index * 40, left: 0, right: 200, bottom: index * 40 + 34, width: 200, height: 34, x: 0, y: index * 40, toJSON: () => ({}) } as DOMRect;
+  });
+  const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  });
+
+  try {
+    const schemaHost = createMutableSchemaHost({
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            title: "Status",
+            "x-editor": {
+              fieldType: "select",
+              options: [
+                { value: "todo", label: "Todo" },
+                { value: "doing", label: "Doing" },
+                { value: "done", label: "Done" },
+              ],
+            },
+          },
+        },
+      },
+    });
+
+    render(<EditorShell value={[{ status: "todo" }]} schemaHost={schemaHost} rootSourceId="tasks" />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /Array item 0 status/i }).at(-1)!);
+    const popover = latestPopover();
+    const handle = [...popover.querySelectorAll<HTMLElement>(".option-drag-handle")].find((element) => !element.classList.contains("is-disabled"));
+    expect(handle).toBeDefined();
+
+    const pointerEvent = (type: string, init: { pointerId: number; clientY?: number }) => {
+      const event = new MouseEvent(type, { clientY: init.clientY ?? 0 });
+      Object.defineProperty(event, "pointerId", { value: init.pointerId });
+      return event;
+    };
+    fireEvent.pointerDown(handle!, { pointerId: 7, clientY: 0 });
+    act(() => { window.dispatchEvent(pointerEvent("pointermove", { pointerId: 7, clientY: 120 })); });
+    await waitFor(() => { expect(popover.querySelector(".option-field-drag-placeholder")).not.toBeNull(); });
+    act(() => { window.dispatchEvent(pointerEvent("pointerup", { pointerId: 7 })); });
+
+    await waitFor(() => {
+      const savedItems = schemaHost.getRootSchemaSnapshot().items as Record<string, any>;
+      const options = savedItems.properties.status["x-editor"].options as Array<{ value: string }>;
+      expect(options.map((option) => option.value)).toEqual(["doing", "done", "todo"]);
+    });
+  } finally {
+    rafSpy.mockRestore();
+    rectSpy.mockRestore();
+  }
+});
+
+test("schema 保存失败时回滚内存顺序并持续显示错误", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            status: {
+              type: "string",
+              title: "Status",
+              "x-editor": {
+                fieldType: "select",
+                options: [
+                  { value: "todo", label: "Todo" },
+                  { value: "doing", label: "Doing" },
+                  { value: "done", label: "Done" },
+                ],
+              },
+            },
+          },
+        },
+      };
+    },
+    setRootSchema() { return Promise.reject(new Error("network down")); },
+  };
+
+  render(<EditorShell value={[{ status: "todo" }]} schemaHost={schemaHost} rootSourceId="tasks" />);
+
+  // 打开下拉，把第一项拖到末尾（复用拖拽驱动）
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const list = this.closest(".multi-select-options");
+    if (!list || !this.classList.contains("multi-select-option-row") || !list.contains(this)) {
+      return { top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+    }
+    const rows = [...list.children].filter((el) => el.classList.contains("multi-select-option-row"));
+    const index = rows.indexOf(this);
+    return { top: index * 40, left: 0, right: 200, bottom: index * 40 + 34, width: 200, height: 34, x: 0, y: index * 40, toJSON: () => ({}) } as DOMRect;
+  });
+  const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+    callback(0);
+    return 0;
+  });
+
+  try {
+    fireEvent.click(screen.getAllByRole("button", { name: /Array item 0 status/i }).at(-1)!);
+    const popover = latestPopover();
+    const before = popover.querySelectorAll(".multi-select-option .chip").length;
+
+    const handle = [...popover.querySelectorAll<HTMLElement>(".option-drag-handle")].find((element) => !element.classList.contains("is-disabled"));
+    const pointerEvent = (type: string, init: { clientY?: number }) => {
+      const event = new MouseEvent(type, { clientY: init.clientY ?? 0 });
+      return event;
+    };
+    fireEvent.pointerDown(handle!, { pointerId: 3, clientY: 0 });
+    act(() => { window.dispatchEvent(pointerEvent("pointermove", { clientY: 100 })); });
+    act(() => { window.dispatchEvent(pointerEvent("pointerup", { clientY: 100 })); });
+
+    // 保存失败：持续错误可见，且顺序回滚（首项恢复原位）
+    await waitFor(() => {
+      expect(screen.getByRole("alert").textContent).toContain("schema 保存失败");
+    });
+    await waitFor(() => {
+      const chips = [...latestPopover().querySelectorAll(".multi-select-option .chip")];
+      expect(chips.map((chip) => chip.textContent)).toEqual(["Todo", "Doing", "Done"]);
+    });
+    expect(before).toBe(3);
+  } finally {
+    rafSpy.mockRestore();
+    rectSpy.mockRestore();
+  }
+});
+
+test("table cell reference multi-select fields do not expose option authoring", async () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            assignees: {
+              type: "array",
+              title: "Assignees",
+              "x-editor": { fieldType: "multi-select" },
+              items: { type: "string", "x-editor": { reference: { types: ["person"] } } },
+            },
+          },
+        },
+      };
+    },
+    setRootSchema() { return undefined; },
+  };
+
+  render(
+    <EditorShell
+      value={[{ assignees: ["management://person/yop"] }]}
+      schemaHost={schemaHost}
+      host={{ getReferenceOptions: ({ reference }) => reference?.types?.includes("person") ? [{ value: "management://person/yop", label: "Yop" }] : [] }}
+      rootSourceId="tasks"
+    />,
+  );
+
+  fireEvent.click(screen.getAllByRole("button", { name: /Array item 0 assignees/i }).at(-1)!);
+  expect(screen.getAllByText("Yop").length).toBeGreaterThan(0);
+  // reference 字段：开放颜色与排序编辑，不提供快速创建。
+  const popover = latestPopover();
+  const menuTrigger = popover.querySelector(".option-menu-trigger");
+  expect(menuTrigger).not.toBeNull();
+
+  // 打开选项编辑面板：应有颜色分区，无重命名与删除
+  fireEvent.click(menuTrigger as HTMLElement);
+  const editor = await waitFor(() => {
+    const found = latestOptionEditor();
+    expect(found.querySelector(".multi-select-color-columns")).not.toBeNull();
+    return found;
+  });
+  expect(editor.querySelector(".multi-select-option-name-input")?.tagName).toBe("SPAN");
+  expect(editor.textContent).not.toContain("删除");
+
+  // 输入新值不出现快速创建（ref 选项存在性归宿主）
+  const draftInput = popover.querySelector<HTMLInputElement>(".multi-select-input");
+  fireEvent.change(draftInput!, { target: { value: "management://person/newbie" } });
+  expect(popover.textContent).not.toContain("Create");
+});
+
 test("inline multi-select still renders in object view when field value is null", () => {
   const schemaHost: EditorSchemaHost = {
     getSchema() {
@@ -3538,7 +4003,7 @@ test("optionsSource multi-select color edits route back to the source when color
   const menuTrigger = document.querySelector(".option-menu-trigger") as HTMLButtonElement | null;
   expect(menuTrigger).not.toBeNull();
   fireEvent.click(menuTrigger!);
-  fireEvent.pointerDown(screen.getByRole("button", { name: /Gold/i }));
+  fireEvent.pointerDown(screen.getByRole("button", { name: /金色/ }));
 
   await waitFor(() => {
     expect(setOptionsSourceOptionColor).toHaveBeenCalledWith({
@@ -4079,35 +4544,21 @@ test("raw mode can be disabled by host", () => {
   expect(screen.queryByRole("button", { name: "Raw" })).toBeNull();
 });
 
-test("validation failures block save and show field errors", async () => {
+test("保存不做校验，直接提交文档", async () => {
   const handleSave = vi.fn(async (documents: Record<string, unknown>) => documents);
-  const validateDocument = vi.fn(async (): Promise<EditorValidationResult> => ({
-    valid: false,
-    documentErrors: ["Schema validation failed"],
-    fieldErrors: [
-      {
-        sourceId: "main",
-        path: ["title"],
-        message: "Title is required",
-      },
-    ],
-  }));
 
   render(
     <EditorShell
       documents={{ main: { title: "" } }}
       onSave={handleSave}
-      validateDocument={validateDocument}
     />,
   );
 
   fireEvent.change(screen.getByLabelText("Field title"), { target: { value: "draft title" } });
   fireEvent.click(screen.getAllByRole("button", { name: "Save" })[0]);
 
-  await waitFor(() => expect(validateDocument).toHaveBeenCalledTimes(1));
-  expect(handleSave).not.toHaveBeenCalled();
-  expect(screen.getByText("Title is required")).toBeInTheDocument();
-  expect(screen.getByText("Schema validation failed")).toBeInTheDocument();
+  await waitFor(() => expect(handleSave).toHaveBeenCalledTimes(1));
+  expect(screen.queryByText("Schema validation failed")).toBeNull();
 });
 
 test("schema authoring columns manager can add hidden object-array columns while header menus handle rename", () => {
@@ -4202,7 +4653,7 @@ test("schema 缺失时会从数组 JSON 推导 schema，并持久化表头编辑
   });
 });
 
-test("schema 持久化失败后保留 object 视图的内存编辑并显示提示", async () => {
+test("schema 持久化失败后回滚内存编辑并持续显示错误", async () => {
   const schemaHost: EditorSchemaHost = {
     getSchema() {
       return undefined;
@@ -4217,8 +4668,8 @@ test("schema 持久化失败后保留 object 视图的内存编辑并显示提�
   fireEvent.click(screen.getByRole("button", { name: "Edit" }));
   fireEvent.change(screen.getByLabelText("Field label for title"), { target: { value: "Name" } });
 
-  await waitFor(() => expect(screen.getByText("schema 保存失败，当前视图保留本次内存配置。")).toBeInTheDocument());
-  expect(screen.getByLabelText("Field Name")).toHaveValue("Hero");
+  await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("schema 保存失败，已回滚本次修改。"));
+  expect(screen.getByLabelText("Field label for title")).toBeInTheDocument();
 });
 
 test("数据只读不阻止 host 保存表头视图 schema", () => {
@@ -5459,41 +5910,6 @@ test("schema header wrap toggle writes column wrap config and applies wrapped-ce
   const wrappedCell = container.querySelector('tbody td.wrapped-cell');
   expect(wrappedCell).not.toBeNull();
   expect(wrappedCell?.textContent).toContain("A very long title");
-});
-
-test("schema option authoring can reorder inline options", async () => {
-  const schemaHost = createMutableSchemaHost({
-    type: "object",
-    properties: {
-      tags: {
-        type: "array",
-        items: { type: "string" },
-        title: "Tags",
-        "x-editor": {
-          fieldType: "multi-select",
-          options: [
-            { value: "fire", label: "Fire", color: "red" },
-            { value: "boss", label: "Boss", color: "gold" },
-            { value: "elite", label: "Elite", color: "blue" },
-          ],
-        },
-      },
-    },
-  });
-
-  render(<EditorShell value={{ tags: ["fire"] }} schemaHost={schemaHost} />);
-
-  fireEvent.click(screen.getByRole("button", { name: /Field Tags/i }));
-  fireEvent.click(screen.getAllByTitle("Edit option")[0]);
-  fireEvent.pointerDown(screen.getByRole("button", { name: "Move down" }));
-
-  await waitFor(() => {
-    expect(schemaHost.getRootSchemaSnapshot().properties?.tags?.["x-editor"]?.options).toEqual([
-      { value: "boss", label: "Boss", color: "gold" },
-      { value: "fire", label: "Fire", color: "red" },
-      { value: "elite", label: "Elite", color: "blue" },
-    ]);
-  });
 });
 
 test("object pages render image display fields with preview and path input", () => {

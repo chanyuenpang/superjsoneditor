@@ -22,7 +22,181 @@ export type EditorReferenceSchema = {
   };
 };
 
-export type EditorViewOptionColor = "red" | "orange" | "yellow" | "green" | "blue" | "gray" | "gold";
+export type EditorViewOptionColor =
+  | "gray"
+  | "brown"
+  | "orange"
+  | "yellow"
+  | "green"
+  | "blue"
+  | "teal"
+  | "cyan"
+  | "lime"
+  | "indigo"
+  | "rose"
+  | "amber"
+  | "purple"
+  | "pink"
+  | "red"
+  | "mid_gray"
+  | "mid_brown"
+  | "mid_orange"
+  | "mid_yellow"
+  | "mid_green"
+  | "mid_blue"
+  | "mid_teal"
+  | "mid_cyan"
+  | "mid_lime"
+  | "mid_indigo"
+  | "mid_purple"
+  | "mid_pink"
+  | "mid_red"
+  | "mid_rose"
+  | "mid_amber"
+  | "dark_gray"
+  | "dark_brown"
+  | "dark_orange"
+  | "dark_yellow"
+  | "dark_green"
+  | "dark_blue"
+  | "dark_teal"
+  | "dark_cyan"
+  | "dark_lime"
+  | "dark_indigo"
+  | "dark_purple"
+  | "dark_pink"
+  | "dark_red"
+  | "dark_rose"
+  | "dark_amber"
+  /** 存量资产与测试仍在消费的旧色值，保留独立配色。 */
+  | "gold";
+
+/** 全部合法选项颜色值，供运行时校验使用。 */
+export const editorOptionColors: readonly EditorViewOptionColor[] = [
+  "gray", "brown", "orange", "yellow", "green", "blue", "teal", "cyan", "lime", "indigo", "rose", "amber", "purple", "pink", "red",
+  "mid_gray", "mid_brown", "mid_orange", "mid_yellow", "mid_green", "mid_blue", "mid_teal", "mid_cyan", "mid_lime", "mid_indigo", "mid_purple", "mid_pink", "mid_red", "mid_rose", "mid_amber",
+  "dark_gray", "dark_brown", "dark_orange", "dark_yellow", "dark_green", "dark_blue", "dark_teal", "dark_cyan", "dark_lime", "dark_indigo", "dark_purple", "dark_pink", "dark_red", "dark_rose", "dark_amber",
+  "gold",
+];
+
+/** 选项 chip 与色块的唯一调色板（对齐 data-editor 参考编辑器）。 */
+export const namedChipPalette: Record<"default" | EditorViewOptionColor, { background: string; color: string; swatchBorder: string }> = {
+  default: { background: "#f1f1ef", color: "#5f5e5b", swatchBorder: "#d5d3cf" },
+  gray: { background: "#e9e8e5", color: "#5f5e5b", swatchBorder: "#cdcbc6" },
+  brown: { background: "#efe3db", color: "#7d5847", swatchBorder: "#d7bca9" },
+  orange: { background: "#ffe2cc", color: "#8b522b", swatchBorder: "#efb684" },
+  yellow: { background: "#f5e7b8", color: "#7a6520", swatchBorder: "#dfc56b" },
+  green: { background: "#dcefe4", color: "#2f5d49", swatchBorder: "#93c7ac" },
+  blue: { background: "#dbeafe", color: "#2f5f9a", swatchBorder: "#94c0f2" },
+  teal: { background: "#d3eeea", color: "#2e6f67", swatchBorder: "#6fbbaf" },
+  cyan: { background: "#d7eff8", color: "#2f6984", swatchBorder: "#8dc2d8" },
+  lime: { background: "#e8f2cb", color: "#5d6f1f", swatchBorder: "#c2d786" },
+  indigo: { background: "#e3e7f6", color: "#58638f", swatchBorder: "#b7bfdc" },
+  rose: { background: "#f8dbe7", color: "#92506b", swatchBorder: "#e1a9c0" },
+  amber: { background: "#f2e2c4", color: "#7f682d", swatchBorder: "#d6bb83" },
+  purple: { background: "#e7dbfa", color: "#6d4aa2", swatchBorder: "#bea7e5" },
+  pink: { background: "#f7d8ee", color: "#8a3f74", swatchBorder: "#e8a8d1" },
+  red: { background: "#ffd9d6", color: "#a13a31", swatchBorder: "#efaaa3" },
+  mid_gray: { background: "#7c8697", color: "#ffffff", swatchBorder: "transparent" },
+  mid_brown: { background: "#8e6d5b", color: "#ffffff", swatchBorder: "transparent" },
+  mid_orange: { background: "#cf8554", color: "#ffffff", swatchBorder: "transparent" },
+  mid_yellow: { background: "#b89a4d", color: "#ffffff", swatchBorder: "transparent" },
+  mid_green: { background: "#5f9076", color: "#ffffff", swatchBorder: "transparent" },
+  mid_blue: { background: "#6b95c8", color: "#ffffff", swatchBorder: "transparent" },
+  mid_teal: { background: "#609d97", color: "#ffffff", swatchBorder: "transparent" },
+  mid_cyan: { background: "#699daf", color: "#ffffff", swatchBorder: "transparent" },
+  mid_lime: { background: "#94a85c", color: "#ffffff", swatchBorder: "transparent" },
+  mid_indigo: { background: "#7a86b3", color: "#ffffff", swatchBorder: "transparent" },
+  mid_purple: { background: "#9276c1", color: "#ffffff", swatchBorder: "transparent" },
+  mid_pink: { background: "#b878a0", color: "#ffffff", swatchBorder: "transparent" },
+  mid_red: { background: "#cc7a72", color: "#ffffff", swatchBorder: "transparent" },
+  mid_rose: { background: "#be7996", color: "#ffffff", swatchBorder: "transparent" },
+  mid_amber: { background: "#b3935d", color: "#ffffff", swatchBorder: "transparent" },
+  dark_gray: { background: "#566070", color: "#ffffff", swatchBorder: "transparent" },
+  dark_brown: { background: "#6f5445", color: "#ffffff", swatchBorder: "transparent" },
+  dark_orange: { background: "#b85c1f", color: "#ffffff", swatchBorder: "transparent" },
+  dark_yellow: { background: "#9a7414", color: "#ffffff", swatchBorder: "transparent" },
+  dark_green: { background: "#2f6b4f", color: "#ffffff", swatchBorder: "transparent" },
+  dark_blue: { background: "#2f5e9e", color: "#ffffff", swatchBorder: "transparent" },
+  dark_teal: { background: "#2d6f67", color: "#ffffff", swatchBorder: "transparent" },
+  dark_cyan: { background: "#2b6c7f", color: "#ffffff", swatchBorder: "transparent" },
+  dark_lime: { background: "#667a1f", color: "#ffffff", swatchBorder: "transparent" },
+  dark_indigo: { background: "#5a6694", color: "#ffffff", swatchBorder: "transparent" },
+  dark_purple: { background: "#7450a8", color: "#ffffff", swatchBorder: "transparent" },
+  dark_pink: { background: "#9b4e7f", color: "#ffffff", swatchBorder: "transparent" },
+  dark_red: { background: "#b24940", color: "#ffffff", swatchBorder: "transparent" },
+  dark_rose: { background: "#9d536f", color: "#ffffff", swatchBorder: "transparent" },
+  dark_amber: { background: "#8f6a25", color: "#ffffff", swatchBorder: "transparent" },
+  gold: { background: "#fff2c6", color: "#7a5b00", swatchBorder: "#dfc56b" },
+};
+
+/** 颜色选择 UI 的分组定义：默认色 + 浅色/中间色/深色三列。 */
+export const colorChoiceGroups: ReadonlyArray<{ key: "light" | "mid" | "dark"; label: string; choices: ReadonlyArray<{ value: EditorViewOptionColor; label: string }> }> = [
+  {
+    key: "light",
+    label: "浅色",
+    choices: [
+      { value: "gray", label: "灰色" },
+      { value: "brown", label: "棕色" },
+      { value: "orange", label: "橙色" },
+      { value: "yellow", label: "黄色" },
+      { value: "green", label: "绿色" },
+      { value: "blue", label: "蓝色" },
+      { value: "teal", label: "青绿" },
+      { value: "cyan", label: "青色" },
+      { value: "lime", label: "黄绿" },
+      { value: "indigo", label: "靛蓝" },
+      { value: "rose", label: "玫瑰" },
+      { value: "amber", label: "琥珀" },
+      { value: "purple", label: "紫色" },
+      { value: "pink", label: "粉色" },
+      { value: "red", label: "红色" },
+      { value: "gold", label: "金色" },
+    ],
+  },
+  {
+    key: "mid",
+    label: "中间色",
+    choices: [
+      { value: "mid_gray", label: "中灰" },
+      { value: "mid_brown", label: "中棕" },
+      { value: "mid_orange", label: "中橙" },
+      { value: "mid_yellow", label: "中黄" },
+      { value: "mid_green", label: "中绿" },
+      { value: "mid_blue", label: "中蓝" },
+      { value: "mid_teal", label: "中青绿" },
+      { value: "mid_cyan", label: "中青色" },
+      { value: "mid_lime", label: "中黄绿" },
+      { value: "mid_indigo", label: "中靛蓝" },
+      { value: "mid_rose", label: "中玫瑰" },
+      { value: "mid_amber", label: "中琥珀" },
+      { value: "mid_purple", label: "中紫" },
+      { value: "mid_pink", label: "中粉" },
+      { value: "mid_red", label: "中红" },
+    ],
+  },
+  {
+    key: "dark",
+    label: "深色",
+    choices: [
+      { value: "dark_gray", label: "深灰" },
+      { value: "dark_brown", label: "深棕" },
+      { value: "dark_orange", label: "深橙" },
+      { value: "dark_yellow", label: "深黄" },
+      { value: "dark_green", label: "深绿" },
+      { value: "dark_blue", label: "深蓝" },
+      { value: "dark_teal", label: "深青绿" },
+      { value: "dark_cyan", label: "深青色" },
+      { value: "dark_lime", label: "深黄绿" },
+      { value: "dark_indigo", label: "深靛蓝" },
+      { value: "dark_rose", label: "深玫瑰" },
+      { value: "dark_amber", label: "深琥珀" },
+      { value: "dark_purple", label: "深紫" },
+      { value: "dark_pink", label: "深粉" },
+      { value: "dark_red", label: "深红" },
+    ],
+  },
+];
 
 export type EditorViewOption = {
   value: string | number;
@@ -82,6 +256,7 @@ export type EditorSchemaUi = {
   };
   table?: {
     columns: EditorTableColumn[];
+    autoColumns?: boolean;
     /** 排序仅改变当前视图，还是将排序后的行顺序写回数组。默认仅改变视图。 */
     sort?: "view" | "persist";
     objectValueSchema?: EditorSchema;

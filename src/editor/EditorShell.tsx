@@ -4,8 +4,8 @@ import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type N
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { isReferenceValue, type EditorHost } from "./host";
-import type { EditorSchema, EditorSchemaHost, EditorSchemaLayerTarget, EditorValidationResult, EditorValidationHandler } from "./schema";
-import { inferSchemaFromValue, resolveSchemaAtPath, updateSchemaAtDocumentPath, validateDocument as validateBySchema } from "./schema";
+import type { EditorSchema, EditorSchemaHost, EditorSchemaLayerTarget, EditorValidationResult } from "./schema";
+import { inferSchemaFromValue, resolveSchemaAtPath, updateSchemaAtDocumentPath } from "./schema";
 import {
   determineBackAnimation,
   determineJumpAnimation,
@@ -150,7 +150,6 @@ export type EditorShellProps = {
   onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
   onChange?: EditorChangeHandler;
-  validateDocument?: EditorValidationHandler;
   readOnly?: boolean;
   enableRawEditor?: boolean;
   toolbarActions?: ReactNode;
@@ -176,7 +175,6 @@ export function EditorShell({
   onUnavailableSaveAttempt,
   onReload,
   onChange,
-  validateDocument,
   readOnly = false,
   enableRawEditor = true,
   toolbarActions,
@@ -196,6 +194,8 @@ export function EditorShell({
   const [pageToolbarHost, setPageToolbarHost] = useState<HTMLDivElement | null>(null);
   const [, setSchemaRevision] = useState(0);
   const [schemaPersistenceNotice, setSchemaPersistenceNotice] = useState<string | null>(null);
+  /** schema 写回失败：持续显示（不自动消失），回滚内存 override 后由下次成功保存清除。 */
+  const [schemaSaveError, setSchemaSaveError] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
@@ -326,16 +326,7 @@ export function EditorShell({
     if (readOnly || !onSave) return;
     setSaveState("saving");
     try {
-      const nextValidation = await runValidation(documentsBySourceId);
-      if (nextValidation) {
-        setValidationResult(nextValidation);
-        if (!nextValidation.valid) {
-          setSaveState("error");
-          return;
-        }
-      } else {
-        setValidationResult(null);
-      }
+      // 保存不做校验：只负责提交，数据问题由编辑器端承担。
       const maybeNextDocuments = await onSave(documentsBySourceId);
       const nextDocuments = maybeNextDocuments ? maybeNextDocuments : documentsBySourceId;
       setDocumentsBySourceId(nextDocuments);
@@ -480,9 +471,18 @@ export function EditorShell({
     });
     if (result instanceof Promise) {
       void result
-        .catch(() => showSchemaPersistenceNotice("schema 保存失败，当前视图保留本次内存配置。"));
+        .then(() => { setSchemaSaveError(null); })
+        .catch((reason: unknown) => {
+          // 失败显式暴露：回滚内存 override（UI 恢复宿主真相）并持续报错，杜绝“松手已变、刷新还原”的假象。
+          const overrideKey = getSchemaOverrideKey(sourceId, activeSchemaLayer);
+          if (schemaOverridesRef.current[overrideKey] === nextSchema) delete schemaOverridesRef.current[overrideKey];
+          setSchemaRevision((current) => current + 1);
+          const detail = reason instanceof Error && reason.message ? reason.message : "";
+          setSchemaSaveError(detail ? `schema 保存失败，已回滚本次修改。原因：${detail}` : "schema 保存失败，已回滚本次修改。");
+        });
       return;
     }
+    setSchemaSaveError(null);
   }
 
   function handleUpdateNamedSchema(
@@ -522,29 +522,6 @@ export function EditorShell({
       setSchemaPersistenceNotice(null);
       schemaPersistenceNoticeTimerRef.current = null;
     }, 4500);
-  }
-
-  async function runValidation(nextDocuments: EditorDocuments): Promise<EditorValidationResult | null> {
-    if (validateDocument) {
-      return validateDocument(nextDocuments);
-    }
-    if (!schemaHost) {
-      return null;
-    }
-
-    const rootSchema = schemaHost.getSchema({
-      sourceId: rootSourceId,
-      path: [],
-      value: nextDocuments[rootSourceId],
-      documents: nextDocuments,
-      activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
-    });
-
-    if (!rootSchema) {
-      return null;
-    }
-
-    return validateBySchema(rootSchema, nextDocuments[rootSourceId], { sourceId: rootSourceId });
   }
 
   function getPageTitle(page: NavigationPage) {
@@ -809,6 +786,7 @@ export function EditorShell({
   return (
     <div className="app-frame" ref={shellRef}>
       {schemaPersistenceNotice ? <div className="schema-persistence-toast" role="status">{schemaPersistenceNotice}</div> : null}
+      {schemaSaveError ? <div className="schema-persistence-toast" role="alert">{schemaSaveError}</div> : null}
       <div className="workspace">
         <header className="toolbar">
           <div className="toolbar-navigation">
@@ -1167,7 +1145,7 @@ export function EditorShell({
                   onUpdateDocumentSchema={handleUpdateDocumentSchema}
                   onUpdateNamedSchema={handleUpdateNamedSchema}
                   validationResult={validationResult}
-                  enableRawEditor={enableRawEditor}
+                    enableRawEditor={enableRawEditor}
                   renderPageActionButtons={renderPageActionButtons}
                   toolbarPortalHost={null}
                   referenceError={stackAnimation.exitingPage.referenceError}

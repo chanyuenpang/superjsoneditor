@@ -1,4 +1,4 @@
-﻿import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useCallback } from "react";
 import { Fragment } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
@@ -29,6 +29,8 @@ import {
   type EditorValidationResult,
   type EditorViewOption,
   type EditorViewOptionColor,
+  editorOptionColors,
+  namedChipPalette,
 } from "./schema";
 import { SchemaColumnHeader } from "./SchemaColumnHeader";
 import { AssetPickerFieldEditor } from "./AssetPickerFieldEditor";
@@ -514,7 +516,7 @@ function getInlineArrayPreviewConfig(
   const referenceViewColumns = getReferenceViewColumns(value, referenceViewSchema, itemSchema, host);
   const showReferenceProjectionTable = referenceViewColumns.length > 0;
   const tableSchema = getArrayTableSchema(schema, itemSchema);
-  const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema);
+  const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema) && !usesAutomaticTableColumns(tableSchema);
   const configuredTableColumns = getConfiguredTableColumns(tableSchema);
   if (!showReferenceProjectionTable && !hasExplicitTableColumns) {
     return null;
@@ -889,6 +891,7 @@ function ObjectPage({
   const canEditCurrentPage = Boolean(onEditModeChange);
   const extraPageActions = canEditCurrentPage ? renderPageActionButtons?.() : null;
   const canAuthorObjectSchema = Boolean(schema?.properties && onUpdateDocumentSchema && sourceId);
+  const declaredFieldKeys = new Set(Object.keys(schema?.properties ?? {}));
   const schemaPropertyOrderSignature = Object.keys(schema?.properties ?? {}).join("\u0000");
   const valueKeySignature = Object.keys(value).join("\u0000");
   const [fieldOrder, setFieldOrder] = useState(() => getOrderedKeys(value, schema));
@@ -910,6 +913,7 @@ function ObjectPage({
       .map((key) => [key, value[key]] as const),
     [fieldOrder, value],
   );
+  const declaredFieldCount = fields.filter(([key]) => declaredFieldKeys.has(key)).length;
 
   useEffect(() => {
     setRawOpen(false);
@@ -965,7 +969,8 @@ function ObjectPage({
     key: string,
     event: { button: number; clientY: number; preventDefault: () => void },
   ) {
-    if (pageReadOnly || fields.length <= 1 || event.button !== 0) return;
+    if (pageReadOnly || declaredFieldCount <= 1 || event.button !== 0) return;
+    if (!declaredFieldKeys.has(key)) return;
     event.preventDefault();
     const startOrder = fields.map(([fieldKey]) => fieldKey);
     const startRect = propertyItemRefs.current[key]?.getBoundingClientRect();
@@ -982,7 +987,8 @@ function ObjectPage({
         dragging = true;
         document.body.classList.add("is-dragging-detail-property");
       }
-      const restOrder = startOrder.filter((field) => field !== key);
+      // 附加字段不参与 drop-slot：落点只在已声明字段之间，附加区恒为尾部。
+      const restOrder = startOrder.filter((field) => field !== key && declaredFieldKeys.has(field));
       const slots = restOrder.map((field) => {
         const element = propertyItemRefs.current[field];
         const rect = element?.getBoundingClientRect();
@@ -1084,7 +1090,7 @@ function ObjectPage({
                           propertyItemRefs.current[key] = element;
                         }}
                       >
-                        {!pageReadOnly && canAuthorObjectSchema && fields.length > 1 ? (
+                        {!pageReadOnly && canAuthorObjectSchema && declaredFieldCount > 1 && declaredFieldKeys.has(key) ? (
                           <button
                             aria-label={`Reorder ${fieldLabel}`}
                             className="detail-property-handle"
@@ -1540,7 +1546,7 @@ function ArrayPage({
   const showReferenceArrayPicker = referenceOptions.length > 0;
   const columnSourceSchema = showReferenceProjectionTable ? referenceViewSchema : referenceItemSchema;
   const tableSchema = getArrayTableSchema(schema, referenceItemSchema);
-  const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema);
+  const hasExplicitTableColumns = hasSchemaTableColumns(tableSchema) && !usesAutomaticTableColumns(tableSchema);
   const configuredTableColumns = useMemo(
     () => getConfiguredTableColumns(tableSchema),
     [tableSchema],
@@ -1578,12 +1584,16 @@ function ArrayPage({
     dragging: boolean;
   } | null>(null);
   const showStructuralRowActions = editMode && !pageReadOnly;
-  const availableSchemaColumns = useMemo(
-    () => showReferenceProjectionTable
+  const availableSchemaColumns = useMemo(() => {
+    const schemaColumns = showReferenceProjectionTable
       ? getAvailableSchemaColumns(referenceTargetSchema)
-      : getAvailableSchemaColumns(columnSourceSchema),
-    [columnSourceSchema, referenceTargetSchema, showReferenceProjectionTable],
-  );
+      : getAvailableSchemaColumns(columnSourceSchema);
+    const knownColumns = new Map(schemaColumns.map((column) => [column.key, column]));
+    for (const key of getArrayColumns(value, host, schema?.items, referenceViewColumns).filter((column) => column !== "#")) {
+      if (!knownColumns.has(key)) knownColumns.set(key, { key, field: [key], label: key });
+    }
+    return [...knownColumns.values()];
+  }, [columnSourceSchema, host, referenceTargetSchema, referenceViewColumns, schema?.items, showReferenceProjectionTable, value]);
   const canAuthorTableSchema = Boolean(
     sourceId && onUpdateDocumentSchema,
   );
@@ -2384,6 +2394,14 @@ function ArrayPage({
                                     host,
                                     readOnly: pageReadOnly,
                                     onOpenReference: onJumpToSource,
+                                    onUpdateSchema: canAuthorTableSchema && sourceId
+                                      ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex, ...fieldPath], "self", updater)
+                                      : undefined,
+                                    discoverOptions: () => [...new Set(value
+                                      .filter((row) => isPlainObject(row))
+                                      .map((row) => getValueAtPath(row, fieldPath))
+                                      .flatMap((cell) => Array.isArray(cell) ? cell : [cell])
+                                      .filter((entry): entry is string | number => typeof entry === "string" || typeof entry === "number"))],
                                     onChange(nextValue) {
                                       onApplyValue(setValueAtPath(value, [sourceIndex, ...fieldPath], nextValue));
                                     },
@@ -2468,6 +2486,11 @@ function ArrayPage({
                                   host,
                                   readOnly: pageReadOnly,
                                   onOpenReference: onJumpToSource,
+                                  onUpdateSchema: canAuthorTableSchema && sourceId
+                                    ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex], "self", updater)
+                                    : undefined,
+                                  discoverOptions: () => [...new Set(value
+                                    .filter((entry): entry is string | number => typeof entry === "string" || typeof entry === "number"))],
                                   onChange(nextValue) {
                                     onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
                                   },
@@ -2495,6 +2518,11 @@ function ArrayPage({
                                 host,
                                 readOnly: pageReadOnly,
                                 onOpenReference: onJumpToSource,
+                                onUpdateSchema: canAuthorTableSchema && sourceId
+                                  ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex], "self", updater)
+                                  : undefined,
+                                discoverOptions: () => [...new Set(value
+                                  .filter((entry): entry is string | number => typeof entry === "string" || typeof entry === "number"))],
                                 onChange(nextValue) {
                                   onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
                                 },
@@ -3122,6 +3150,8 @@ function renderPrimitiveEditor(props: {
   onOpenReference?: (sourceId: string) => void;
   showOpenReferenceButton?: boolean;
   onUpdateSchema?: (updater: (schema: EditorSchema) => EditorSchema) => void;
+  /** 字段未声明 options/optionsSource/reference 时，从数据行发现候选值供 label 管理。 */
+  discoverOptions?: () => Array<string | number>;
   onChange: (nextValue: unknown) => void;
 }) {
   const effectiveSchema = resolveImplicitAssetPickerSchema(props.value, props.schema, props.path);
@@ -3138,6 +3168,33 @@ function renderPrimitiveEditor(props: {
     ? { options: [], error: null }
     : rawEditorOptionsState;
   const disableImplicitAssetPickerUi = usesImplicitAssetPicker && editorOptionsState.options.length === 0;
+  const selectFieldOptions = resolveSelectFieldOptions(effectiveSchema, props.host, { path: props.path, value: props.value }, props.discoverOptions);
+  // reference 字段开放颜色与排序编辑（物化写回 schema options，合并时覆盖引用选项显示）；
+  // 快速创建、重命名、删除仍关闭——选项存在性与名称归属宿主引用。
+  const isReferenceField = Boolean(
+    effectiveSchema?.["x-editor"]?.reference
+    || effectiveSchema?.items?.["x-editor"]?.reference,
+  );
+  const canAuthorOptions = Boolean(
+    props.onUpdateSchema
+    && (effectiveSchema?.["x-editor"]?.options || props.discoverOptions || isReferenceField),
+  );
+  const canAuthorOptionValue = canAuthorOptions && !isReferenceField;
+  const commitOptionSchema = canAuthorOptions
+    ? (updater: (schema: EditorSchema) => EditorSchema) => props.onUpdateSchema?.((currentSchema) => {
+      // 首次编辑前把当前解析出的选项（静态/引用/发现）物化为 schema options，编辑才有操作对象。
+      if (!currentSchema["x-editor"]?.options?.length && selectFieldOptions.length > 0) {
+        return updater({
+          ...currentSchema,
+          "x-editor": {
+            ...currentSchema["x-editor"],
+            options: selectFieldOptions.map((option) => ({ value: option.value, label: option.label, color: option.color ?? undefined })),
+          },
+        });
+      }
+      return updater(currentSchema);
+    })
+    : undefined;
   const referenceOptions = effectiveSchema?.["x-editor"]?.reference && props.host?.getReferenceOptions
     ? props.host.getReferenceOptions({
       path: props.path,
@@ -3172,28 +3229,31 @@ function renderPrimitiveEditor(props: {
     );
     return withNullableControls(
       <SchemaOptionFieldEditor
-        allowAuthoring={Boolean(props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options)}
+        allowAuthoring={canAuthorOptions}
         ariaLabel={props.ariaLabel}
         mode="multi"
-        options={editorOptionsState.options}
+        options={selectFieldOptions}
         readOnly={readOnly}
         value={Array.isArray(props.value) ? props.value as Array<string | number> : []}
         onEdit={(nextValue) => props.onChange(nextValue)}
-        onCreateOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
+        onCreateOption={canAuthorOptionValue
+          ? (nextValue) => commitOptionSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
           : undefined}
-        onDeleteOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (optionValue) => props.onUpdateSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
+        onDeleteOption={canAuthorOptionValue
+          ? (optionValue) => commitOptionSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
           : undefined}
-        onMoveOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (optionValue, direction) => props.onUpdateSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
+        onMoveOption={commitOptionSchema
+          ? (optionValue, direction) => commitOptionSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
           : undefined}
-        onRenameOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
+        onReorderOptions={commitOptionSchema
+          ? (orderedValues) => commitOptionSchema?.((currentSchema) => reorderEditorOptions(currentSchema, orderedValues))
+          : undefined}
+        onRenameOption={canAuthorOptionValue
+          ? (previousValue, nextValue) => commitOptionSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
           : undefined}
         onSetOptionColor={
-          props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-            ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
+          commitOptionSchema
+            ? (optionValue, color) => commitOptionSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
             : supportsOptionsSourceColorEditing
             ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
               uri: effectiveSchema?.["x-editor"]?.optionsSource?.uri ?? "",
@@ -3271,35 +3331,38 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (editorOptionsState.options.length > 0 && effectiveSchema?.["x-editor"]?.fieldType === "select") {
+  if (selectFieldOptions.length > 0 && effectiveSchema?.["x-editor"]?.fieldType === "select") {
     const supportsOptionsSourceColorEditing = Boolean(
       effectiveSchema?.["x-editor"]?.optionsSource?.colorField
       && props.host?.setOptionsSourceOptionColor,
     );
     return withNullableControls(
       <SchemaOptionFieldEditor
-        allowAuthoring={Boolean(props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options)}
+        allowAuthoring={canAuthorOptions}
         ariaLabel={props.ariaLabel}
         mode="single"
-        options={editorOptionsState.options}
+        options={selectFieldOptions}
         readOnly={readOnly}
         value={props.value == null || props.value === "" ? [] : [props.value as string | number]}
         onEdit={(nextValue) => props.onChange(nextValue[0] ?? "")}
-        onCreateOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (nextValue) => props.onUpdateSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
+        onCreateOption={canAuthorOptionValue
+          ? (nextValue) => commitOptionSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
           : undefined}
-        onDeleteOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (optionValue) => props.onUpdateSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
+        onDeleteOption={canAuthorOptionValue
+          ? (optionValue) => commitOptionSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
           : undefined}
-        onMoveOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (optionValue, direction) => props.onUpdateSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
+        onMoveOption={commitOptionSchema
+          ? (optionValue, direction) => commitOptionSchema?.((currentSchema) => moveEditorOption(currentSchema, optionValue, direction))
           : undefined}
-        onRenameOption={props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-          ? (previousValue, nextValue) => props.onUpdateSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
+        onReorderOptions={commitOptionSchema
+          ? (orderedValues) => commitOptionSchema?.((currentSchema) => reorderEditorOptions(currentSchema, orderedValues))
+          : undefined}
+        onRenameOption={canAuthorOptionValue
+          ? (previousValue, nextValue) => commitOptionSchema?.((currentSchema) => renameEditorOption(currentSchema, previousValue, nextValue))
           : undefined}
         onSetOptionColor={
-          props.onUpdateSchema && effectiveSchema?.["x-editor"]?.options
-            ? (optionValue, color) => props.onUpdateSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
+          commitOptionSchema
+            ? (optionValue, color) => commitOptionSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
             : supportsOptionsSourceColorEditing
             ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
               uri: effectiveSchema?.["x-editor"]?.optionsSource?.uri ?? "",
@@ -3797,6 +3860,10 @@ function hasSchemaTableColumns(schema: EditorSchema | undefined) {
   return Array.isArray(schema?.["x-editor"]?.table?.columns);
 }
 
+function usesAutomaticTableColumns(schema: EditorSchema | undefined) {
+  return schema?.["x-editor"]?.table?.autoColumns === true;
+}
+
 function getArrayTableSchema(arraySchema: EditorSchema | undefined, itemSchema: EditorSchema | undefined) {
   if (arraySchema?.["x-editor"]?.table) {
     return arraySchema;
@@ -3842,6 +3909,7 @@ function setSchemaTableColumns(schema: EditorSchema, columns: EditorTableColumn[
     "x-editor": {
       ...schema["x-editor"],
       table: {
+        autoColumns: false,
         columns,
       },
     },
@@ -4199,6 +4267,7 @@ function renderPendingArrayRow(props: {
 
   if (props.objectRows) {
     const record = isPlainObject(props.pendingRow) ? props.pendingRow : {};
+		const editableColumns = props.columns.filter((column) => column !== "#");
     return (
       <tr className="array-row--pending" data-row-index="pending">
         <td className="array-column--sticky array-column--actions">
@@ -4214,7 +4283,7 @@ function renderPendingArrayRow(props: {
             </button>
           </div>
         </td>
-        {props.columns.map((column, columnIndex) => (
+        {editableColumns.map((column, columnIndex) => (
           <td
             className={columnIndex === 0 ? "array-column--sticky array-column--after-actions" : undefined}
             key={`pending:${column}`}
@@ -4729,6 +4798,38 @@ function resolveEditorOptions(schema: EditorSchema | undefined, host?: EditorHos
   };
 }
 
+/**
+ * select / multi-select 字段的选项解析：静态 options 或 optionsSource 优先；
+ * 两者都缺省且 schema（或其 items）声明了 reference 时，回退到 host 引用选项，
+ * 使引用字段可以投影为 select 类型编辑。
+ */
+function resolveSelectFieldOptions(
+  schema: EditorSchema | undefined,
+  host: EditorHost | undefined,
+  context: { path: JsonPath; value: unknown },
+  discoverOptions?: () => Array<string | number>,
+): ResolvedEditorOption[] {
+  const staticOptions = resolveEditorOptions(schema, host);
+  if (staticOptions.error) return [];
+  const referenceOptionSchema = schema?.["x-editor"]?.reference
+    ? schema
+    : schema?.items?.["x-editor"]?.reference
+      ? schema.items
+      : undefined;
+  const reference = referenceOptionSchema?.["x-editor"]?.reference;
+  const referenceOptions = referenceOptionSchema && reference && host?.getReferenceOptions
+    ? host.getReferenceOptions({ path: context.path, value: context.value, schema: referenceOptionSchema, reference })
+      .map((option) => ({ value: option.value, label: option.label, color: null, description: option.description }))
+    : [];
+  // 发现模式：字段未声明 options/optionsSource 且未声明 reference 时，从数据行收集现有值。
+  const discovered = !reference && discoverOptions
+    ? discoverOptions().map((entry) => ({ value: entry, label: String(entry), color: null }))
+    : [];
+  // 合并语义（对齐 data-editor）：静态 options 的顺序与 label/颜色优先，reference/发现补充新值。
+  const staticKeys = new Set(staticOptions.options.map((option) => String(option.value)));
+  return [...staticOptions.options, ...[...referenceOptions, ...discovered].filter((option) => !staticKeys.has(String(option.value)))];
+}
+
 function normalizeEditorOption(option: EditorViewOption): ResolvedEditorOption {
   return {
     value: option.value,
@@ -4758,7 +4859,7 @@ function mapEditorOptionRecord(
 }
 
 function isEditorOptionColor(value: unknown): value is EditorViewOptionColor {
-  return ["red", "orange", "yellow", "green", "blue", "gray", "gold"].includes(String(value));
+  return (editorOptionColors as readonly string[]).includes(String(value));
 }
 
 function resolveImplicitAssetPickerSchema(
@@ -4863,16 +4964,8 @@ function chipStyleForSummaryColor(color: EditorViewOptionColor | null): React.CS
   if (!color) {
     return undefined;
   }
-  const palette: Record<EditorViewOptionColor, { background: string; color: string }> = {
-    gray: { background: "#eceff3", color: "#556270" },
-    orange: { background: "#fff0de", color: "#9f580a" },
-    yellow: { background: "#fff5cb", color: "#876300" },
-    green: { background: "#e5f6ea", color: "#1f6b3a" },
-    blue: { background: "#e4f0ff", color: "#1e5eb8" },
-    gold: { background: "#fff2c6", color: "#7a5b00" },
-    red: { background: "#ffe4e1", color: "#8f3123" },
-  };
-  return palette[color];
+  const palette = namedChipPalette[color];
+  return { background: palette.background, color: palette.color };
 }
 
 function isInlineSchemaEditor(value: unknown, schema: EditorSchema | undefined, host?: EditorHost) {
@@ -4903,7 +4996,7 @@ function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefi
     return <ImagePreview value={value} schema={schema} host={host} context="inline" path={path} />;
   }
   if ((typeof value === "string" || typeof value === "number") && schema?.["x-editor"]?.fieldType === "select") {
-    const editorOptionsState = resolveEditorOptions(schema, host);
+    const editorOptionsState = { options: resolveSelectFieldOptions(schema, host, { path: path ?? [], value }) };
     const option = editorOptionsState.options.find((entry) => String(entry.value) === String(value));
     if (option) {
       return <span className="chip" style={chipStyleForSummaryColor(option.color)}>{option.label}</span>;
@@ -4924,7 +5017,7 @@ function renderReferenceFieldValue(value: unknown, schema: EditorSchema | undefi
   }
   if (Array.isArray(value)) {
     if (schema?.["x-editor"]?.fieldType === "multi-select") {
-      const editorOptionsState = resolveEditorOptions(schema, host);
+      const editorOptionsState = { options: resolveSelectFieldOptions(schema, host, { path: path ?? [], value }) };
       const optionMap = new Map(editorOptionsState.options.map((option) => [String(option.value), option]));
       return (
         <span className="chips-cell">
@@ -5231,6 +5324,8 @@ function sameStringArray(left: string[], right: string[]) {
 function reorderSchemaPropertiesToMatch(schema: EditorSchema, orderedKeys: string[]) {
   if (!schema.properties) return schema;
   const rank = new Map(orderedKeys.map((key, index) => [key, index]));
+  // 只重排 schema 已声明键；附加字段（数据有、schema 未声明）不属于顺序真相，
+  // 拖拽永不改写 properties 的键集合。
   const entries = Object.entries(schema.properties).sort((left, right) => {
     const leftRank = rank.get(left[0]);
     const rightRank = rank.get(right[0]);
@@ -5718,6 +5813,23 @@ function deleteEditorOption(schema: EditorSchema, optionValue: string | number) 
     "x-editor": {
       ...schema["x-editor"],
       options: currentOptions.filter((option) => String(option.value) !== String(optionValue)),
+    },
+  };
+}
+
+function reorderEditorOptions(schema: EditorSchema, orderedValues: Array<string | number>) {
+  const currentOptions = schema["x-editor"]?.options ?? [];
+  const byKey = new Map(currentOptions.map((option) => [String(option.value), option]));
+  const orderedKeys = new Set(orderedValues.map((value) => String(value)));
+  const ordered = orderedValues
+    .map((value) => byKey.get(String(value)))
+    .filter((option): option is NonNullable<typeof option> => option != null);
+  const rest = currentOptions.filter((option) => !orderedKeys.has(String(option.value)));
+  return {
+    ...schema,
+    "x-editor": {
+      ...schema["x-editor"],
+      options: [...ordered, ...rest],
     },
   };
 }
