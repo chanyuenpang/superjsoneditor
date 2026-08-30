@@ -1103,6 +1103,51 @@ test("手动锁定左页后，右页深钻只替换右侧且左页保持不动",
   }
 });
 
+test("手动锁定时可拖拽右页左边沿，并在取消后记忆宽度", () => {
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get: () => 1000,
+  });
+
+  try {
+    const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} layoutMode="stack-flow" />);
+    const pageStack = container.querySelector(".page-stack") as HTMLDivElement;
+    pageStack.getBoundingClientRect = () => ({
+      bottom: 700,
+      height: 700,
+      left: 0,
+      right: 1000,
+      top: 0,
+      width: 1000,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+    const divider = screen.getByRole("separator", { name: "Resize pinned pages" });
+
+    fireEvent.mouseDown(divider, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 640 });
+    fireEvent.mouseUp(window);
+    expect(pageStack.style.getPropertyValue("--stack-left-slot-width")).toBe("640px");
+    expect(pageStack.style.getPropertyValue("--stack-right-slot-width")).toBe("360px");
+
+    fireEvent.click(screen.getByRole("button", { name: "Unpin left page" }));
+    expect(pageStack.style.getPropertyValue("--stack-left-slot-width")).toBe("500px");
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+    expect(pageStack.style.getPropertyValue("--stack-left-slot-width")).toBe("640px");
+  } finally {
+    if (originalClientWidth) {
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+    } else {
+      delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
+  }
+});
+
 test("刷新成功会取消手动锁定并回到最新根 JSON", async () => {
   const handleReload = vi.fn(async () => ({ main: { refreshed: "yes" } }));
   render(<EditorShell documents={{ main: { profile: { stats: { hp: 10 } } } }} onReload={handleReload} />);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
 import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type NavigationPage } from "../core/navigation";
 import type { JsonPath } from "../core/path";
@@ -159,6 +159,8 @@ export type EditorShellProps = {
 
 const animationDurationMs = 500;
 const stackedPushEnterDurationMs = 500;
+const minimumPinnedLeftSlotWidth = 260;
+const minimumPinnedRightSlotWidth = 320;
 
 export function EditorShell({
   documents,
@@ -187,6 +189,7 @@ export function EditorShell({
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
   const [pinnedAnchor, setPinnedAnchor] = useState<NavigationPage | null>(null);
+  const [rememberedPinnedLeftSlotWidth, setRememberedPinnedLeftSlotWidth] = useState<number | null>(null);
   const [stackAnimation, setStackAnimation] = useState<StackAnimation | null>(null);
   const [stackAnimationSourcePages, setStackAnimationSourcePages] = useState<NavigationPage[] | null>(null);
   const [closedStackFlowPage, setClosedStackFlowPage] = useState<Pick<NavigationPage, "sourceId" | "path"> | null>(null);
@@ -201,6 +204,7 @@ export function EditorShell({
   const [schemaSaveError, setSchemaSaveError] = useState<string | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
+  const pageStackRef = useRef<HTMLDivElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
   const hasReportedChangeRef = useRef(false);
   const schemaOverridesRef = useRef<Record<string, EditorSchema>>({});
@@ -573,8 +577,38 @@ export function EditorShell({
     }));
   }
 
-  const leftSlotWidth = Math.max(0, stackViewportWidth / 2);
+  const defaultLeftSlotWidth = Math.max(0, stackViewportWidth / 2);
+  const leftSlotWidth = isPinnedLayout && rememberedPinnedLeftSlotWidth != null
+    ? clampPinnedLeftSlotWidth(rememberedPinnedLeftSlotWidth, stackViewportWidth)
+    : defaultLeftSlotWidth;
   const rightSlotWidth = Math.max(0, stackViewportWidth - leftSlotWidth);
+
+  function updatePinnedLeftSlotWidth(clientX: number) {
+    const bounds = pageStackRef.current?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0) return;
+    setRememberedPinnedLeftSlotWidth(clampPinnedLeftSlotWidth(clientX - bounds.left, bounds.width));
+  }
+
+  function handlePinnedDividerMouseDown(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!isPinnedLayout || stackAnimation) return;
+    event.preventDefault();
+    updatePinnedLeftSlotWidth(event.clientX);
+    const handleMouseMove = (moveEvent: MouseEvent) => updatePinnedLeftSlotWidth(moveEvent.clientX);
+    const handleMouseUp = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  }
+
+  function handlePinnedDividerKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (!isPinnedLayout || !stackViewportWidth) return;
+    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    if (!direction) return;
+    event.preventDefault();
+    setRememberedPinnedLeftSlotWidth((current) => clampPinnedLeftSlotWidth((current ?? defaultLeftSlotWidth) + direction * 24, stackViewportWidth));
+  }
 
   function getStackPageStyle(depthClass: string) {
     if (!usesSplitLayout || depthClass === "stack-page--single" || depthClass === "stack-page--fullscreen-left") {
@@ -916,12 +950,28 @@ export function EditorShell({
 
         <main className="main-content" ref={pageStackViewportRef}>
           <div
+            ref={pageStackRef}
             className={`page-stack ${isCompactStack ? "page-stack--compact" : ""}`}
             style={{
               ["--stack-left-slot-width" as "--stack-left-slot-width"]: `${leftSlotWidth}px`,
               ["--stack-right-slot-width" as "--stack-right-slot-width"]: `${rightSlotWidth}px`,
             } as CSSProperties}
           >
+            {isPinnedLayout ? (
+              <div
+                aria-label="Resize pinned pages"
+                aria-orientation="vertical"
+                aria-valuemax={Math.max(minimumPinnedLeftSlotWidth, stackViewportWidth - minimumPinnedRightSlotWidth)}
+                aria-valuemin={Math.min(minimumPinnedLeftSlotWidth, Math.max(0, stackViewportWidth - minimumPinnedRightSlotWidth))}
+                aria-valuenow={Math.round(leftSlotWidth)}
+                className="page-stack__pinned-divider"
+                role="separator"
+                style={{ left: `${leftSlotWidth}px` }}
+                tabIndex={0}
+                onKeyDown={handlePinnedDividerKeyDown}
+                onMouseDown={handlePinnedDividerMouseDown}
+              />
+            ) : null}
             {isCompactStack ? (
               (() => {
                 const compactSourceId = currentPage.sourceId ?? rootSourceId;
@@ -1467,6 +1517,13 @@ export function EditorShell({
 function normalizeDocuments(documents: EditorDocuments | undefined, rootSourceId: string, value: unknown) {
   if (documents) return documents;
   return { [rootSourceId]: value };
+}
+
+function clampPinnedLeftSlotWidth(width: number, viewportWidth: number) {
+  if (viewportWidth <= 0) return 0;
+  const minimumLeft = Math.min(minimumPinnedLeftSlotWidth, viewportWidth);
+  const maximumLeft = Math.max(minimumLeft, viewportWidth - minimumPinnedRightSlotWidth);
+  return Math.min(maximumLeft, Math.max(minimumLeft, width));
 }
 
 function buildCompactPathOptions(

@@ -735,6 +735,32 @@ button {
   width: 100%;
 }
 
+.page-stack__pinned-divider {
+  position: absolute;
+  z-index: 8;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  transform: translateX(-50%);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.page-stack__pinned-divider::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  background: transparent;
+  content: "";
+}
+
+.page-stack__pinned-divider:hover::after,
+.page-stack__pinned-divider:focus-visible::after {
+  background: var(--accent, #5274a8);
+}
+
 .stack-page {
   background: #fff;
   border: 0;
