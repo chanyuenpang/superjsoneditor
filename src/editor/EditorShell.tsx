@@ -458,13 +458,16 @@ export function EditorShell({
   function resolveRootSchema(sourceId: string, value: unknown): EditorSchema {
     const override = schemaOverridesRef.current[getSchemaOverrideKey(sourceId, activeSchemaLayer)];
     if (override) return override;
-    return schemaHost?.getSchema({
+    const hostSchema = schemaHost?.getSchema({
       sourceId,
       path: [],
       value,
       documents: documentsBySourceId,
       activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
-    }) ?? inferSchemaFromValue(value);
+    });
+    return hostSchema && schemaAllowsValueType(hostSchema, value)
+      ? hostSchema
+      : inferSchemaFromValue(value);
   }
 
   function resolveNamedSchema(name: string): EditorSchema | undefined {
@@ -1587,6 +1590,20 @@ function persistPinnedLeftSlotWidth(width: number) {
   } catch {
     // UI 偏好写入失败不影响编辑器交互。
   }
+}
+
+function schemaAllowsValueType(schema: EditorSchema, value: unknown) {
+  const declaredTypes = schema.type
+    ? (Array.isArray(schema.type) ? schema.type : [schema.type])
+    : [];
+  if (declaredTypes.length === 0 || value === undefined) return true;
+  if (Array.isArray(value)) return declaredTypes.includes("array");
+  if (value === null) return declaredTypes.includes("null");
+  if (typeof value === "object") return declaredTypes.includes("object");
+  if (typeof value === "number") {
+    return declaredTypes.includes("number") || (Number.isInteger(value) && declaredTypes.includes("integer"));
+  }
+  return declaredTypes.includes(typeof value as "string" | "boolean");
 }
 
 function buildCompactPathOptions(

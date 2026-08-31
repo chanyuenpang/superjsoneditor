@@ -397,6 +397,24 @@ test("value arrays hide column visibility controls and disallow hiding generated
   expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
 });
 
+test("根字符串数组会忽略类型不兼容的对象 schema 并按数组编辑", () => {
+  const schemaHost: EditorSchemaHost = {
+    getSchema() {
+      return { type: "object" };
+    },
+  };
+
+  render(<EditorShell value={["功法", "暗器", "虚弱", "减伤"]} schemaHost={schemaHost} />);
+
+  expect(screen.getByRole("columnheader", { name: "Value" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+  fireEvent.click(screen.getByRole("button", { name: "Apply JSON" }));
+
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByLabelText("JSON value editor")).toBeNull();
+  expect(screen.getByLabelText("Array item 0")).toHaveValue("功法");
+});
+
 test("存量原始值数组的空列配置会恢复 Value 列并提示使用者", async () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",
