@@ -1103,7 +1103,66 @@ test("手动锁定左页后，右页深钻只替换右侧且左页保持不动",
   }
 });
 
+test("手动锁定左侧引用列表时，打开引用替换右页而不重复压栈", () => {
+  vi.useFakeTimers();
+  render(
+    <EditorShell
+      documents={{ main: { facilities: ["asset://characters/hero.json"] } }}
+      rootSourceId="main"
+      schemaHost={{
+        getSchema(context): EditorSchema {
+          if (context.sourceId === "hero") return { type: "object", properties: { id: { type: "string" } } };
+          return {
+            type: "object",
+            properties: {
+              facilities: {
+                type: "array",
+                items: {
+                  type: "string",
+                  format: "uri",
+                  "x-editor": {
+                    reference: {
+                      kind: "resource",
+                      types: ["character"],
+                      target: { schemaRef: "character" },
+                    },
+                  },
+                },
+              },
+            },
+          };
+        },
+      }}
+      host={{
+        resolveReferenceUri: ({ value }) => value === "asset://characters/hero.json" ? value : undefined,
+        getReferenceOptions: () => [{
+          value: "asset://characters/hero.json",
+          label: "英雄",
+          description: "asset://characters/hero.json",
+        }],
+        resolveReferenceSourceId: (uri) => uri === "asset://characters/hero.json" ? "hero" : undefined,
+        loadReferenceSource: (uri) => uri === "asset://characters/hero.json" ? { id: "hero" } : undefined,
+      }}
+    />,
+  );
+
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "facilities array 1 items" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Array item 0" }));
+    act(() => { vi.advanceTimersByTime(600); });
+    fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Array item 0" }));
+
+    expect(screen.getByLabelText("Breadcrumb").textContent).toBe("main/facilities/hero");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("手动锁定时可拖拽右页左边沿，并在取消后记忆宽度", () => {
+  const storageKey = "super-json-editor:pinned-left-slot-width";
+  const savedWidth = window.localStorage.getItem(storageKey);
   const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
   Object.defineProperty(HTMLElement.prototype, "clientWidth", {
     configurable: true,
@@ -1111,7 +1170,7 @@ test("手动锁定时可拖拽右页左边沿，并在取消后记忆宽度", ()
   });
 
   try {
-    const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} layoutMode="stack-flow" />);
+    const { container, unmount } = render(<EditorShell value={{ profile: { hp: 10 } }} layoutMode="stack-flow" />);
     const pageStack = container.querySelector(".page-stack") as HTMLDivElement;
     pageStack.getBoundingClientRect = () => ({
       bottom: 700,
@@ -1126,6 +1185,8 @@ test("手动锁定时可拖拽右页左边沿，并在取消后记忆宽度", ()
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+    const unpinButton = screen.getByRole("button", { name: "Unpin left page" });
+    expect(unpinButton).toHaveAttribute("aria-pressed", "true");
     const divider = screen.getByRole("separator", { name: "Resize pinned pages" });
 
     fireEvent.mouseDown(divider, { clientX: 500 });
@@ -1134,18 +1195,61 @@ test("手动锁定时可拖拽右页左边沿，并在取消后记忆宽度", ()
     expect(pageStack.style.getPropertyValue("--stack-left-slot-width")).toBe("640px");
     expect(pageStack.style.getPropertyValue("--stack-right-slot-width")).toBe("360px");
 
-    fireEvent.click(screen.getByRole("button", { name: "Unpin left page" }));
+    fireEvent.click(unpinButton);
     expect(pageStack.style.getPropertyValue("--stack-left-slot-width")).toBe("500px");
 
+    unmount();
+    const { container: restoredContainer } = render(<EditorShell value={{ profile: { hp: 10 } }} layoutMode="stack-flow" />);
     fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
-    expect(pageStack.style.getPropertyValue("--stack-left-slot-width")).toBe("640px");
+    expect((restoredContainer.querySelector(".page-stack") as HTMLDivElement | null)?.style.getPropertyValue("--stack-left-slot-width")).toBe("640px");
   } finally {
     if (originalClientWidth) {
       Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
     } else {
       delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
     }
+    if (savedWidth == null) {
+      window.localStorage.removeItem(storageKey);
+    } else {
+      window.localStorage.setItem(storageKey, savedWidth);
+    }
   }
+});
+
+test("Pin 分栏忽略无效的全局宽度偏好", () => {
+  const storageKey = "super-json-editor:pinned-left-slot-width";
+  const savedWidth = window.localStorage.getItem(storageKey);
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  window.localStorage.setItem(storageKey, "not-a-width");
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+    configurable: true,
+    get: () => 1000,
+  });
+
+  try {
+    const { container } = render(<EditorShell value={{ profile: { hp: 10 } }} layoutMode="stack-flow" />);
+    fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+    expect((container.querySelector(".page-stack") as HTMLDivElement | null)?.style.getPropertyValue("--stack-left-slot-width")).toBe("500px");
+  } finally {
+    if (originalClientWidth) {
+      Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+    } else {
+      delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    }
+    if (savedWidth == null) {
+      window.localStorage.removeItem(storageKey);
+    } else {
+      window.localStorage.setItem(storageKey, savedWidth);
+    }
+  }
+});
+
+test("Pin 模式右页隐藏时不显示分栏调整条", () => {
+  render(<EditorShell value={{ profile: { hp: 10 } }} layoutMode="stack-flow" leftPageFullscreen />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+
+  expect(screen.queryByRole("separator", { name: "Resize pinned pages" })).toBeNull();
 });
 
 test("刷新成功会取消手动锁定并回到最新根 JSON", async () => {
@@ -3594,7 +3698,7 @@ test("reference fields render searchable picker cards instead of native select",
   });
 });
 
-test("reference array items inside documents keep picker rows but不再提供额外打开按钮", async () => {
+test("reference array items inside documents keep picker rows and can open JSON targets", async () => {
   render(
     <EditorShell
       documents={{
@@ -3687,7 +3791,7 @@ test("reference array items inside documents keep picker rows but不再提供额
 
   fireEvent.click(screen.getByRole("button", { name: /facilities array 1 items/i }));
   expect(screen.getByRole("button", { name: /^Array item 0$/i })).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: /Open Array item 0/i })).toBeNull();
+  expect(screen.getByRole("button", { name: /Open Array item 0/i })).toBeEnabled();
   expect(screen.queryByRole("button", { name: /facility reference asset:\/\/facility\/inn\.json/i })).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: /^Array item 0$/i }));
@@ -3699,6 +3803,11 @@ test("reference array items inside documents keep picker rows but不再提供额
   await waitFor(() => {
     expect(screen.getAllByText("铁匠铺").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("asset://facility/blacksmith.json").length).toBeGreaterThanOrEqual(1);
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: /Open Array item 0/i }));
+  await waitFor(() => {
+    expect(screen.getByDisplayValue("blacksmith")).toBeInTheDocument();
   });
 });
 

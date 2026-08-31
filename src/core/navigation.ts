@@ -119,6 +119,31 @@ export function goBack(state: NavigationState): NavigationState {
   };
 }
 
+/**
+ * 在当前上下文之后压入一个已加载的引用 source。
+ *
+ * 这与 `jumpToPage` 不同：后者用于面包屑跳转，会重建整条路径；引用打开必须
+ * 保留触发引用的对象与数组页，才能让双页栈左侧仍显示真实上下文。
+ */
+export function openReferenceSource(state: NavigationState, sourceId: string): NavigationState {
+  const rootSourceId = getRootSourceId(state);
+  const documents = getDocuments(state);
+  return {
+    ...state,
+    documentValue: documents[rootSourceId],
+    documents,
+    rootSourceId,
+    pages: [
+      ...state.pages,
+      {
+        sourceId,
+        path: [],
+        isReference: true,
+      },
+    ],
+  };
+}
+
 export function jumpToPath(state: NavigationState, targetPath: JsonPath): NavigationState {
   return jumpToPage(state, { sourceId: getRootSourceId(state), path: targetPath });
 }

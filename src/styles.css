@@ -570,6 +570,19 @@ button {
   border-color: #24493d;
 }
 
+.ghost-button.pin-button.is-active,
+.ghost-button.pin-button[aria-pressed="true"] {
+  background: #eaf2ff;
+  border-color: #b9d2fb;
+  color: #2f6fed;
+}
+
+.ghost-button.pin-button.is-active:hover,
+.ghost-button.pin-button[aria-pressed="true"]:hover {
+  background: #dfeeff;
+  border-color: #8eb7f5;
+}
+
 .toolbar-back-button {
   align-items: center;
   background: #2f6fed;

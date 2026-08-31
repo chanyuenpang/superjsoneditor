@@ -2491,6 +2491,7 @@ function ArrayPage({
                                   host,
                                   readOnly: pageReadOnly,
                                   onOpenReference: onJumpToSource,
+                                  showOpenReferenceButton: true,
                                   onUpdateSchema: canAuthorTableSchema && sourceId
                                     ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex], "self", updater)
                                     : undefined,
@@ -2523,6 +2524,7 @@ function ArrayPage({
                                 host,
                                 readOnly: pageReadOnly,
                                 onOpenReference: onJumpToSource,
+                                showOpenReferenceButton: true,
                                 onUpdateSchema: canAuthorTableSchema && sourceId
                                   ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex], "self", updater)
                                   : undefined,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { getValueAtPath, setValueAtPath } from "../core/document";
-import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, type NavigationPage } from "../core/navigation";
+import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, openReferenceSource, type NavigationPage } from "../core/navigation";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
 import { isReferenceValue, type EditorHost } from "./host";
@@ -161,6 +161,7 @@ const animationDurationMs = 500;
 const stackedPushEnterDurationMs = 500;
 const minimumPinnedLeftSlotWidth = 260;
 const minimumPinnedRightSlotWidth = 320;
+const pinnedLeftSlotWidthStorageKey = "super-json-editor:pinned-left-slot-width";
 
 export function EditorShell({
   documents,
@@ -189,7 +190,7 @@ export function EditorShell({
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
   const [pinnedAnchor, setPinnedAnchor] = useState<NavigationPage | null>(null);
-  const [rememberedPinnedLeftSlotWidth, setRememberedPinnedLeftSlotWidth] = useState<number | null>(null);
+  const [rememberedPinnedLeftSlotWidth, setRememberedPinnedLeftSlotWidth] = useState<number | null>(readPersistedPinnedLeftSlotWidth);
   const [stackAnimation, setStackAnimation] = useState<StackAnimation | null>(null);
   const [stackAnimationSourcePages, setStackAnimationSourcePages] = useState<NavigationPage[] | null>(null);
   const [closedStackFlowPage, setClosedStackFlowPage] = useState<Pick<NavigationPage, "sourceId" | "path"> | null>(null);
@@ -305,6 +306,12 @@ export function EditorShell({
   );
 
   usePressSlopGuard(shellRef);
+
+  useEffect(() => {
+    if (rememberedPinnedLeftSlotWidth != null) {
+      persistPinnedLeftSlotWidth(rememberedPinnedLeftSlotWidth);
+    }
+  }, [rememberedPinnedLeftSlotWidth]);
 
   useEffect(() => {
     if (lastExternalDocumentsSnapshotRef.current === initialDocumentsSnapshot) {
@@ -642,7 +649,8 @@ export function EditorShell({
       <>
         <button
           aria-label={isPinned ? "Unpin left page" : "Pin left page"}
-          className="ghost-button compact-button"
+          aria-pressed={isPinned}
+          className={`ghost-button compact-button pin-button ${isPinned ? "is-active" : ""}`}
           disabled={Boolean(stackAnimation) || isPinnedRootLayout}
           type="button"
           onClick={() => handleTogglePinnedAnchor(page)}
@@ -752,8 +760,44 @@ export function EditorShell({
     });
   }
 
-  function handleJumpToSource(sourceId: string) {
-    handleJump([], sourceId);
+  function handleJumpToSource(sourceId: string, fromIndex?: number) {
+    animationKeyRef.current += 1;
+    setClosedStackFlowPage(null);
+    setPages((currentPages) => {
+      const currentVisiblePages = isPinnedLayout
+        ? getPinnedVisiblePagesForPages(currentPages)
+        : (isCompactStack ? [currentPages[currentPages.length - 1] ?? { sourceId: rootSourceId, path: [] }] : getVisiblePages(currentPages));
+      const actualIndex = isCompactStack
+        ? currentPages.length - 1
+        : isPinnedLayout
+          ? (fromIndex === 0 ? findRenderedPageIndex(currentPages, currentVisiblePages[0]) : currentPages.length - 1)
+          : Math.max(0, currentPages.length - currentVisiblePages.length + (fromIndex ?? currentVisiblePages.length - 1));
+      const sourceIsForeground = actualIndex === currentPages.length - 1;
+      const basePages = sourceIsForeground ? currentPages : currentPages.slice(0, actualIndex + 1);
+      const nextPages = openReferenceSource({
+        documents: documentsBySourceId,
+        rootSourceId,
+        pages: basePages,
+      }, sourceId).pages;
+      if (isCompactStack) {
+        setStackAnimation(null);
+        setStackAnimationSourcePages(null);
+      } else if (isPinnedLayout) {
+        setStackAnimation(
+          determinePinnedRootNavigateAnimation(
+            getPinnedVisiblePagesForPages(currentPages),
+            getPinnedVisiblePagesForPages(nextPages),
+            animationKeyRef.current,
+          ),
+        );
+        setStackAnimationSourcePages(null);
+      } else {
+        const animation = determineNavigateAnimation(currentPages, nextPages, currentPages.length - 1, animationKeyRef.current);
+        setStackAnimation(animation);
+        setStackAnimationSourcePages(animation ? currentPages : null);
+      }
+      return nextPages;
+    });
   }
 
   function handleBack() {
@@ -957,7 +1001,7 @@ export function EditorShell({
               ["--stack-right-slot-width" as "--stack-right-slot-width"]: `${rightSlotWidth}px`,
             } as CSSProperties}
           >
-            {isPinnedLayout ? (
+            {isPinnedLayout && !useFullscreenLeftPage ? (
               <div
                 aria-label="Resize pinned pages"
                 aria-orientation="vertical"
@@ -1017,7 +1061,7 @@ export function EditorShell({
                     activeReferenceSourceId={undefined}
                     onNavigateUp={!isAtRootPage ? handleBack : undefined}
                     onNavigate={(nextPath) => handleNavigate(0, nextPath)}
-                    onJumpToSource={handleJumpToSource}
+                    onJumpToSource={(sourceId) => handleJumpToSource(sourceId, 0)}
                     readOnly={readOnly}
                     onEditModeChange={setIsEditingCurrentPage}
                     onApplyValue={(nextValue) => {
@@ -1093,7 +1137,7 @@ export function EditorShell({
                         : undefined
                     }
                     onNavigate={(nextPath) => handleNavigate(index, nextPath)}
-                    onJumpToSource={handleJumpToSource}
+                    onJumpToSource={(sourceId) => handleJumpToSource(sourceId, index)}
                     readOnly={readOnly}
                     onEditModeChange={
                       isCurrent
@@ -1377,7 +1421,7 @@ export function EditorShell({
                         pageHeaderActions={renderLeftPageActions(pinnedLeftPage)}
                         onClosePage={undefined}
                         onNavigate={(nextPath) => handleNavigate(0, nextPath)}
-                        onJumpToSource={handleJumpToSource}
+                        onJumpToSource={(sourceId) => handleJumpToSource(sourceId, 0)}
                         readOnly={readOnly}
                         onEditModeChange={setIsEditingCurrentPage}
                         onApplyValue={(nextValue) => {
@@ -1453,7 +1497,7 @@ export function EditorShell({
                         onNavigateUp={undefined}
                         onClosePage={handleCloseRightPage}
                         onNavigate={(nextPath) => handleNavigate(1, nextPath)}
-                        onJumpToSource={handleJumpToSource}
+                        onJumpToSource={(sourceId) => handleJumpToSource(sourceId, 1)}
                         readOnly={readOnly}
                         onEditModeChange={setIsEditingCurrentPage}
                         onApplyValue={(nextValue) => {
@@ -1524,6 +1568,25 @@ function clampPinnedLeftSlotWidth(width: number, viewportWidth: number) {
   const minimumLeft = Math.min(minimumPinnedLeftSlotWidth, viewportWidth);
   const maximumLeft = Math.max(minimumLeft, viewportWidth - minimumPinnedRightSlotWidth);
   return Math.min(maximumLeft, Math.max(minimumLeft, width));
+}
+
+function readPersistedPinnedLeftSlotWidth() {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = Number(window.localStorage.getItem(pinnedLeftSlotWidthStorageKey));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistPinnedLeftSlotWidth(width: number) {
+  if (typeof window === "undefined" || !Number.isFinite(width) || width <= 0) return;
+  try {
+    window.localStorage.setItem(pinnedLeftSlotWidthStorageKey, String(width));
+  } catch {
+    // UI 偏好写入失败不影响编辑器交互。
+  }
 }
 
 function buildCompactPathOptions(

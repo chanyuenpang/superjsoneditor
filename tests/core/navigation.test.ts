@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createNavigationState, goBack, jumpToPath, openPath } from "../../src/core/navigation";
+import { createNavigationState, goBack, jumpToPath, openPath, openReferenceSource } from "../../src/core/navigation";
 
 describe("navigation state", () => {
   test("opens a normal nested page from the document root", () => {
@@ -43,6 +43,28 @@ describe("navigation state", () => {
 
     const next = goBack(state);
     expect(next.pages).toEqual([{ sourceId: "main", path: [] }]);
+  });
+
+  test("opens an existing reference source without discarding the calling path", () => {
+    const state = {
+      documents: {
+        tasks: [{ relatedRefs: ["asset://development-ledgers/example.json"] }],
+        "management-ledger/example": [{ id: "example" }],
+      },
+      rootSourceId: "tasks",
+      pages: [
+        { sourceId: "tasks", path: [] },
+        { sourceId: "tasks", path: [0], navLabel: "[0]" },
+        { sourceId: "tasks", path: [0, "relatedRefs"], navLabel: "relatedRefs" },
+      ],
+    };
+
+    const next = openReferenceSource(state, "management-ledger/example");
+
+    expect(next.pages).toEqual([
+      ...state.pages,
+      { sourceId: "management-ledger/example", path: [], isReference: true },
+    ]);
   });
 
   test("keeps the breadcrumb path when drilling deeper", () => {
