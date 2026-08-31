@@ -162,6 +162,25 @@ test("resolveSchemaAtPath follows local $ref nodes", () => {
   });
 });
 
+test("resolveSchemaAtPath does not reuse an object schema for an undeclared array field", () => {
+  const schema: EditorSchema = {
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+      },
+      additionalProperties: true,
+    },
+  };
+  const value = [{ id: "card-needle-reversal", 标签: ["功法", "暗器", "虚弱", "减伤"] }];
+
+  expect(resolveSchemaAtPath(schema, [], value)).toMatchObject({ type: "array" });
+  expect(resolveSchemaAtPath(schema, [0], value)).toMatchObject({ type: "object" });
+  expect(resolveSchemaAtPath(schema, [0, "id"], value)).toMatchObject({ type: "string" });
+  expect(resolveSchemaAtPath(schema, [0, "标签"], value)).toBeUndefined();
+});
+
 test("validateDocument enforces local $ref branches", () => {
   const schema: EditorSchema = {
     type: "object",
