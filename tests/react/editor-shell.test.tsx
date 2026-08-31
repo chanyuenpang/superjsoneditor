@@ -5387,6 +5387,60 @@ test("reordering preserves the rendered width of an auto-expanded trailing colum
   });
 });
 
+test("array column resize persists widths beyond the former maximum", async () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    "x-editor": {
+      table: {
+        columns: [{ key: "description", width: 360 }],
+      },
+    },
+    items: {
+      type: "object",
+      properties: {
+        description: { type: "string", title: "Description" },
+      },
+    },
+  });
+
+  const { container } = render(
+    <EditorShell
+      value={[{ description: "A description that needs a deliberately wide column." }]}
+      schemaHost={schemaHost}
+    />,
+  );
+
+  const resizeHandle = screen.getByRole("separator", { name: "Resize Description column" }) as HTMLElement;
+  const header = resizeHandle.closest("th") as HTMLElement;
+  header.getBoundingClientRect = () => ({
+    x: 0,
+    y: 0,
+    width: 360,
+    height: 40,
+    top: 0,
+    right: 360,
+    bottom: 40,
+    left: 0,
+    toJSON() {
+      return {};
+    },
+  } as DOMRect);
+
+  fireEvent(resizeHandle, new MouseEvent("pointerdown", { bubbles: true, clientX: 360 }));
+  fireEvent(window, new MouseEvent("pointermove", { bubbles: true, clientX: 760 }));
+  fireEvent(window, new MouseEvent("pointerup", { bubbles: true, clientX: 760 }));
+
+  await waitFor(() => {
+    expect(schemaHost.getRootSchemaSnapshot()["x-editor"]?.table?.columns).toEqual([
+      { key: "description", width: 760 },
+    ]);
+  });
+  expect((container.querySelector('col[data-column-field="description"]') as HTMLTableColElement).style.width).toBe("760px");
+  expect(resizeHandle).not.toHaveAttribute("aria-valuemax");
+  const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+  expect(styles).not.toMatch(/\.data-table td\s*\{[^}]*max-width:/);
+});
+
 test("drag preview keeps the auto-expanded width attached to the original long column", () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",

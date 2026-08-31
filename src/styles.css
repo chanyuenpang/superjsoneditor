@@ -1266,7 +1266,6 @@ th:hover .column-resize-handle::after,
   border-bottom: 1px solid #f0efec;
   border-right: 1px solid #f4f3f0;
   height: 36px;
-  max-width: 360px;
   min-width: 56px;
   padding: 0 10px;
   vertical-align: middle;

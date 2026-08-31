@@ -28,7 +28,6 @@ type SchemaColumnHeaderProps = {
 };
 
 const minColumnWidth = 56;
-const maxColumnWidth = 560;
 const dragThreshold = 4;
 const clickMenuOpenThresholdMs = 300;
 
@@ -361,7 +360,6 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
       ) : null}
       <div
         aria-label={`Resize ${props.label} column`}
-        aria-valuemax={maxColumnWidth}
         aria-valuemin={minColumnWidth}
         aria-valuenow={widthRef.current}
         className="column-resize-handle"
@@ -375,7 +373,7 @@ export function SchemaColumnHeader(props: SchemaColumnHeaderProps) {
 }
 
 function clampColumnWidth(width: number) {
-  return Math.max(minColumnWidth, Math.min(maxColumnWidth, Math.round(width)));
+  return Math.max(minColumnWidth, Math.round(width));
 }
 
 function updateResizeGuide(guideRight: number) {
