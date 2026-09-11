@@ -212,6 +212,10 @@ export type EditorViewOptionsSource = {
   colorField?: string;
   descriptionField?: string;
   previewField?: string;
+} | {
+  /** 从打开当前 object 页所属的 array 中，按行字段动态派生候选值。 */
+  kind: "current-array-field";
+  fieldPath: JsonPath;
 };
 
 export type EditorTableColumn = {

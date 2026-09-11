@@ -1283,6 +1283,19 @@ test("刷新成功会取消手动锁定并回到最新根 JSON", async () => {
   expect(screen.getByRole("button", { name: "Pin left page" })).toBeInTheDocument();
 });
 
+test("保留当前 source 的刷新会更新数据但不重置 pinned 视图", async () => {
+  const handleReload = vi.fn(async () => ({ main: { refreshed: "yes" }, unrelated: { refreshed: "no" } }));
+  render(<EditorShell documents={{ main: { profile: { stats: { hp: 10 } } } }} onReload={handleReload} reloadBehavior="preserve-current-source" />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+  expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Reload JSON data" }));
+
+  await waitFor(() => expect(handleReload).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByDisplayValue("yes")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument();
+});
+
 test("pinned-root 妯″紡涓嬬偣鍑诲彸椤垫寜閽細娌跨敤宸﹂〉鐨?replace 鍔ㄧ敾璇箟", () => {
   const { container } = render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} layoutMode="pinned-root" />);
 
@@ -3046,7 +3059,7 @@ test("table cell select fields author options and colors when schema writing is 
   });
 });
 
-test("无声明 options 的表格 cell 字段发现现有值并支持 label 创建/设色", async () => {
+test("未声明 optionsSource 的 object multi-select 不扫描同表数据，仍支持新增标签", async () => {
   const schemaHost = createMutableSchemaHost({
     type: "array",
     items: {
@@ -3065,42 +3078,58 @@ test("无声明 options 的表格 cell 字段发现现有值并支持 label 创�
 
   render(
     <EditorShell
-      value={[{ tags: ["fire", "boss"] }, { tags: ["fire"] }]}
+      value={[{ tags: ["fire", "boss"] }, { tags: ["ice"] }]}
       schemaHost={schemaHost}
       rootSourceId="tasks"
     />,
   );
 
-  // 1) 打开表格 cell 的 multi-select：选项来自数据行发现（去重）
-  fireEvent.click(screen.getAllByRole("button", { name: /Array item 0 tags/i }).at(-1)!);
+  // 未声明 source 时不扫描其它行；仅以当前值作为编辑器已有选项。
+  fireEvent.click(screen.getByRole("button", { name: /Array item 0 tags/i }));
   const popover = latestPopover();
   expect(within(popover).getAllByText("fire").length).toBeGreaterThan(0);
   expect(within(popover).getAllByText("boss").length).toBeGreaterThan(0);
+  expect(within(popover).queryByText("ice")).toBeNull();
 
-  // 2) 发现模式提供选项管理入口
-  const menus = popover.querySelectorAll(".option-menu-trigger");
-  expect(menus.length).toBe(2);
-
-  // 3) 给 "fire" 设深红色：首次编辑先把发现选项物化进 schema，再写颜色
-  fireEvent.click(menus[0] as HTMLElement);
-  await waitFor(() => { expect(latestOptionEditor().querySelector(".multi-select-color-columns")).not.toBeNull(); });
-  fireEvent.pointerDown(within(latestOptionEditor()).getAllByRole("button", { name: /深红/ })[0]);
-  await waitFor(() => {
-    const savedItems = schemaHost.getRootSchemaSnapshot().items as Record<string, any>;
-    const options = savedItems.properties.tags["x-editor"].options as Array<{ value: string; color?: string }>;
-    expect(options.find((option) => option.value === "fire")?.color).toBe("dark_red");
-    expect(options.find((option) => option.value === "boss")?.color).toBeUndefined();
-  });
-
-  // 4) 创建新 label：输入 draft → Create → schema options 追加
+  // 新标签只写入当前条目数据，不物化为 schema 的第二份选项表。
   const draftInput = popover.querySelector<HTMLInputElement>(".multi-select-input")!;
   fireEvent.change(draftInput, { target: { value: "elite" } });
   fireEvent.pointerDown(within(popover).getAllByRole("button", { name: /Create "elite"/i })[0]);
   await waitFor(() => {
     const savedItems = schemaHost.getRootSchemaSnapshot().items as Record<string, any>;
-    const options = savedItems.properties.tags["x-editor"].options as Array<{ value: string }>;
-    expect(options.some((option) => option.value === "elite")).toBe(true);
+    expect(savedItems.properties.tags["x-editor"].options).toBeUndefined();
+    expect(within(popover).getAllByText("elite").length).toBeGreaterThan(0);
   });
+});
+
+test("大数组的标签候选值只在 object 编辑器按显式来源打开时收集", () => {
+  const schemaHost = createMutableSchemaHost({
+    type: "array",
+    items: {
+      type: "object",
+      properties: {
+        tags: {
+          type: "array",
+          title: "Tags",
+          "x-editor": {
+            fieldType: "multi-select",
+            optionsSource: { kind: "current-array-field", fieldPath: ["tags"] },
+          },
+          items: { type: "string" },
+        },
+      },
+    },
+  });
+  const rows = Array.from({ length: 332 }, (_, index) => ({ tags: [`tag-${index % 111}`] }));
+  const { container } = render(<EditorShell value={rows} schemaHost={schemaHost} rootSourceId="tasks" />);
+
+  expect(container.querySelector('button[aria-label="Array item 0 tags"]')).toBeNull();
+  fireEvent.click(container.querySelector("tbody tr")!);
+  fireEvent.click(screen.getByRole("button", { name: /Field Tags/i }));
+
+  const popover = latestPopover();
+  expect(within(popover).getAllByText("tag-0").length).toBeGreaterThan(0);
+  expect(within(popover).getAllByText("tag-110").length).toBeGreaterThan(0);
 });
 
 function latestPopover() {

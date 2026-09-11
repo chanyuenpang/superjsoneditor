@@ -54,6 +54,15 @@ export type EditorHost = {
     optionValue: string | number;
     color: EditorViewOptionColor | null;
   }) => void | Promise<void>;
+  /**
+   * 编辑会话提供的当前 array 字段候选值。array 视图不会调用它；只供 object 详情页
+   * 中显式声明 `current-array-field` 的选择器在打开时读取。
+   */
+  getCurrentArrayFieldOptions?: (context: {
+    sourceId: string;
+    path: JsonPath;
+    fieldPath: JsonPath;
+  }) => Array<string | number>;
 };
 
 export type ReferenceErrorInfo = {

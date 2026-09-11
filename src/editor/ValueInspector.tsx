@@ -1172,6 +1172,7 @@ function ObjectPage({
                                 value: fieldValue,
                                 ariaLabel: `Field ${fieldLabel}`,
                                 schema: fieldSchema,
+                                sourceId,
                                 path: [...path, key],
                                 host,
                                 readOnly: pageReadOnly,
@@ -1318,6 +1319,7 @@ function ObjectPage({
                                   value: fieldValue,
                                   ariaLabel: `Field ${fieldLabel}`,
                                   schema: fieldSchema,
+                                  sourceId,
                                   path: [...path, key],
                                   host,
                                   readOnly: pageReadOnly,
@@ -2362,7 +2364,12 @@ function ArrayPage({
                               : cellValue !== undefined;
                             const showInlineProjection = hasColumn && cellProjectionConfig && isPlainObject(cellValue);
                             const cellLabel = configuredColumn?.label ?? column;
-                            const showInlineEditor = hasColumn && !showInlineProjection && isInlineSchemaEditor(cellValue, cellSchema, host);
+                            // current-array-field 的候选集合仅供详情 object 页在打开时派生；
+                            // array 表格保持只读摘要，避免为每一行创建编辑器。
+                            const showInlineEditor = hasColumn
+                              && !showInlineProjection
+                              && cellSchema?.["x-editor"]?.optionsSource?.kind !== "current-array-field"
+                              && isInlineSchemaEditor(cellValue, cellSchema, host);
                             return (
                             <td
                               className={
@@ -2383,7 +2390,11 @@ function ArrayPage({
                                     !hasColumn ? "array-cell-summary--missing" : "",
                                   ].filter(Boolean).join(" ")}
                                 >
-                                  {hasColumn ? previewValue(cellValue, host) : "-"}
+                                  {hasColumn
+                                    ? cellSchema?.["x-editor"]?.fieldType === "multi-select"
+                                      ? renderReferenceFieldValue(cellValue, cellSchema, host, [...path, sourceIndex, ...fieldPath])
+                                      : previewValue(cellValue, host)
+                                    : "-"}
                                 </span>
                               ) : null}
                               {showInlineEditor ? (
@@ -2395,6 +2406,7 @@ function ArrayPage({
                                     value: cellValue,
                                     ariaLabel: `Array item ${sourceIndex} ${cellLabel}`,
                                     schema: cellSchema,
+                                    sourceId,
                                     path: [...path, sourceIndex, ...fieldPath],
                                     host,
                                     readOnly: pageReadOnly,
@@ -2402,11 +2414,6 @@ function ArrayPage({
                                     onUpdateSchema: canAuthorTableSchema && sourceId
                                       ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex, ...fieldPath], "self", updater)
                                       : undefined,
-                                    discoverOptions: () => [...new Set(value
-                                      .filter((row) => isPlainObject(row))
-                                      .map((row) => getValueAtPath(row, fieldPath))
-                                      .flatMap((cell) => Array.isArray(cell) ? cell : [cell])
-                                      .filter((entry): entry is string | number => typeof entry === "string" || typeof entry === "number"))],
                                     onChange(nextValue) {
                                       onApplyValue(setValueAtPath(value, [sourceIndex, ...fieldPath], nextValue));
                                     },
@@ -2495,8 +2502,6 @@ function ArrayPage({
                                   onUpdateSchema: canAuthorTableSchema && sourceId
                                     ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex], "self", updater)
                                     : undefined,
-                                  discoverOptions: () => [...new Set(value
-                                    .filter((entry): entry is string | number => typeof entry === "string" || typeof entry === "number"))],
                                   onChange(nextValue) {
                                     onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
                                   },
@@ -2528,8 +2533,6 @@ function ArrayPage({
                                 onUpdateSchema: canAuthorTableSchema && sourceId
                                   ? (updater) => onUpdateDocumentSchema?.(sourceId, [...path, sourceIndex], "self", updater)
                                   : undefined,
-                                discoverOptions: () => [...new Set(value
-                                  .filter((entry): entry is string | number => typeof entry === "string" || typeof entry === "number"))],
                                 onChange(nextValue) {
                                   onApplyValue(setValueAtPath(value, [sourceIndex], nextValue));
                                 },
@@ -3157,14 +3160,13 @@ function renderPrimitiveEditor(props: {
   value: unknown;
   ariaLabel: string;
   schema?: EditorSchema;
+  sourceId?: string;
   path: JsonPath;
   host?: EditorHost;
   readOnly?: boolean;
   onOpenReference?: (sourceId: string) => void;
   showOpenReferenceButton?: boolean;
   onUpdateSchema?: (updater: (schema: EditorSchema) => EditorSchema) => void;
-  /** 字段未声明 options/optionsSource/reference 时，从数据行发现候选值供 label 管理。 */
-  discoverOptions?: () => Array<string | number>;
   onChange: (nextValue: unknown) => void;
 }) {
   const effectiveSchema = resolveImplicitAssetPickerSchema(props.value, props.schema, props.path);
@@ -3181,7 +3183,13 @@ function renderPrimitiveEditor(props: {
     ? { options: [], error: null }
     : rawEditorOptionsState;
   const disableImplicitAssetPickerUi = usesImplicitAssetPicker && editorOptionsState.options.length === 0;
-  const selectFieldOptions = resolveSelectFieldOptions(effectiveSchema, props.host, { path: props.path, value: props.value }, props.discoverOptions);
+  const selectFieldOptions = resolveSelectFieldOptions(effectiveSchema, props.host, { path: props.path, value: props.value });
+  const dynamicOptionSource = effectiveSchema?.["x-editor"]?.optionsSource?.kind === "current-array-field"
+    ? effectiveSchema["x-editor"].optionsSource
+    : undefined;
+  const loadDynamicOptions = dynamicOptionSource && props.sourceId
+    ? () => resolveCurrentArrayFieldOptions(props.host, props.sourceId!, props.path, dynamicOptionSource.fieldPath)
+    : undefined;
   // reference 字段开放颜色与排序编辑（物化写回 schema options，合并时覆盖引用选项显示）；
   // 快速创建、重命名、删除仍关闭——选项存在性与名称归属宿主引用。
   const isReferenceField = Boolean(
@@ -3190,9 +3198,10 @@ function renderPrimitiveEditor(props: {
   );
   const canAuthorOptions = Boolean(
     props.onUpdateSchema
-    && (effectiveSchema?.["x-editor"]?.options || props.discoverOptions || isReferenceField),
+    && (effectiveSchema?.["x-editor"]?.options || isReferenceField),
   );
   const canAuthorOptionValue = canAuthorOptions && !isReferenceField;
+  const canCreateMultiSelectValue = !readOnly && !isReferenceField && effectiveSchema?.["x-editor"]?.fieldType === "multi-select";
   const commitOptionSchema = canAuthorOptions
     ? (updater: (schema: EditorSchema) => EditorSchema) => props.onUpdateSchema?.((currentSchema) => {
       // 首次编辑前把当前解析出的选项（静态/引用/发现）物化为 schema options，编辑才有操作对象。
@@ -3236,22 +3245,26 @@ function renderPrimitiveEditor(props: {
   }
 
   if (effectiveSchema?.["x-editor"]?.fieldType === "multi-select" && (props.value == null || Array.isArray(props.value))) {
+    const jsonOptionsSource = effectiveSchema["x-editor"]?.optionsSource?.kind === "json-file"
+      ? effectiveSchema["x-editor"].optionsSource
+      : undefined;
     const supportsOptionsSourceColorEditing = Boolean(
-      effectiveSchema?.["x-editor"]?.optionsSource?.colorField
+      jsonOptionsSource?.colorField
       && props.host?.setOptionsSourceOptionColor,
     );
     return withNullableControls(
       <SchemaOptionFieldEditor
-        allowAuthoring={canAuthorOptions}
+        allowAuthoring={canCreateMultiSelectValue || canAuthorOptions}
         ariaLabel={props.ariaLabel}
         mode="multi"
         options={selectFieldOptions}
+        loadOptions={loadDynamicOptions}
         readOnly={readOnly}
         value={Array.isArray(props.value) ? props.value as Array<string | number> : []}
         onEdit={(nextValue) => props.onChange(nextValue)}
         onCreateOption={canAuthorOptionValue
           ? (nextValue) => commitOptionSchema?.((currentSchema) => appendEditorOption(currentSchema, nextValue))
-          : undefined}
+          : canCreateMultiSelectValue ? () => undefined : undefined}
         onDeleteOption={canAuthorOptionValue
           ? (optionValue) => commitOptionSchema?.((currentSchema) => deleteEditorOption(currentSchema, optionValue))
           : undefined}
@@ -3269,7 +3282,7 @@ function renderPrimitiveEditor(props: {
             ? (optionValue, color) => commitOptionSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
             : supportsOptionsSourceColorEditing
             ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
-              uri: effectiveSchema?.["x-editor"]?.optionsSource?.uri ?? "",
+              uri: jsonOptionsSource?.uri ?? "",
               optionValue,
               color,
             })
@@ -3345,8 +3358,11 @@ function renderPrimitiveEditor(props: {
   }
 
   if (selectFieldOptions.length > 0 && effectiveSchema?.["x-editor"]?.fieldType === "select") {
+    const jsonOptionsSource = effectiveSchema["x-editor"]?.optionsSource?.kind === "json-file"
+      ? effectiveSchema["x-editor"].optionsSource
+      : undefined;
     const supportsOptionsSourceColorEditing = Boolean(
-      effectiveSchema?.["x-editor"]?.optionsSource?.colorField
+      jsonOptionsSource?.colorField
       && props.host?.setOptionsSourceOptionColor,
     );
     return withNullableControls(
@@ -3378,7 +3394,7 @@ function renderPrimitiveEditor(props: {
             ? (optionValue, color) => commitOptionSchema?.((currentSchema) => recolorEditorOption(currentSchema, optionValue, color))
             : supportsOptionsSourceColorEditing
             ? (optionValue, color) => props.host?.setOptionsSourceOptionColor?.({
-              uri: effectiveSchema?.["x-editor"]?.optionsSource?.uri ?? "",
+              uri: jsonOptionsSource?.uri ?? "",
               optionValue,
               color,
             })
@@ -4793,10 +4809,11 @@ function resolveEditorOptions(schema: EditorSchema | undefined, host?: EditorHos
   if (!editor.optionsSource) {
     return { options: [], error: null };
   }
-  if (editor.optionsSource.kind !== "json-file") {
-    return { options: [], error: `Unsupported options source kind: ${editor.optionsSource.kind}` };
+  const optionsSource = editor.optionsSource;
+  if (optionsSource.kind === "current-array-field") {
+    return { options: [], error: null };
   }
-  const resolved = resolveReferenceDocument(editor.optionsSource.uri, host);
+  const resolved = resolveReferenceDocument(optionsSource.uri, host);
   if (!resolved.ok) {
     return { options: [], error: resolved.error.message };
   }
@@ -4805,7 +4822,7 @@ function resolveEditorOptions(schema: EditorSchema | undefined, host?: EditorHos
   }
   return {
     options: resolved.value
-      .map((entry) => mapEditorOptionRecord(entry, editor.optionsSource!))
+      .map((entry) => mapEditorOptionRecord(entry, optionsSource))
       .filter((entry): entry is ResolvedEditorOption => entry != null),
     error: null,
   };
@@ -4820,7 +4837,6 @@ function resolveSelectFieldOptions(
   schema: EditorSchema | undefined,
   host: EditorHost | undefined,
   context: { path: JsonPath; value: unknown },
-  discoverOptions?: () => Array<string | number>,
 ): ResolvedEditorOption[] {
   const staticOptions = resolveEditorOptions(schema, host);
   if (staticOptions.error) return [];
@@ -4834,13 +4850,19 @@ function resolveSelectFieldOptions(
     ? host.getReferenceOptions({ path: context.path, value: context.value, schema: referenceOptionSchema, reference })
       .map((option) => ({ value: option.value, label: option.label, color: null, description: option.description }))
     : [];
-  // 发现模式：字段未声明 options/optionsSource 且未声明 reference 时，从数据行收集现有值。
-  const discovered = !reference && discoverOptions
-    ? discoverOptions().map((entry) => ({ value: entry, label: String(entry), color: null }))
-    : [];
-  // 合并语义（对齐 data-editor）：静态 options 的顺序与 label/颜色优先，reference/发现补充新值。
+  // 静态 options 的顺序与 label/颜色优先，reference 仅补充新值。未声明来源时不隐式扫描数据。
   const staticKeys = new Set(staticOptions.options.map((option) => String(option.value)));
-  return [...staticOptions.options, ...[...referenceOptions, ...discovered].filter((option) => !staticKeys.has(String(option.value)))];
+  return [...staticOptions.options, ...referenceOptions.filter((option) => !staticKeys.has(String(option.value)))];
+}
+
+function resolveCurrentArrayFieldOptions(
+  host: EditorHost | undefined,
+  sourceId: string,
+  path: JsonPath,
+  fieldPath: JsonPath,
+): ResolvedEditorOption[] {
+  return (host?.getCurrentArrayFieldOptions?.({ sourceId, path, fieldPath }) ?? [])
+    .map((value) => ({ value, label: String(value), color: null }));
 }
 
 function normalizeEditorOption(option: EditorViewOption): ResolvedEditorOption {
@@ -4853,7 +4875,7 @@ function normalizeEditorOption(option: EditorViewOption): ResolvedEditorOption {
 
 function mapEditorOptionRecord(
   entry: unknown,
-  source: Exclude<NonNullable<EditorSchema["x-editor"]>["optionsSource"], undefined>,
+  source: Extract<NonNullable<EditorSchema["x-editor"]>["optionsSource"], { kind: "json-file" }>,
 ): ResolvedEditorOption | null {
   if (!isPlainObject(entry)) return null;
   const rawValue = entry[source.valueField];

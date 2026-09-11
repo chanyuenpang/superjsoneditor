@@ -27,6 +27,7 @@ export type EditorDocuments = Record<string, unknown>;
 
 export type EditorSaveHandler = (documents: EditorDocuments) => void | EditorDocuments | Promise<void | EditorDocuments>;
 export type EditorReloadHandler = () => EditorDocuments | Promise<EditorDocuments>;
+export type EditorReloadBehavior = "reset-navigation" | "preserve-current-source";
 export type EditorChangeHandler = (documents: EditorDocuments) => void;
 
 export function resolveCompactStack(
@@ -43,6 +44,23 @@ function getSchemaOverrideKey(sourceId: string, target: EditorSchemaLayerTarget)
   return target.mode === "view"
     ? `${sourceId}:view:${target.path}`
     : `${sourceId}:default`;
+}
+
+function collectCurrentArrayFieldOptions(document: unknown, path: JsonPath, fieldPath: JsonPath): Array<string | number> {
+  for (let prefixLength = path.length - 1; prefixLength >= 0; prefixLength -= 1) {
+    const candidate = getValueAtPath(document, path.slice(0, prefixLength));
+    if (!Array.isArray(candidate)) continue;
+    const entries = new Set<string | number>();
+    for (const row of candidate) {
+      if (row == null || typeof row !== "object" || Array.isArray(row)) continue;
+      const value = getValueAtPath(row, fieldPath);
+      for (const entry of Array.isArray(value) ? value : [value]) {
+        if (typeof entry === "string" || typeof entry === "number") entries.add(entry);
+      }
+    }
+    return [...entries];
+  }
+  return [];
 }
 
 type StackFlowRenderPage = {
@@ -150,6 +168,7 @@ export type EditorShellProps = {
   onSave?: EditorSaveHandler;
   onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
+  reloadBehavior?: EditorReloadBehavior;
   onChange?: EditorChangeHandler;
   readOnly?: boolean;
   enableRawEditor?: boolean;
@@ -172,12 +191,13 @@ export function EditorShell({
   leftPageFullscreen = false,
   compactBreakpoint = 768,
   value,
-  host,
+  host: suppliedHost,
   schemaHost,
   activeSchemaLayer = { mode: "default" },
   onSave,
   onUnavailableSaveAttempt,
   onReload,
+  reloadBehavior = "reset-navigation",
   onChange,
   readOnly = false,
   enableRawEditor = true,
@@ -188,6 +208,12 @@ export function EditorShell({
   const initialDocumentsSnapshot = useMemo(() => JSON.stringify(initialDocuments), [initialDocuments]);
   const [documentsBySourceId, setDocumentsBySourceId] = useState(initialDocuments);
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
+  const host = useMemo<EditorHost>(() => ({
+    ...(suppliedHost ?? {}),
+    getCurrentArrayFieldOptions({ sourceId, path, fieldPath }) {
+      return collectCurrentArrayFieldOptions(documentsBySourceId[sourceId], path, fieldPath);
+    },
+  }), [documentsBySourceId, suppliedHost]);
   const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
   const [pinnedAnchor, setPinnedAnchor] = useState<NavigationPage | null>(null);
   const [rememberedPinnedLeftSlotWidth, setRememberedPinnedLeftSlotWidth] = useState<number | null>(readPersistedPinnedLeftSlotWidth);
@@ -358,7 +384,7 @@ export function EditorShell({
     }
   }
 
-  async function handleReload() {
+  async function handleReload(sourceId: string) {
     try {
       setReloadError(null);
       if (!onReload) {
@@ -369,13 +395,21 @@ export function EditorShell({
         throw new Error("宿主未返回刷新后的 JSON 数据");
       }
       const resolvedDocuments = nextDocuments;
-      setDocumentsBySourceId(resolvedDocuments);
-      setSavedDocumentsBySourceId(resolvedDocuments);
-      setPages(createNavigationState(rootSourceId, resolvedDocuments).pages);
-      setPinnedAnchor(null);
-      setStackAnimation(null);
-      setStackAnimationSourcePages(null);
-      setClosedStackFlowPage(null);
+      if (reloadBehavior === "preserve-current-source") {
+        if (!(sourceId in resolvedDocuments)) {
+          throw new Error("宿主未返回当前 JSON 数据");
+        }
+        setDocumentsBySourceId((current) => ({ ...current, [sourceId]: resolvedDocuments[sourceId] }));
+        setSavedDocumentsBySourceId((current) => ({ ...current, [sourceId]: resolvedDocuments[sourceId] }));
+      } else {
+        setDocumentsBySourceId(resolvedDocuments);
+        setSavedDocumentsBySourceId(resolvedDocuments);
+        setPages(createNavigationState(rootSourceId, resolvedDocuments).pages);
+        setPinnedAnchor(null);
+        setStackAnimation(null);
+        setStackAnimationSourcePages(null);
+        setClosedStackFlowPage(null);
+      }
       setSaveState("idle");
       setReloadError(null);
       setValidationResult(null);
@@ -665,7 +699,7 @@ export function EditorShell({
           className="ghost-button compact-button"
           disabled={Boolean(stackAnimation)}
           type="button"
-          onClick={() => void handleReload()}
+          onClick={() => void handleReload(page.sourceId ?? rootSourceId)}
         >
           <icons.refresh size={16} />
         </button>

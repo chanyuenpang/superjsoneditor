@@ -5,6 +5,7 @@ export { AssetEditorShell } from "./editor/AssetEditorShell";
 export type {
   EditorChangeHandler,
   EditorDocuments,
+  EditorReloadBehavior,
   EditorReloadHandler,
   EditorSaveHandler,
   EditorShellProps,

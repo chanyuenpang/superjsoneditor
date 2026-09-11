@@ -19,6 +19,7 @@ type SchemaOptionFieldEditorProps = {
   mode: "single" | "multi";
   value: SchemaOptionValue[];
   options: SchemaOptionItem[];
+  loadOptions?: () => SchemaOptionItem[];
   readOnly: boolean;
   placeholder?: string;
   allowAuthoring: boolean;
@@ -43,6 +44,7 @@ export function SchemaOptionFieldEditor({
   mode,
   value,
   options,
+  loadOptions,
   readOnly,
   allowAuthoring,
   onEdit,
@@ -54,6 +56,7 @@ export function SchemaOptionFieldEditor({
   onSetOptionColor,
 }: SchemaOptionFieldEditorProps) {
   const [open, setOpen] = useState(false);
+  const [loadedOptions, setLoadedOptions] = useState<SchemaOptionItem[] | null>(null);
   const [draft, setDraft] = useState("");
   const [editing, setEditing] = useState<EditingState | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -69,9 +72,10 @@ export function SchemaOptionFieldEditor({
     if (editing) renameInputRef.current?.focus();
   }, [editing]);
 
+  const activeOptions = loadedOptions ?? options;
   const optionMap = useMemo(() => {
     const map = new Map<string, SchemaOptionItem>();
-    for (const option of options) {
+    for (const option of activeOptions) {
       map.set(String(option.value), option);
     }
     for (const selected of value) {
@@ -81,7 +85,7 @@ export function SchemaOptionFieldEditor({
       }
     }
     return map;
-  }, [options, value]);
+  }, [activeOptions, value]);
 
   const normalizedOptions = useMemo(() => [...optionMap.values()], [optionMap]);
   const selectedValues = useMemo(() => new Set(value.map((item) => String(item))), [value]);
@@ -154,8 +158,12 @@ export function SchemaOptionFieldEditor({
   return (
     <Popover.Root
       onOpenChange={(nextOpen) => {
+        if (nextOpen && loadOptions) setLoadedOptions(loadOptions());
         setOpen(nextOpen);
-        if (!nextOpen) setEditing(null);
+        if (!nextOpen) {
+          setEditing(null);
+          setLoadedOptions(null);
+        }
       }}
       open={open}
     >
@@ -186,6 +194,7 @@ export function SchemaOptionFieldEditor({
           </div>
         </button>
       </Popover.Trigger>
+      {open ? (
       <Popover.Portal>
         <Popover.Content className="multi-select-popover" align="start" collisionPadding={12} onClickCapture={handleSuppressedClickCapture} onOpenAutoFocus={(event) => event.preventDefault()} ref={popoverContentRef}>
           <div className="multi-select-selected">
@@ -416,6 +425,7 @@ export function SchemaOptionFieldEditor({
           })() : null}
         </Popover.Content>
       </Popover.Portal>
+      ) : null}
     </Popover.Root>
   );
 }
