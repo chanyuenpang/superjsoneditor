@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { getValueAtPath, setValueAtPath } from "../core/document";
+import { getValueAtPath } from "../core/document";
 import { createNavigationState, goBack, jumpToPage, jumpToPath, openPath, openReferenceSource, type NavigationPage } from "../core/navigation";
 import type { JsonPath } from "../core/path";
 import { formatPath } from "../core/path";
@@ -22,6 +22,10 @@ import {
 import { usePressSlopGuard } from "./usePressSlopGuard";
 import { ValueInspector } from "./ValueInspector";
 import { icons } from "./icons";
+import { readNavigation, writeNavigation } from "./navigation-storage";
+import { prepareEdit, firstEditError, validationMessages, type EditOptions, type EditOutcome, type RawEditDraft } from "./edit-transaction";
+
+type DocumentDraft = { candidate: unknown; baseSnapshot: string; schemaSnapshot: string; error: string };
 
 export type EditorDocuments = Record<string, unknown>;
 
@@ -169,6 +173,8 @@ export type EditorShellProps = {
   onUnavailableSaveAttempt?: () => void;
   onReload?: EditorReloadHandler;
   reloadBehavior?: EditorReloadBehavior;
+  /** 宿主按工作区及根文档隔离的视图存储键；变更键时应重新挂载。 */
+  navigationStorageKey?: string;
   onChange?: EditorChangeHandler;
   readOnly?: boolean;
   enableRawEditor?: boolean;
@@ -198,6 +204,7 @@ export function EditorShell({
   onUnavailableSaveAttempt,
   onReload,
   reloadBehavior = "reset-navigation",
+  navigationStorageKey,
   onChange,
   readOnly = false,
   enableRawEditor = true,
@@ -207,19 +214,32 @@ export function EditorShell({
   const initialDocuments = useMemo(() => normalizeDocuments(documents, rootSourceId, value), [documents, rootSourceId, value]);
   const initialDocumentsSnapshot = useMemo(() => JSON.stringify(initialDocuments), [initialDocuments]);
   const [documentsBySourceId, setDocumentsBySourceId] = useState(initialDocuments);
+  const acceptedDocumentsRef = useRef(documentsBySourceId);
+  acceptedDocumentsRef.current = documentsBySourceId;
   const [savedDocumentsBySourceId, setSavedDocumentsBySourceId] = useState(initialDocuments);
+  const [drafts, setDrafts] = useState<Record<string, DocumentDraft>>({});
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const rawDraftStore = useRef(new Map<string, RawEditDraft>()).current;
+  const [pendingInputs, setPendingInputs] = useState<Record<string, boolean>>({});
+  const pendingInputsRef = useRef(pendingInputs);
+  pendingInputsRef.current = pendingInputs;
+  const visibleDocuments = { ...documentsBySourceId, ...Object.fromEntries(Object.entries(drafts).map(([id, draft]) => [id, draft.candidate])) };
   const host = useMemo<EditorHost>(() => ({
     ...(suppliedHost ?? {}),
     getCurrentArrayFieldOptions({ sourceId, path, fieldPath }) {
       return collectCurrentArrayFieldOptions(documentsBySourceId[sourceId], path, fieldPath);
     },
   }), [documentsBySourceId, suppliedHost]);
-  const [pages, setPages] = useState(createNavigationState(rootSourceId, initialDocuments).pages);
-  const [pinnedAnchor, setPinnedAnchor] = useState<NavigationPage | null>(null);
+  const [restoredView] = useState(() => readNavigation(navigationStorageKey, rootSourceId, initialDocuments));
+  const [navigationStorageError, setNavigationStorageError] = useState<string | null>(restoredView.error ?? null);
+  const [pages, setPages] = useState(restoredView.navigation?.pages ?? createNavigationState(rootSourceId, initialDocuments).pages);
+  const [pinnedAnchor, setPinnedAnchor] = useState<NavigationPage | null>(restoredView.navigation?.pinnedAnchor ?? null);
   const [rememberedPinnedLeftSlotWidth, setRememberedPinnedLeftSlotWidth] = useState<number | null>(readPersistedPinnedLeftSlotWidth);
   const [stackAnimation, setStackAnimation] = useState<StackAnimation | null>(null);
   const [stackAnimationSourcePages, setStackAnimationSourcePages] = useState<NavigationPage[] | null>(null);
-  const [closedStackFlowPage, setClosedStackFlowPage] = useState<Pick<NavigationPage, "sourceId" | "path"> | null>(null);
+  const [closedStackFlowPage, setClosedStackFlowPage] = useState<Pick<NavigationPage, "sourceId" | "path"> | null>(restoredView.navigation?.closedStackFlowPage ?? null);
+  const initialViewRef = useRef({ pages, pinnedAnchor, closedStackFlowPage });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [reloadError, setReloadError] = useState<string | null>(null);
   const [validationResult, setValidationResult] = useState<EditorValidationResult | null>(null);
@@ -233,7 +253,7 @@ export function EditorShell({
   const pageStackViewportRef = useRef<HTMLElement | null>(null);
   const pageStackRef = useRef<HTMLDivElement | null>(null);
   const lastExternalDocumentsSnapshotRef = useRef(initialDocumentsSnapshot);
-  const hasReportedChangeRef = useRef(false);
+  const pendingSaveConfirmationRef = useRef<{ externalSnapshot: string | null } | null>(null);
   const schemaOverridesRef = useRef<Record<string, EditorSchema>>({});
   const schemaPersistenceNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [stackViewportWidth, setStackViewportWidth] = useState(0);
@@ -334,6 +354,20 @@ export function EditorShell({
   usePressSlopGuard(shellRef);
 
   useEffect(() => {
+    if (!navigationStorageKey) return;
+    // 恢复失败时保留原记录，等待用户实际导航后再写入。
+    if (restoredView.error && pages === initialViewRef.current.pages
+      && pinnedAnchor === initialViewRef.current.pinnedAnchor
+      && closedStackFlowPage === initialViewRef.current.closedStackFlowPage) return;
+    try {
+      writeNavigation(navigationStorageKey, { version: 1, rootSourceId, pages, pinnedAnchor, closedStackFlowPage });
+      setNavigationStorageError(null);
+    } catch (error) {
+      setNavigationStorageError("页面位置保存失败：" + (error instanceof Error ? error.message : String(error)));
+    }
+  }, [navigationStorageKey, rootSourceId, pages, pinnedAnchor, closedStackFlowPage, restoredView]);
+
+  useEffect(() => {
     if (rememberedPinnedLeftSlotWidth != null) {
       persistPinnedLeftSlotWidth(rememberedPinnedLeftSlotWidth);
     }
@@ -344,48 +378,78 @@ export function EditorShell({
       return;
     }
 
+    // 保存尚未结束时，宿主回灌的 props 只能作为待确认快照；不能抢先重置会话视图。
+    const pendingSaveConfirmation = pendingSaveConfirmationRef.current;
+    if (pendingSaveConfirmation) {
+      pendingSaveConfirmation.externalSnapshot = initialDocumentsSnapshot;
+      return;
+    }
+
     lastExternalDocumentsSnapshotRef.current = initialDocumentsSnapshot;
     setDocumentsBySourceId(initialDocuments);
     setSavedDocumentsBySourceId(initialDocuments);
-    setPinnedAnchor(null);
+    if (Object.keys(draftsRef.current).length || Object.values(pendingInputsRef.current).some(Boolean)) {
+      setReloadError("宿主数据已变化，未完成草稿已保留；请核对新数据后重新应用，或明确放弃草稿。");
+      return;
+    }
+    if (reloadBehavior !== "preserve-current-source") setPinnedAnchor(null);
+    else setPinnedAnchor((page) => page ? { ...page, value: undefined } : null);
     setPages((currentPages) => currentPages.map((page) => ({ ...page, value: undefined })));
     setStackAnimation(null);
     setStackAnimationSourcePages(null);
-    setClosedStackFlowPage(null);
+    if (reloadBehavior !== "preserve-current-source") setClosedStackFlowPage(null);
     setSaveState("idle");
     setReloadError(null);
     setValidationResult(null);
     setIsEditingCurrentPage(false);
-  }, [initialDocuments, initialDocumentsSnapshot]);
-
-  useEffect(() => {
-    if (!onChange) return;
-    if (!hasReportedChangeRef.current) {
-      hasReportedChangeRef.current = true;
-      return;
-    }
-    onChange(documentsBySourceId);
-  }, [documentsBySourceId, onChange]);
+  }, [initialDocuments, initialDocumentsSnapshot, reloadBehavior]);
 
   async function handleSave() {
     if (readOnly || !onSave) return;
+    if (Object.keys(drafts).length || rawDraftStore.size > 0 || Object.values(pendingInputs).some(Boolean)) {
+      setReloadError("存在未应用或未通过校验的编辑草稿，请先完成或明确放弃草稿。");
+      return;
+    }
+    // 只检查本次有变更的文档；预加载但未修改的资产不属于本次保存校验范围。
+    for (const [sourceId, document] of Object.entries(documentsBySourceId)) {
+      if (JSON.stringify(document) === JSON.stringify(savedDocumentsBySourceId[sourceId])) continue;
+      const result = prepareEdit({ sourceId, rootSchema: resolveDeclaredRootSchema(sourceId, document) }, document, document, [], document);
+      if (!result.accepted) { setValidationResult(result.validation); setReloadError(null); return; }
+    }
     setSaveState("saving");
+    const pendingSaveConfirmation = { externalSnapshot: null as string | null };
+    pendingSaveConfirmationRef.current = pendingSaveConfirmation;
     try {
       // 保存不做校验：只负责提交，数据问题由编辑器端承担。
-      const maybeNextDocuments = await onSave(documentsBySourceId);
-      const nextDocuments = maybeNextDocuments ? maybeNextDocuments : documentsBySourceId;
-      setDocumentsBySourceId(nextDocuments);
+      const submittedDocuments = documentsBySourceId;
+      const maybeNextDocuments = await onSave(submittedDocuments);
+      const nextDocuments = maybeNextDocuments ? maybeNextDocuments : submittedDocuments;
+      const nextDocumentsSnapshot = JSON.stringify(nextDocuments);
+      if (
+        pendingSaveConfirmation.externalSnapshot !== null
+        && pendingSaveConfirmation.externalSnapshot !== nextDocumentsSnapshot
+      ) {
+        throw new Error("宿主回灌的保存确认与返回的 JSON 文档不一致");
+      }
+      pendingSaveConfirmationRef.current = null;
+      lastExternalDocumentsSnapshotRef.current = nextDocumentsSnapshot;
+      const unchangedSinceSubmit = JSON.stringify(acceptedDocumentsRef.current) === JSON.stringify(submittedDocuments);
+      if (unchangedSinceSubmit) setDocumentsBySourceId(nextDocuments);
       setSavedDocumentsBySourceId(nextDocuments);
-      setValidationResult(null);
-      setSaveState("saved");
+      if (!Object.keys(draftsRef.current).length) setValidationResult(null);
+      setSaveState(unchangedSinceSubmit ? "saved" : "idle");
       window.setTimeout(() => setSaveState("idle"), 2000);
     } catch {
+      if (pendingSaveConfirmationRef.current === pendingSaveConfirmation) {
+        pendingSaveConfirmationRef.current = null;
+      }
       setSaveState("error");
     }
   }
 
   async function handleReload(sourceId: string) {
     try {
+      if (Object.keys(drafts).length || rawDraftStore.size > 0 || Object.values(pendingInputs).some(Boolean)) throw new Error("刷新前请先完成或放弃编辑草稿，当前草稿已保留。");
       setReloadError(null);
       if (!onReload) {
         throw new Error("当前宿主未提供 JSON 刷新入口");
@@ -455,9 +519,42 @@ export function EditorShell({
     return () => window.clearTimeout(timeoutId);
   }, [stackAnimation]);
 
+  function applyPageEdit(sourceId: string, path: JsonPath, nextValue: unknown, options?: EditOptions): EditOutcome {
+    const previous = documentsBySourceId[sourceId];
+    const rootSchema = resolveDeclaredRootSchema(sourceId, previous);
+    const draft = drafts[sourceId];
+    if (draft && (draft.baseSnapshot !== JSON.stringify(previous) || draft.schemaSnapshot !== JSON.stringify(rootSchema ?? null))) {
+      const validation = { valid: false, documentErrors: ["草稿基准已变化；请复制需要保留的内容，放弃旧草稿后基于最新数据重新应用。"], fieldErrors: [] };
+      setReloadError(validation.documentErrors[0]);
+      return { accepted: false, validation };
+    }
+    const result = prepareEdit({ sourceId, rootSchema, readOnly }, previous, draft?.candidate ?? previous, path, nextValue, options);
+    if (!result.accepted) {
+      // Raw 文本自持草稿；其它入口的候选由会话保留，允许逐字段继续修正。
+      if (!options?.normalizeScope) setDrafts((current) => ({ ...current, [sourceId]: {
+        candidate: result.candidate, baseSnapshot: JSON.stringify(previous), schemaSnapshot: JSON.stringify(rootSchema ?? null), error: firstEditError(result),
+      } }));
+      setValidationResult(options?.normalizeScope ? null : result.validation);
+      return { ...result, staged: !options?.normalizeScope };
+    }
+    setDrafts((current) => { const next = { ...current }; delete next[sourceId]; return next; });
+    const acceptedDocuments = { ...acceptedDocumentsRef.current, [sourceId]: result.candidate };
+    acceptedDocumentsRef.current = acceptedDocuments;
+    setDocumentsBySourceId(acceptedDocuments);
+    onChange?.(acceptedDocuments);
+    setValidationResult(null);
+    setReloadError(null);
+    return result;
+  }
+
+  function reportPendingInput(sourceId: string, path: JsonPath, pending: boolean) {
+    const key = JSON.stringify([sourceId, path]);
+    setPendingInputs((current) => current[key] === pending ? current : { ...current, [key]: pending });
+  }
+
   function resolvePageValue(page: NavigationPage) {
     const sourceId = page.sourceId ?? rootSourceId;
-    const sourceDocument = documentsBySourceId[sourceId];
+    const sourceDocument = visibleDocuments[sourceId];
     if (sourceDocument !== undefined) {
       return getValueAtPath(sourceDocument, page.path);
     }
@@ -475,7 +572,7 @@ export function EditorShell({
       return rootSchema;
     }
 
-    const nestedSchema = resolveSchemaAtPath(rootSchema, page.path);
+    const nestedSchema = resolveSchemaAtPath(rootSchema, page.path, visibleDocuments[sourceId]);
     if (nestedSchema) {
       return nestedSchema;
     }
@@ -490,6 +587,10 @@ export function EditorShell({
   }
 
   function resolveRootSchema(sourceId: string, value: unknown): EditorSchema {
+    return resolveDeclaredRootSchema(sourceId, value) ?? inferSchemaFromValue(value);
+  }
+
+  function resolveDeclaredRootSchema(sourceId: string, value: unknown): EditorSchema | undefined {
     const override = schemaOverridesRef.current[getSchemaOverrideKey(sourceId, activeSchemaLayer)];
     if (override) return override;
     const hostSchema = schemaHost?.getSchema({
@@ -499,9 +600,7 @@ export function EditorShell({
       documents: documentsBySourceId,
       activeViewPath: activeSchemaLayer.mode === "view" ? activeSchemaLayer.path : null,
     });
-    return hostSchema && schemaAllowsValueType(hostSchema, value)
-      ? hostSchema
-      : inferSchemaFromValue(value);
+    return hostSchema;
   }
 
   function resolveNamedSchema(name: string): EditorSchema | undefined {
@@ -1005,13 +1104,21 @@ export function EditorShell({
                 {saveState === "saving" ? "Saving..." : saveState === "saved" ? "Saved" : "Save failed"}
               </div>
             ) : null}
-            {reloadError ? <div className="toolbar-meta status-text" role="alert">Reload failed: {reloadError}</div> : null}
-            {validationResult?.documentErrors?.length ? (
-              <div className="toolbar-meta status-text">
-                {validationResult.documentErrors.join(" ")}
+            {navigationStorageError ? <div className="toolbar-meta status-text" role="alert">{navigationStorageError}</div> : null}
+            {reloadError ? <div className="toolbar-meta status-text" role="alert">{reloadError}</div> : null}
+            {validationResult && !validationResult.valid && Object.keys(drafts).length === 0 ? (
+              <div className="toolbar-meta status-text" role="alert">
+                {validationMessages(validationResult).map((message) => <div key={message}>{message}</div>)}
               </div>
             ) : null}
-            {isDirty && !isEditingCurrentPage && !readOnly ? (
+            {Object.entries(drafts).map(([sourceId, draft]) => <div key={sourceId} role="alert" className="toolbar-meta status-text">
+              草稿未提交：{draft.error}
+              <button type="button" onClick={() => {
+                setDrafts((current) => { const next = { ...current }; delete next[sourceId]; return next; });
+                setValidationResult(null); setReloadError(null);
+              }}>放弃 {sourceId} 编辑草稿</button>
+            </div>)}
+            {(isDirty || Object.keys(drafts).length > 0 || Object.values(pendingInputs).some(Boolean)) && !isEditingCurrentPage && !readOnly ? (
               <>
                 {onSave || onUnavailableSaveAttempt ? (
                   <button className="primary-button" type="button" onClick={onSave ? handleSave : onUnavailableSaveAttempt}>
@@ -1076,6 +1183,7 @@ export function EditorShell({
                 style={{ left: 0, right: 0 }}
               >
                   <ValueInspector
+                    rawDraftStore={rawDraftStore}
                     value={resolvePageValue(compactPage)}
                     savedValue={getValueAtPath(savedDocumentsBySourceId[compactSourceId], currentPage.path)}
                     sourceId={compactSourceId}
@@ -1101,14 +1209,8 @@ export function EditorShell({
                     onJumpToSource={(sourceId) => handleJumpToSource(sourceId, 0)}
                     readOnly={readOnly}
                     onEditModeChange={setIsEditingCurrentPage}
-                    onApplyValue={(nextValue) => {
-                      if (readOnly) return;
-                      setValidationResult(null);
-                      setDocumentsBySourceId((current) => ({
-                        ...current,
-                        [compactSourceId]: setValueAtPath(current[compactSourceId], currentPage.path, nextValue),
-                      }));
-                    }}
+                    onPendingInputChange={(pending) => reportPendingInput(compactSourceId, currentPage.path, pending)}
+                    onApplyValue={(nextValue, options) => applyPageEdit(compactSourceId, currentPage.path, nextValue, options)}
                   />
               </section>
                 );
@@ -1140,6 +1242,7 @@ export function EditorShell({
                   style={getStackPageStyle(depthClass)}
                 >
                   <ValueInspector
+                    rawDraftStore={rawDraftStore}
                     value={pageValue}
                     savedValue={getValueAtPath(savedDocumentsBySourceId[pageSourceId], page.path)}
                     sourceId={pageSourceId}
@@ -1181,14 +1284,8 @@ export function EditorShell({
                         ? setIsEditingCurrentPage
                         : (renderedStackFlowPages.length === 2 ? (() => undefined) : undefined)
                     }
-                    onApplyValue={(nextValue) => {
-                      if (readOnly) return;
-                      setValidationResult(null);
-                      setDocumentsBySourceId((current) => ({
-                        ...current,
-                        [pageSourceId]: setValueAtPath(current[pageSourceId], page.path, nextValue),
-                      }));
-                    }}
+                    onPendingInputChange={(pending) => reportPendingInput(pageSourceId, page.path, pending)}
+                    onApplyValue={(nextValue, options) => applyPageEdit(pageSourceId, page.path, nextValue, options)}
                   />
                 </section>
               );
@@ -1208,6 +1305,7 @@ export function EditorShell({
               >
                 <div className="stack-page--push-promote-mask">
                   <ValueInspector
+                    rawDraftStore={rawDraftStore}
                     value={resolvePageValue(visiblePages[0])}
                     savedValue={getValueAtPath(
                       savedDocumentsBySourceId[visiblePages[0]?.sourceId ?? rootSourceId],
@@ -1273,6 +1371,7 @@ export function EditorShell({
                   style={getStackPageStyle("stack-page--foreground")}
                 >
                   <ValueInspector
+                    rawDraftStore={rawDraftStore}
                     value={rightVisibleValue}
                     savedValue={getValueAtPath(savedDocumentsBySourceId[rightVisibleSourceId], rightVisiblePage.path)}
                     sourceId={rightVisibleSourceId}
@@ -1318,6 +1417,7 @@ export function EditorShell({
                 style={usesSplitLayout ? { left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` } : { left: 0, right: 0 }}
               >
                 <ValueInspector
+                    rawDraftStore={rawDraftStore}
                   value={resolvePageValue(stackAnimation.exitingPage)}
                   sourceId={stackAnimation.exitingPage.sourceId ?? rootSourceId}
                   path={stackAnimation.exitingPage.path}
@@ -1363,6 +1463,7 @@ export function EditorShell({
                 style={{ left: 0, width: `${rightSlotWidth}px` }}
               >
                 <ValueInspector
+                    rawDraftStore={rawDraftStore}
                   value={resolvePageValue(stackAnimation.promotingPage)}
                   savedValue={getValueAtPath(
                     savedDocumentsBySourceId[stackAnimation.promotingPage.sourceId ?? rootSourceId],
@@ -1434,6 +1535,7 @@ export function EditorShell({
                       style={getStackPageStyle(useFullscreenLeftPage ? "stack-page--fullscreen-left" : "stack-page--background")}
                     >
                       <ValueInspector
+                    rawDraftStore={rawDraftStore}
                         value={pinnedRootValue}
                         savedValue={getValueAtPath(savedDocumentsBySourceId[pinnedRootSourceId], pinnedLeftPage.path)}
                         sourceId={pinnedRootSourceId}
@@ -1461,14 +1563,8 @@ export function EditorShell({
                         onJumpToSource={(sourceId) => handleJumpToSource(sourceId, 0)}
                         readOnly={readOnly}
                         onEditModeChange={setIsEditingCurrentPage}
-                        onApplyValue={(nextValue) => {
-                          if (readOnly) return;
-                          setValidationResult(null);
-                          setDocumentsBySourceId((current) => ({
-                            ...current,
-                            [pinnedRootSourceId]: setValueAtPath(current[pinnedRootSourceId], pinnedLeftPage.path, nextValue),
-                          }));
-                        }}
+                        onPendingInputChange={(pending) => reportPendingInput(pinnedRootSourceId, pinnedLeftPage.path, pending)}
+                        onApplyValue={(nextValue, options) => applyPageEdit(pinnedRootSourceId, pinnedLeftPage.path, nextValue, options)}
                       />
                     </section>
                   );
@@ -1511,6 +1607,7 @@ export function EditorShell({
                       style={getStackPageStyle("stack-page--foreground")}
                     >
                       <ValueInspector
+                    rawDraftStore={rawDraftStore}
                         value={pinnedRightValue}
                         savedValue={getValueAtPath(savedDocumentsBySourceId[pinnedRightSourceId], pinnedRightPage.path)}
                         sourceId={pinnedRightSourceId}
@@ -1537,14 +1634,8 @@ export function EditorShell({
                         onJumpToSource={(sourceId) => handleJumpToSource(sourceId, 1)}
                         readOnly={readOnly}
                         onEditModeChange={setIsEditingCurrentPage}
-                        onApplyValue={(nextValue) => {
-                          if (readOnly) return;
-                          setValidationResult(null);
-                          setDocumentsBySourceId((current) => ({
-                            ...current,
-                            [pinnedRightSourceId]: setValueAtPath(current[pinnedRightSourceId], pinnedRightPage.path, nextValue),
-                          }));
-                        }}
+                        onPendingInputChange={(pending) => reportPendingInput(pinnedRightSourceId, pinnedRightPage.path, pending)}
+                        onApplyValue={(nextValue, options) => applyPageEdit(pinnedRightSourceId, pinnedRightPage.path, nextValue, options)}
                       />
                     </section>
                   );
@@ -1561,6 +1652,7 @@ export function EditorShell({
                     style={{ left: `${leftSlotWidth}px`, width: `${rightSlotWidth}px` }}
                   >
                     <ValueInspector
+                    rawDraftStore={rawDraftStore}
                       value={resolvePageValue(stackAnimation.exitingPage)}
                       sourceId={stackAnimation.exitingPage.sourceId ?? rootSourceId}
                       path={stackAnimation.exitingPage.path}
@@ -1624,20 +1716,6 @@ function persistPinnedLeftSlotWidth(width: number) {
   } catch {
     // UI 偏好写入失败不影响编辑器交互。
   }
-}
-
-function schemaAllowsValueType(schema: EditorSchema, value: unknown) {
-  const declaredTypes = schema.type
-    ? (Array.isArray(schema.type) ? schema.type : [schema.type])
-    : [];
-  if (declaredTypes.length === 0 || value === undefined) return true;
-  if (Array.isArray(value)) return declaredTypes.includes("array");
-  if (value === null) return declaredTypes.includes("null");
-  if (typeof value === "object") return declaredTypes.includes("object");
-  if (typeof value === "number") {
-    return declaredTypes.includes("number") || (Number.isInteger(value) && declaredTypes.includes("integer"));
-  }
-  return declaredTypes.includes(typeof value as "string" | "boolean");
 }
 
 function buildCompactPathOptions(

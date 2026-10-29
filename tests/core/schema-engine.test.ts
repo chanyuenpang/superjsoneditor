@@ -40,7 +40,7 @@ test("createDefaultValue supports nullable and oneOf defaults", () => {
       { type: "string", default: "text" },
       { type: "integer", default: 3 },
     ],
-  })).toBe("text");
+  })).toBeUndefined();
 });
 
 test("resolveNode reports object capabilities and union state", () => {

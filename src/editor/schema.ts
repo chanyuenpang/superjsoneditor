@@ -535,12 +535,15 @@ export function resolveNode(context: {
   };
 }
 
+// 切片 schema 保留原始文档根上下文；不把局部节点冒充 $ref 的根。
+const schemaRoots = new WeakMap<EditorSchema, EditorSchema>();
+
 export function validateDocument(
   schema: EditorSchema | undefined,
   document: unknown,
   options?: { sourceId?: string },
 ): EditorValidationResult {
-  return validateDocumentWithRoot(schema, document, options, schema);
+  return validateDocumentWithRoot(schema, document, options, schema ? schemaRoots.get(schema) ?? schema : schema);
 }
 
 function validateDocumentWithRoot(
@@ -566,20 +569,64 @@ function validateDocumentWithRoot(
   };
 }
 
+/** 输入规范化不是校验：只转换 schema 明确要求的标量，不补字段、不删数据、不修改原对象。 */
+export function normalizeValueBySchema(schema: EditorSchema | undefined, value: unknown, rootSchema: EditorSchema | undefined = schema): unknown {
+  if (!schema || !rootSchema) return value;
+  rootSchema = schemaRoots.get(rootSchema) ?? rootSchema;
+  const effective = materializeSchema(schema, value, rootSchema);
+  const options = getUnionOptions(effective, rootSchema);
+  if (options.length > 0) {
+    // 已合法的分支优先；多个分支转换成不同结果时不猜测用户意图。
+    if (options.some((option) => validateDocumentWithRoot(option, value, undefined, rootSchema).valid)) return value;
+    const candidates = options.map((option) => normalizeValueBySchema(option, value, rootSchema))
+      .filter((candidate, index) => validateDocumentWithRoot(options[index], candidate, undefined, rootSchema).valid);
+    return candidates.length > 0 && candidates.every((candidate) => deepEqual(candidate, candidates[0])) ? candidates[0] : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeValueBySchema(effective.items, item, rootSchema));
+  }
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => {
+      const childSchema = effective.properties?.[key] ?? findPatternPropertySchema(effective, key)
+        ?? (isEditorSchema(effective.additionalProperties) ? effective.additionalProperties : undefined);
+      return [key, normalizeValueBySchema(childSchema, child, rootSchema)];
+    }));
+  }
+  if (typeof value !== "string" || matchesSchemaType(effective, value)) return value;
+  const types = normalizeSchemaTypes(effective.type);
+  const text = value.trim();
+  if (types.includes("boolean") && (text === "true" || text === "false")) return text === "true";
+  if ((types.includes("integer") || types.includes("number")) && /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text)) {
+    const number = Number(text);
+    // 不截断小数、不接受 Infinity、不把超出安全整数精度的输入悄悄舍入。
+    if (Number.isFinite(number) && (!Number.isInteger(number) || Number.isSafeInteger(number))
+      && canonicalDecimal(text) === canonicalDecimal(String(number))
+      && (!types.includes("integer") || Number.isInteger(number))) return number;
+  }
+  return value;
+}
+
+/** 比较十进制有效数字与指数，拒绝转换时发生的舍入或下溢，不展开巨大指数。 */
+function canonicalDecimal(text: string): string {
+  const [coefficient, exponent = "0"] = text.toLowerCase().split("e");
+  const [whole, fraction = ""] = coefficient.replace(/^-/, "").split(".");
+  const digits = `${whole}${fraction}`.replace(/^0+/, "");
+  if (!digits) return "0";
+  const significant = digits.replace(/0+$/, "");
+  const power = Number(exponent) - fraction.length + digits.length - significant.length;
+  return `${text.startsWith("-") ? "-" : ""}${significant}e${power}`;
+}
+
 export function createDefaultValue(schema: EditorSchema | undefined): unknown {
   if (!schema) return "";
 
-  const effectiveSchema = materializeSchema(schema, undefined, schema);
+  const effectiveSchema = materializeSchema(schema, undefined, schemaRoots.get(schema) ?? schema);
   if (effectiveSchema.default !== undefined) return cloneJsonValue(effectiveSchema.default);
   if (effectiveSchema.const !== undefined) return cloneJsonValue(effectiveSchema.const);
   if (effectiveSchema.enum?.length) return cloneJsonValue(effectiveSchema.enum[0]);
 
-  if (effectiveSchema.oneOf?.length) {
-    return createDefaultValue(resolveSchemaReference(effectiveSchema.oneOf[0], effectiveSchema));
-  }
-  if (effectiveSchema.anyOf?.length) {
-    return createDefaultValue(resolveSchemaReference(effectiveSchema.anyOf[0], effectiveSchema));
-  }
+  // 联合类型需要明确默认值或用户选择；不能静默采用第一个分支。
+  if (effectiveSchema.oneOf?.length || effectiveSchema.anyOf?.length) return undefined;
 
   const types = normalizeSchemaTypes(effectiveSchema.type);
   if (types.includes("null")) {
@@ -649,16 +696,17 @@ export function switchUnionBranch(currentValue: unknown, schema: EditorSchema | 
 
 export function resolveSchemaAtPath(rootSchema: EditorSchema | undefined, path: JsonPath, rootValue?: unknown): EditorSchema | undefined {
   let currentSchema = rootSchema;
+  const referenceRoot = rootSchema ? schemaRoots.get(rootSchema) ?? rootSchema : undefined;
   let currentValue = rootValue;
 
   for (const segment of path) {
     if (!currentSchema) return undefined;
 
-    currentSchema = materializeSchema(currentSchema, currentValue, rootSchema ?? currentSchema);
+    currentSchema = materializeSchema(currentSchema, currentValue, referenceRoot ?? currentSchema);
 
-    const unionOptions = getUnionOptions(currentSchema, rootSchema ?? currentSchema);
+    const unionOptions = getUnionOptions(currentSchema, referenceRoot ?? currentSchema);
     if (unionOptions.length > 0) {
-      currentSchema = unionOptions[resolveUnionOptionIndex(currentSchema, currentValue, rootSchema ?? currentSchema) ?? 0];
+      currentSchema = unionOptions[resolveUnionOptionIndex(currentSchema, currentValue, referenceRoot ?? currentSchema) ?? 0];
     }
 
     if (typeof segment === "number") {
@@ -685,7 +733,7 @@ export function resolveSchemaAtPath(rootSchema: EditorSchema | undefined, path: 
     currentValue = isPlainObject(currentValue) ? currentValue[segment] : undefined;
   }
 
-  return currentSchema ? materializeSchema(currentSchema, currentValue, rootSchema ?? currentSchema) : undefined;
+  return currentSchema ? materializeSchema(currentSchema, currentValue, referenceRoot ?? currentSchema) : undefined;
 }
 
 export function updateSchemaAtDocumentPath(
@@ -753,14 +801,33 @@ function validateAgainstSchema(
   issues: ValidationAccumulator,
   rootSchema: EditorSchema,
 ) {
-  const schema = materializeSchema(originalSchema, value, rootSchema);
-  const unionOptions = getUnionOptions(schema, rootSchema);
-  if (unionOptions.length > 0) {
-    const unionResult = validateUnion(schema, value, path, sourceId, rootSchema);
-    if (!unionResult.valid) {
-      issues.documentErrors.push(...(unionResult.documentErrors ?? []));
-      issues.fieldErrors.push(...(unionResult.fieldErrors ?? []));
-      return;
+  // 校验保留组合约束的合取含义；展示用的 merge/materialize 不能替代权威校验。
+  const reference = resolveSchemaReference(originalSchema, rootSchema) ?? originalSchema;
+  if (reference.$ref) {
+    pushIssue(issues, sourceId, path, `Unresolved or cyclic schema reference: ${reference.$ref}`);
+    return;
+  }
+  // $ref 的兄弟约束是合取，不允许 merge 把目标类型/const 覆盖掉。
+  if (originalSchema.$ref) {
+    const target = lookupLocalSchemaRef(rootSchema, originalSchema.$ref);
+    if (target) validateAgainstSchema(target, value, path, sourceId, issues, rootSchema);
+  }
+  const resolved = { ...originalSchema, $ref: undefined };
+  for (const part of resolved.allOf ?? []) validateAgainstSchema(part, value, path, sourceId, issues, rootSchema);
+  if (resolved.if) {
+    const branch = validateDocumentWithRoot(resolved.if, value, { sourceId }, rootSchema).valid ? resolved.then : resolved.else;
+    if (branch) validateAgainstSchema(branch, value, path, sourceId, issues, rootSchema);
+  }
+  const schema = { ...resolved, allOf: undefined, if: undefined, then: undefined, else: undefined };
+  if (schema.oneOf?.length || schema.anyOf?.length) {
+    validateAgainstSchema({ ...schema, oneOf: undefined, anyOf: undefined }, value, path, sourceId, issues, rootSchema);
+    for (const union of [{ oneOf: schema.oneOf }, { anyOf: schema.anyOf }]) {
+      if (!union.oneOf?.length && !union.anyOf?.length) continue;
+      const unionResult = validateUnion(union, value, path, sourceId, rootSchema);
+      if (!unionResult.valid) {
+        issues.documentErrors.push(...(unionResult.documentErrors ?? []));
+        issues.fieldErrors.push(...(unionResult.fieldErrors ?? []));
+      }
     }
     return;
   }
@@ -780,12 +847,11 @@ function validateAgainstSchema(
 
   validateScalarConstraints(schema, value, path, sourceId, issues);
 
-  const primaryType = inferSchemaNodeKind(schema, value);
-  if (primaryType === "object") {
+  if (isPlainObject(value)) {
     validateObject(schema, value, path, sourceId, issues, rootSchema);
     return;
   }
-  if (primaryType === "array") {
+  if (Array.isArray(value)) {
     validateArray(schema, value, path, sourceId, issues, rootSchema);
   }
 }
@@ -870,16 +936,10 @@ function validateObject(
   const properties = schema.properties ?? {};
   for (const [key, childValue] of Object.entries(value)) {
     const propertySchema = properties[key];
-    if (propertySchema) {
-      validateAgainstSchema(propertySchema, childValue, [...path, key], sourceId, issues, rootSchema);
-      continue;
-    }
-
-    const patternSchema = findPatternPropertySchema(schema, key);
-    if (patternSchema) {
-      validateAgainstSchema(patternSchema, childValue, [...path, key], sourceId, issues, rootSchema);
-      continue;
-    }
+    const patternSchemas = Object.entries(schema.patternProperties ?? {}).filter(([pattern]) => safelyCreateRegExp(pattern)?.test(key)).map(([, child]) => child);
+    if (propertySchema) validateAgainstSchema(propertySchema, childValue, [...path, key], sourceId, issues, rootSchema);
+    for (const patternSchema of patternSchemas) validateAgainstSchema(patternSchema, childValue, [...path, key], sourceId, issues, rootSchema);
+    if (propertySchema || patternSchemas.length > 0) continue;
 
     if (schema.additionalProperties === false) {
       pushIssue(issues, sourceId, [...path, key], "Additional properties are not allowed");
@@ -934,16 +994,22 @@ function validateUnion(
 ): EditorValidationResult {
   const options = getUnionOptions(schema, rootSchema);
   let bestCandidate: EditorValidationResult | undefined;
+  let matched = 0;
   for (const option of options) {
     const candidate = validateDocumentWithRoot(option, value, { sourceId }, rootSchema);
     if (candidate.valid) {
-      return candidate;
+      matched += 1;
+      continue;
     }
     if (!bestCandidate || isBetterUnionCandidate(candidate, bestCandidate)) {
       bestCandidate = candidate;
     }
   }
 
+  if (matched > 0) {
+    if (!schema.oneOf?.length || matched === 1) return { valid: true, documentErrors: [], fieldErrors: [] };
+    return { valid: false, documentErrors: ["Schema validation failed"], fieldErrors: [{ sourceId, path, message: "Value must match exactly one schema branch" }] };
+  }
   if (bestCandidate?.fieldErrors?.length) {
     return {
       valid: false,
@@ -1103,6 +1169,12 @@ function materializeSchema(schema: EditorSchema, value: unknown, rootSchema: Edi
     }
   }
 
+  const bind = (node: EditorSchema) => {
+    schemaRoots.set(node, rootSchema);
+    for (const child of Object.values(node.properties ?? {})) bind(child);
+    if (node.items) bind(node.items);
+  };
+  bind(next);
   return next;
 }
 
@@ -1218,7 +1290,7 @@ function isNullableSchema(schema: EditorSchema) {
 
 function shouldCreatePropertyByDefault(schema: EditorSchema | undefined): boolean {
   if (!schema) return false;
-  const effectiveSchema = materializeSchema(schema, undefined, schema);
+  const effectiveSchema = materializeSchema(schema, undefined, schemaRoots.get(schema) ?? schema);
   if (effectiveSchema.default !== undefined || effectiveSchema.const !== undefined || effectiveSchema.enum?.length) {
     return true;
   }
@@ -1334,6 +1406,7 @@ function uniqueStrings(values: string[]) {
 
 function resolveSchemaReference(schema: EditorSchema | undefined, rootSchema: EditorSchema | undefined): EditorSchema | undefined {
   if (!schema) return undefined;
+  rootSchema = schemaRoots.get(rootSchema ?? schema) ?? rootSchema ?? schema;
   let current = schema;
   const seen = new Set<string>();
 
@@ -1353,6 +1426,7 @@ function resolveSchemaReference(schema: EditorSchema | undefined, rootSchema: Ed
     });
   }
 
+  schemaRoots.set(current, rootSchema);
   return current;
 }
 

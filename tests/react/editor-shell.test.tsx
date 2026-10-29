@@ -397,7 +397,7 @@ test("value arrays hide column visibility controls and disallow hiding generated
   expect(screen.queryByRole("button", { name: "Hide" })).toBeNull();
 });
 
-test("根字符串数组会忽略类型不兼容的对象 schema 并按数组编辑", () => {
+test("根字符串数组保持可见但不忽略显式对象 schema 的约束", () => {
   const schemaHost: EditorSchemaHost = {
     getSchema() {
       return { type: "object" };
@@ -410,9 +410,8 @@ test("根字符串数组会忽略类型不兼容的对象 schema 并按数组编
   fireEvent.click(screen.getByRole("button", { name: "Raw" }));
   fireEvent.click(screen.getByRole("button", { name: "Apply JSON" }));
 
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.queryByLabelText("JSON value editor")).toBeNull();
-  expect(screen.getByLabelText("Array item 0")).toHaveValue("功法");
+  expect(screen.getByRole("alert")).toHaveTextContent("Expected object");
+  expect(screen.getByLabelText("JSON value editor")).toHaveValue(JSON.stringify(["功法", "暗器", "虚弱", "减伤"], null, 2));
 });
 
 test("存量原始值数组的空列配置会恢复 Value 列并提示使用者", async () => {
@@ -1296,6 +1295,72 @@ test("保留当前 source 的刷新会更新数据但不重置 pinned 视图", a
   expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument();
 });
 
+test("保存未返回时先到的同值宿主回灌不会取消 array 页 pinned", async () => {
+  const initialDocuments = { main: { entries: [{ name: "before" }] } };
+  const savedDocuments = { main: { entries: [{ name: "after" }] } };
+  let resolveSave: ((documents: Record<string, unknown>) => void) | undefined;
+  const handleSave = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => { resolveSave = resolve; }));
+  const { rerender } = render(<EditorShell documents={initialDocuments} onSave={handleSave} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "entries array 1 items" }));
+  fireEvent.click(screen.getByRole("row", { name: "before" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Pin left page" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+  fireEvent.change(getCurrentPageQueries().getByLabelText("Field name"), { target: { value: "after" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1) as HTMLElement);
+
+  await waitFor(() => expect(handleSave).toHaveBeenCalledWith(savedDocuments));
+  rerender(<EditorShell documents={savedDocuments} onSave={handleSave} />);
+  act(() => { resolveSave?.(savedDocuments); });
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument());
+  expect(getCurrentPageQueries().getByDisplayValue("after")).toBeInTheDocument();
+});
+
+test("保存确认与宿主回灌不一致时保留 pinned 与脏数据", async () => {
+  const initialDocuments = { main: { entries: [{ name: "before" }] } };
+  const savedDocuments = { main: { entries: [{ name: "after" }] } };
+  const conflictingDocuments = { main: { entries: [{ name: "different" }] } };
+  let resolveSave: ((documents: Record<string, unknown>) => void) | undefined;
+  const handleSave = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => { resolveSave = resolve; }));
+  const { rerender } = render(<EditorShell documents={initialDocuments} onSave={handleSave} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "entries array 1 items" }));
+  fireEvent.click(screen.getByRole("row", { name: "before" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Pin left page" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+  fireEvent.change(getCurrentPageQueries().getByLabelText("Field name"), { target: { value: "after" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1) as HTMLElement);
+
+  rerender(<EditorShell documents={conflictingDocuments} onSave={handleSave} />);
+  act(() => { resolveSave?.(savedDocuments); });
+
+  await waitFor(() => expect(screen.getByText("Save failed")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument();
+  expect(getCurrentPageQueries().getByDisplayValue("after")).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Save" })).not.toHaveLength(0);
+});
+
+test("对象页保存后的同值宿主回灌不会取消 array 页 pinned", async () => {
+  const initialDocuments = { main: { entries: [{ name: "before" }] } };
+  const savedDocuments = { main: { entries: [{ name: "after" }] } };
+  const handleSave = vi.fn(async (documents: Record<string, unknown>) => documents);
+  const { rerender } = render(<EditorShell documents={initialDocuments} onSave={handleSave} />);
+
+  fireEvent.click(screen.getByRole("button", { name: "entries array 1 items" }));
+  fireEvent.click(screen.getByRole("row", { name: "before" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Pin left page" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Pin left page" }));
+  fireEvent.change(getCurrentPageQueries().getByLabelText("Field name"), { target: { value: "after" } });
+  fireEvent.click(screen.getAllByRole("button", { name: "Save" }).at(-1) as HTMLElement);
+
+  await waitFor(() => expect(handleSave).toHaveBeenCalledWith(savedDocuments));
+  rerender(<EditorShell documents={savedDocuments} onSave={handleSave} />);
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "Unpin left page" })).toBeInTheDocument());
+  expect(getCurrentPageQueries().getByDisplayValue("after")).toBeInTheDocument();
+});
+
 test("pinned-root 妯″紡涓嬬偣鍑诲彸椤垫寜閽細娌跨敤宸﹂〉鐨?replace 鍔ㄧ敾璇箟", () => {
   const { container } = render(<EditorShell value={{ profile: { stats: { hp: 10 } } }} layoutMode="pinned-root" />);
 
@@ -1526,7 +1591,7 @@ test.each([
   expect(screen.queryByRole("button", { name: "detailA object 1 fields" })).toBeNull();
 
   fireEvent.click(screen.getByRole("button", { name: "detailB object 1 fields" }));
-  expect(getCurrentPageQueries().getByLabelText("Field mp")).toHaveValue(20);
+  expect(getCurrentPageQueries().getByLabelText("Field mp")).toHaveValue("20");
 
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   expect(screen.getByRole("button", { name: "detailB object 1 fields" })).toBeInTheDocument();
@@ -1563,11 +1628,11 @@ test("stack-flow 在左页是 reference 时点击左页兄弟项仍然 replace �
     act(() => {
       vi.advanceTimersByTime(600);
     });
-    expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue(12);
+    expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue("12");
 
     fireEvent.click(screen.getByRole("button", { name: "bonus object 1 fields" }));
 
-    expect(getCurrentPageQueries().getByLabelText("Field manaRegen")).toHaveValue(2);
+    expect(getCurrentPageQueries().getByLabelText("Field manaRegen")).toHaveValue("2");
     expect(getCurrentPageQueries().queryByLabelText("Field hp")).toBeNull();
   } finally {
     vi.useRealTimers();
@@ -1613,7 +1678,7 @@ test("stack-flow 在 reference 对象左页从 boundEncounter 切到 bonus 时�
 
     expect(container.querySelector(".stack-page--replace-enter")).not.toBeNull();
     expect(container.querySelector(".stack-page--replace-promote")).toBeNull();
-    expect(getCurrentPageQueries().getByLabelText("Field manaRegen")).toHaveValue(2);
+    expect(getCurrentPageQueries().getByLabelText("Field manaRegen")).toHaveValue("2");
     expect(getCurrentPageQueries().queryByLabelText("Field darkness")).toBeNull();
   } finally {
     vi.useRealTimers();
@@ -1648,7 +1713,7 @@ test("stack-flow 在普通 object 左页中从 reference 切到 array 时仍然 
     act(() => {
       vi.advanceTimersByTime(600);
     });
-    expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue(12);
+    expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue("12");
 
     fireEvent.click(screen.getByRole("button", { name: "bonus array 2 items" }));
 
@@ -4345,7 +4410,7 @@ test("nested object and array pages inside a reference keep their data", async (
   fireEvent.click(screen.getByRole("button", { name: "companion reference asset://characters/hero.json" }));
 
   fireEvent.click(screen.getByRole("button", { name: "stats object 1 fields" }));
-  expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue(10);
+  expect(getCurrentPageQueries().getByLabelText("Field hp")).toHaveValue("10");
 
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   fireEvent.click(screen.getByRole("button", { name: "tags array 1 items" }));
@@ -4424,7 +4489,7 @@ test("schema object mode allows dynamic keys from additionalProperties schema", 
   fireEvent.change(screen.getByPlaceholderText("New property key"), { target: { value: "bonus_hp" } });
   fireEvent.click(screen.getByRole("button", { name: "Add property" }));
 
-  expect(screen.getByLabelText("Field bonus_hp")).toHaveValue(7);
+  expect(screen.getByLabelText("Field bonus_hp")).toHaveValue("7");
 });
 
 test("const object pages become read only in schema mode", () => {
@@ -4693,7 +4758,7 @@ test("schema union branches can switch from oneOf options", () => {
   fireEvent.click(screen.getByRole("button", { name: "action object 2 fields" }));
   fireEvent.change(getCurrentPageQueries().getByLabelText("Schema branch"), { target: { value: "1" } });
 
-  expect(getCurrentPageQueries().getByLabelText("Field amount")).toHaveValue(5);
+  expect(getCurrentPageQueries().getByLabelText("Field amount")).toHaveValue("5");
   expect(getCurrentPageQueries().queryByLabelText("Field power")).toBeNull();
 });
 
@@ -4721,7 +4786,7 @@ test("raw mode keeps schema validation active", () => {
   fireEvent.change(screen.getByLabelText("JSON value editor"), { target: { value: '{\n  "title": ""\n}' } });
   fireEvent.click(screen.getByRole("button", { name: "Apply JSON" }));
 
-  expect(screen.getByText("String must have at least 3 characters")).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("title: String must have at least 3 characters");
   expect(screen.getByRole("alert")).toHaveTextContent("String must have at least 3 characters");
   expect(screen.getByLabelText("JSON value editor")).toHaveAttribute("aria-invalid", "true");
   expect(screen.getByLabelText("JSON value editor")).toHaveValue('{\n  "title": ""\n}');
@@ -4785,7 +4850,7 @@ test("raw mode can be disabled by host", () => {
   expect(screen.queryByRole("button", { name: "Raw" })).toBeNull();
 });
 
-test("保存不做校验，直接提交文档", async () => {
+test("保存已接受文档，不改变提交内容", async () => {
   const handleSave = vi.fn(async (documents: Record<string, unknown>) => documents);
 
   render(
@@ -7087,9 +7152,9 @@ test("object pages expose rgba color pickers that sync rgb channels and preserve
 
   fireEvent.change(picker, { target: { value: "#000000" } });
 
-  expect(screen.getByLabelText("Effect Color R")).toHaveValue(0);
-  expect(screen.getByLabelText("Effect Color G")).toHaveValue(0);
-  expect(screen.getByLabelText("Effect Color B")).toHaveValue(0);
+  expect(screen.getByLabelText("Effect Color R")).toHaveValue("0");
+  expect(screen.getByLabelText("Effect Color G")).toHaveValue("0");
+  expect(screen.getByLabelText("Effect Color B")).toHaveValue("0");
   expect(screen.getByDisplayValue("0.75")).toBeInTheDocument();
   expect(screen.queryByDisplayValue("0.5")).toBeNull();
   expect(screen.queryByDisplayValue("0.25")).toBeNull();
@@ -7640,7 +7705,7 @@ test("object map projection 可以显示 host 注入的静态元数据列而不�
     />,
   );
 
-  expect(screen.getByLabelText("config regeneration 值")).toHaveValue(8);
+  expect(screen.getByLabelText("config regeneration 值")).toHaveValue("8");
   expect(screen.getByLabelText("config regeneration 类型")).toHaveValue("float");
   expect(screen.getByLabelText("config regeneration 类型")).toBeDisabled();
   expect(screen.getByLabelText("config regeneration 说明")).toHaveValue("每秒恢复生命值");

@@ -20,7 +20,6 @@ import {
   resolveNode,
   resolveSchemaAtPath,
   switchUnionBranch,
-  validateDocument as validateNodeBySchema,
   type EditorImageDisplayPreset,
   type EditorObjectPreset,
   type EditorSchema,
@@ -32,6 +31,7 @@ import {
   editorOptionColors,
   namedChipPalette,
 } from "./schema";
+import { decodeJsonDraft, firstEditError, type EditOptions, type EditOutcome, type RawEditDraft } from "./edit-transaction";
 import { SchemaColumnHeader } from "./SchemaColumnHeader";
 import { AssetPickerFieldEditor } from "./AssetPickerFieldEditor";
 import { SchemaOptionFieldEditor } from "./SchemaOptionFieldEditor";
@@ -74,7 +74,9 @@ type ValueInspectorProps = {
   pageHeaderActions?: ReactNode;
   onNavigate: (path: JsonPath) => void;
   onJumpToSource?: (sourceId: string) => void;
-  onApplyValue: (nextValue: unknown) => void;
+  onApplyValue: (nextValue: unknown, options?: EditOptions) => EditOutcome | void;
+  rawDraftStore?: Map<string, RawEditDraft>;
+  onPendingInputChange?: (pending: boolean) => void;
   onEditModeChange?: (isEditing: boolean) => void;
   toolbarPortalHost?: HTMLElement | null;
   enableRawEditor?: boolean;
@@ -864,6 +866,8 @@ function ObjectPage({
   onNavigate,
   onJumpToSource,
   onApplyValue,
+  onPendingInputChange,
+  rawDraftStore,
   onEditModeChange,
   readOnly = false,
   enableRawEditor = true,
@@ -1058,12 +1062,17 @@ function ObjectPage({
       <div className="node-page__content">
         {rawOpen ? (
           <RawJsonEditor
+            draftKey={JSON.stringify([sourceId, path])}
+            draftStore={rawDraftStore}
+            onClose={() => setRawOpen(false)}
             readOnly={pageReadOnly}
             value={value}
             schema={schema}
-            onApplyValue={(nextValue) => {
-              onApplyValue(nextValue);
-              setRawOpen(false);
+            onPendingInputChange={onPendingInputChange}
+            onApplyValue={(nextValue, options) => {
+              const result = onApplyValue(nextValue, options);
+              if (result?.accepted !== false) { onPendingInputChange?.(false); setRawOpen(false); }
+              return result;
             }}
           />
         ) : (
@@ -1487,6 +1496,8 @@ function ArrayPage({
   onNavigate,
   onJumpToSource,
   onApplyValue,
+  onPendingInputChange,
+  rawDraftStore,
   onEditModeChange,
   toolbarPortalHost,
   readOnly = false,
@@ -1498,6 +1509,7 @@ function ArrayPage({
   const [editMode, setEditMode] = useState(false);
   const [suppressEditToggleUntil, setSuppressEditToggleUntil] = useState(0);
   const [pendingRow, setPendingRow] = useState<unknown | null>(null);
+  const creationDraftKey = JSON.stringify([sourceId, path, "new-row"]);
   const [suppressRowActionsUntil, setSuppressRowActionsUntil] = useState(0);
   const [hostActionError, setHostActionError] = useState<string | null>(null);
   const [schemaRepairNotice, setSchemaRepairNotice] = useState<string | null>(null);
@@ -1743,7 +1755,8 @@ function ArrayPage({
       setPendingRow(null);
       return;
     }
-    setPendingRow(createDefaultArrayRow(value, schema?.items, host));
+    const cachedRow = rawDraftStore?.get(creationDraftKey);
+    setPendingRow(cachedRow ? JSON.parse(cachedRow.text) : createDefaultArrayRow(value, schema?.items, host));
   }
 
   async function handleCreateReferenceRow() {
@@ -1991,18 +2004,29 @@ function ArrayPage({
       <div className="node-page__content">
         {rawOpen ? (
           <RawJsonEditor
+            draftKey={JSON.stringify([sourceId, path])}
+            draftStore={rawDraftStore}
+            onClose={() => setRawOpen(false)}
             readOnly={pageReadOnly}
             value={value}
             schema={schema}
-            onApplyValue={(nextValue) => {
-              onApplyValue(nextValue);
-              setRawOpen(false);
+            onPendingInputChange={onPendingInputChange}
+            onApplyValue={(nextValue, options) => {
+              const result = onApplyValue(nextValue, options);
+              if (result?.accepted !== false) { onPendingInputChange?.(false); setRawOpen(false); }
+              return result;
             }}
           />
         ) : (
           <div className="array-page-body">
             {arrayError ? <div className="form-hint form-hint--danger">{arrayError}</div> : null}
             {hostActionError ? <div className="form-hint form-hint--danger">{hostActionError}</div> : null}
+            {rawDraftStore?.has(creationDraftKey) && <button type="button" onClick={() => {
+              rawDraftStore.delete(creationDraftKey);
+              onPendingInputChange?.(false);
+              setPendingRow(editMode ? createDefaultArrayRow(value, schema?.items, host) : null);
+              setHostActionError(null);
+            }}>放弃新增行草稿</button>}
             <div className={["table-shell", ...pageClassNames].join(" ")}>
               <div className="table-scroll" ref={tableScrollRef}>
               <table
@@ -2563,17 +2587,31 @@ function ArrayPage({
                       renderPendingArrayRow({
                         value,
                         pendingRow,
+                        itemSchema: schema?.items,
                         columns: orderedColumns,
                         objectRows,
                         host,
                         useMergedValueCell: showReferenceProjectionTable,
-                        onChangePendingRow: setPendingRow,
+                        onChangePendingRow(nextRow) {
+                          const cached = rawDraftStore?.get(creationDraftKey);
+                          rawDraftStore?.set(creationDraftKey, { text: JSON.stringify(nextRow), baseSnapshot: cached?.baseSnapshot ?? JSON.stringify(value), schemaSnapshot: cached?.schemaSnapshot ?? JSON.stringify(schema) });
+                          onPendingInputChange?.(true);
+                          setPendingRow(nextRow);
+                        },
                         onCreate() {
                           if (maxItemsReached) {
                             return;
                           }
+                          const cached = rawDraftStore?.get(creationDraftKey);
+                          if (cached && (cached.baseSnapshot !== JSON.stringify(value) || cached.schemaSnapshot !== JSON.stringify(schema))) {
+                            setHostActionError("新增行草稿的基准已变化，请复制内容后放弃草稿并重建。");
+                            return;
+                          }
                           setSuppressRowActionsUntil(Date.now() + 450);
-                          onApplyValue([...value, cloneJsonValue(pendingRow)]);
+                          const result = onApplyValue([...value, cloneJsonValue(pendingRow)]);
+                          if (result?.accepted === false && !result.staged) return;
+                          rawDraftStore?.delete(creationDraftKey);
+                          onPendingInputChange?.(false);
                           setPendingRow(createDefaultArrayRow([...value, pendingRow], schema?.items, host));
                         },
                         createDisabled: maxItemsReached,
@@ -2863,6 +2901,8 @@ function PrimitivePage({
   pageHeaderActions,
   onJumpToSource,
   onApplyValue,
+  onPendingInputChange,
+  rawDraftStore,
   onEditModeChange,
   readOnly = false,
   enableRawEditor = true,
@@ -2909,12 +2949,17 @@ function PrimitivePage({
       <div className="node-page__content">
         {rawOpen ? (
           <RawJsonEditor
+            draftKey={JSON.stringify([sourceId, path])}
+            draftStore={rawDraftStore}
+            onClose={() => setRawOpen(false)}
             readOnly={pageReadOnly}
             value={value}
             schema={schema}
-            onApplyValue={(nextValue) => {
-              onApplyValue(nextValue);
-              setRawOpen(false);
+            onPendingInputChange={onPendingInputChange}
+            onApplyValue={(nextValue, options) => {
+              const result = onApplyValue(nextValue, options);
+              if (result?.accepted !== false) { onPendingInputChange?.(false); setRawOpen(false); }
+              return result;
             }}
           />
         ) : (
@@ -3058,7 +3103,7 @@ function SchemaControlBar(props: {
   schemaState?: ReturnType<typeof resolveNode>;
   value: unknown;
   readOnly?: boolean;
-  onApplyValue: (nextValue: unknown) => void;
+  onApplyValue: (nextValue: unknown, options?: EditOptions) => EditOutcome | void;
 }) {
   const unionCapabilities = props.schemaState?.unionCapabilities;
   if (!unionCapabilities || props.readOnly) {
@@ -3093,29 +3138,37 @@ function SchemaControlBar(props: {
   );
 }
 
-function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?: boolean; onApplyValue: (nextValue: unknown) => void }) {
-  const [draft, setDraft] = useState(() => JSON.stringify(props.value, null, 2));
+function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?: boolean; draftKey: string; draftStore?: Map<string, RawEditDraft>; onClose: () => void; onPendingInputChange?: (pending: boolean) => void; onApplyValue: (nextValue: unknown, options?: EditOptions) => EditOutcome | void }) {
+  const cached = props.draftStore?.get(props.draftKey);
+  const [draft, setDraft] = useState(() => cached?.text ?? JSON.stringify(props.value, null, 2));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const baseSnapshot = useRef(cached?.baseSnapshot ?? JSON.stringify(props.value));
+  const baseSchema = useRef(cached?.schemaSnapshot ?? JSON.stringify(props.schema));
+  const changed = useRef(Boolean(cached));
+  const valueSnapshot = JSON.stringify(props.value);
+  const schemaSnapshot = JSON.stringify(props.schema);
   useEffect(() => {
+    if (changed.current) return;
+    baseSnapshot.current = JSON.stringify(props.value);
+    baseSchema.current = JSON.stringify(props.schema);
     setDraft(JSON.stringify(props.value, null, 2));
     setErrorMessage(null);
-  }, [props.value]);
+  }, [valueSnapshot, schemaSnapshot]);
 
   function handleApplyJson() {
     try {
-      const nextValue = JSON.parse(draft);
-      if (props.schema) {
-        const validation = validateNodeBySchema(props.schema, nextValue);
-        if (!validation.valid) {
-          const fieldMessage = validation.fieldErrors?.[0]?.message;
-          const documentMessage = validation.documentErrors?.[0];
-          setErrorMessage(fieldMessage ?? documentMessage ?? "Schema validation failed");
-          return;
-        }
+      if (baseSnapshot.current !== JSON.stringify(props.value) || baseSchema.current !== JSON.stringify(props.schema)) {
+        setErrorMessage("数据或 schema 已变化，草稿已保留。请复制需要保留的内容，取消后基于最新数据重新应用。");
+        return;
       }
+      const nextValue = decodeJsonDraft(draft);
+      const result = props.onApplyValue(nextValue, { normalizeScope: true });
+      if (result?.accepted === false) { setErrorMessage(firstEditError(result)); return; }
+      changed.current = false;
+      props.draftStore?.delete(props.draftKey);
+      props.onPendingInputChange?.(false);
       setErrorMessage(null);
-      props.onApplyValue(nextValue);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "Invalid JSON");
     }
@@ -3133,6 +3186,9 @@ function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?
           readOnly={props.readOnly}
           value={draft}
           onChange={(event) => {
+            changed.current = true;
+            props.draftStore?.set(props.draftKey, { text: event.target.value, baseSnapshot: baseSnapshot.current, schemaSnapshot: baseSchema.current });
+            props.onPendingInputChange?.(true);
             setDraft(event.target.value);
             if (errorMessage) {
               setErrorMessage(null);
@@ -3140,6 +3196,16 @@ function RawJsonEditor(props: { value: unknown; schema?: EditorSchema; readOnly?
           }}
         />
         <div className="json-actions">
+          <button type="button" onClick={props.onClose}>返回字段（保留草稿）</button>
+          {!props.readOnly && <button type="button" onClick={() => {
+            changed.current = false;
+            props.draftStore?.delete(props.draftKey);
+            baseSnapshot.current = JSON.stringify(props.value);
+            baseSchema.current = JSON.stringify(props.schema);
+            setDraft(JSON.stringify(props.value, null, 2));
+            setErrorMessage(null);
+            props.onPendingInputChange?.(false);
+          }}>放弃 Raw 草稿</button>}
           {errorMessage ? (
             <div className="raw-json-error-banner" role="alert">
               {errorMessage}
@@ -3491,12 +3557,13 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (typeof props.value === "boolean") {
+  const declaredTypes = effectiveSchema?.type ? (Array.isArray(effectiveSchema.type) ? effectiveSchema.type : [effectiveSchema.type]) : [];
+  if ((typeof props.value === "boolean" && (!declaredTypes.length || declaredTypes.includes("boolean"))) || (props.value === undefined && effectiveSchema?.type === "boolean")) {
     return withNullableControls(
       <label className="checkbox-field">
         <input
           aria-label={props.ariaLabel}
-          checked={props.value}
+          checked={props.value === true}
           disabled={readOnly}
           type="checkbox"
           onChange={(event) => props.onChange(event.target.checked)}
@@ -3509,18 +3576,18 @@ function renderPrimitiveEditor(props: {
     );
   }
 
-  if (typeof props.value === "number") {
+  if ((typeof props.value === "number" && (!declaredTypes.length || declaredTypes.includes("integer") || declaredTypes.includes("number"))) || effectiveSchema?.type === "integer" || effectiveSchema?.type === "number") {
     return withNullableControls(
         <input
           aria-label={props.ariaLabel}
           className="detail-input"
           disabled={readOnly}
-          type="number"
-          step={props.schema?.multipleOf ?? (props.schema?.type === "integer" ? 1 : "any")}
-          min={props.schema?.exclusiveMinimum ?? props.schema?.minimum}
-          max={props.schema?.exclusiveMaximum ?? props.schema?.maximum}
-          value={String(props.value)}
-          onChange={(event) => props.onChange(Number(event.target.value))}
+          type="text"
+          role="spinbutton"
+          inputMode={effectiveSchema?.type === "integer" ? "numeric" : "decimal"}
+          aria-valuenow={typeof props.value === "number" ? props.value : undefined}
+          value={String(props.value ?? "")}
+          onChange={(event) => props.onChange(event.target.value)}
         />,
       nullableBranch,
       readOnly,
@@ -4251,7 +4318,7 @@ function createEmptyValueFromSample(sample: unknown): unknown {
 }
 
 function cloneJsonValue<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T;
 }
 
 function isFieldDirty(currentValue: unknown, savedValue: unknown) {
@@ -4262,6 +4329,7 @@ function isFieldDirty(currentValue: unknown, savedValue: unknown) {
 function renderPendingArrayRow(props: {
   value: unknown[];
   pendingRow: unknown;
+  itemSchema?: EditorSchema;
   columns: string[];
   objectRows: boolean;
   host?: EditorHost;
@@ -4288,7 +4356,7 @@ function renderPendingArrayRow(props: {
           </div>
         </td>
         <td className="array-cell--pending-merged" colSpan={span}>
-          {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow)}
+          {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow, props.itemSchema)}
         </td>
       </tr>
     );
@@ -4322,7 +4390,7 @@ function renderPendingArrayRow(props: {
                 ...record,
                 [column]: nextValue,
               });
-            })}
+            }, resolveSchemaAtPath(props.itemSchema, [column], record))}
           </td>
         ))}
       </tr>
@@ -4346,7 +4414,7 @@ function renderPendingArrayRow(props: {
       </td>
       <td className="array-column--sticky array-column--after-actions">new</td>
       <td>
-        {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow)}
+        {renderPendingArrayCell(props.pendingRow, props.onChangePendingRow, props.itemSchema)}
       </td>
     </tr>
   );
@@ -4411,7 +4479,12 @@ function renderReferenceAddRow(props: {
   );
 }
 
-function renderPendingArrayCell(value: unknown, onChange: (nextValue: unknown) => void) {
+function renderPendingArrayCell(value: unknown, onChange: (nextValue: unknown) => void, schema?: EditorSchema) {
+  const branches = schema?.oneOf ?? schema?.anyOf;
+  if (value === undefined && branches?.length) return <select aria-label="New item schema branch" value="" onChange={(event) => onChange(switchUnionBranch(undefined, schema, Number(event.target.value)))}>
+    <option value="" disabled>请选择类型</option>
+    {branches.map((branch, index) => <option key={index} value={index}>{branch.title ?? `分支 ${index + 1}`}</option>)}
+  </select>;
   if (isNavigable(value)) {
     return (
       <span className="array-cell-summary array-cell-summary--pending">
@@ -4423,6 +4496,7 @@ function renderPendingArrayCell(value: unknown, onChange: (nextValue: unknown) =
   return renderPrimitiveEditor({
     value,
     ariaLabel: "Pending array item",
+    schema,
     path: [],
     onChange,
   });

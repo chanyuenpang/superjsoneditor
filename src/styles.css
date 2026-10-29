@@ -734,13 +734,18 @@ button {
 }
 
 .main-content {
-  min-height: 0;
-  min-width: 0;
-  overflow: hidden;
+  /* 作为 grid 容器提供确定的可用高度，供 page-stack 的百分比高度计算。 */
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+	min-height: 0;
+	min-width: 0;
+	overflow: hidden;
   padding: 0;
 }
 
 .page-stack {
+  height: 100%;
   min-height: 100%;
   min-width: 0;
   overflow: hidden;
@@ -4116,12 +4121,19 @@ button.option-drag-handle svg,
 .sje-asset-workbench__section small { color: var(--sje-assets-muted); font-size: 11px; }
 .sje-asset-workbench__section:hover { background: #f4f6fb; }
 .sje-asset-workbench__section.is-active { background: #f5f9ff; box-shadow: inset 3px 0 0 var(--sje-assets-accent); }
-.sje-asset-workbench__detail { overflow: hidden; background: var(--sje-assets-paper); }
+.sje-asset-workbench__subsections { display: grid; gap: 1px; padding: 5px 12px 8px 28px; border-bottom: 1px solid var(--sje-assets-line); background: #fafbfd; }
+.sje-asset-workbench__subsection { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 34px; padding: 7px 10px; border: 0; border-radius: 5px; color: var(--sje-assets-muted); background: transparent; cursor: pointer; font: inherit; font-size: 13px; text-align: left; }
+.sje-asset-workbench__subsection small { font-size: 11px; }
+.sje-asset-workbench__subsection:hover { color: var(--sje-assets-ink); background: #f0f4fa; }
+.sje-asset-workbench__subsection.is-active { color: var(--sje-assets-ink); background: #eaf3ff; font-weight: 600; }
+.sje-asset-workbench__detail { display: grid; grid-template-rows: minmax(0, 1fr); height: 100%; overflow: hidden; background: var(--sje-assets-paper); }
 .sje-asset-workbench__detail > .app-frame { height: 100%; min-height: 0; }
 .sje-asset-workbench .toolbar,
 .sje-asset-workbench .stack-page--array .detail-header--page,
 .sje-asset-workbench .detail-source-label { display: none; }
 .sje-asset-workbench .workspace { grid-template-rows: minmax(0, 1fr); }
+/* Array 页头在工作台中被隐藏后，内容槽仍须占用 node page 的可伸缩行。 */
+.sje-asset-workbench .node-page--array > .node-page__content { grid-row: 2; }
 .sje-asset-workbench__placeholder { display: grid; height: 100%; place-items: center; padding: 32px; color: var(--sje-assets-muted); font-size: 14px; text-align: center; }
 
 @media (max-width: 960px) {
